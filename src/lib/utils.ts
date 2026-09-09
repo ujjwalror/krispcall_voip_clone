@@ -53,3 +53,39 @@ export function formatCallTime(isoString: string): string {
 
   return date.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
+
+/**
+ * Normalizes phone numbers to E.164 format for Twilio PSTN dialing.
+ * Trims input, strips illegal characters, and enforces '+' prefix.
+ */
+export function normalizeE164PhoneNumber(phone: string): { isValid: boolean; normalized: string; error?: string } {
+  if (!phone || typeof phone !== 'string') {
+    return { isValid: false, normalized: '', error: 'Destination number is required.' };
+  }
+
+  const trimmed = phone.trim();
+  if (trimmed.length === 0) {
+    return { isValid: false, normalized: '', error: 'Destination number cannot be blank.' };
+  }
+
+  // Remove whitespace, dashes, parentheses, dots
+  const stripped = trimmed.replace(/[\s\-\(\)\.]/g, '');
+
+  let normalized = stripped;
+  if (!normalized.startsWith('+')) {
+    if (/^\d{7,15}$/.test(normalized)) {
+      normalized = `+${normalized}`;
+    } else {
+      return { isValid: false, normalized: '', error: 'Phone number must be a valid E.164 format (e.g. +61412345678 or +15550199).' };
+    }
+  }
+
+  // Validate E.164 regex: + followed by 7 to 15 digits
+  const e164Regex = /^\+[1-9]\d{6,14}$/;
+  if (!e164Regex.test(normalized)) {
+    return { isValid: false, normalized: '', error: 'Invalid E.164 phone number format.' };
+  }
+
+  return { isValid: true, normalized };
+}
+
