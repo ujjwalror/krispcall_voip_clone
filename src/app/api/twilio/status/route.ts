@@ -32,7 +32,7 @@ export async function POST(request: Request) {
     // 2. Validate webhook signature if TWILIO_AUTH_TOKEN is configured
     const isValidSignature = await validateTwilioRequest(request, params);
     if (!isValidSignature) {
-      console.warn('Unauthorized Twilio status callback request.');
+      console.warn('[Twilio Status Callback] Unauthorized status callback request.');
       return new NextResponse('<Response><Say>Unauthorized</Say></Response>', {
         status: 403,
         headers: { 'Content-Type': 'text/xml' },
@@ -44,9 +44,14 @@ export async function POST(request: Request) {
     const rawStatus = (params.CallStatus || params.callStatus || '').toLowerCase();
     const durationStr = params.CallDuration || params.callDuration || '0';
     const durationSeconds = parseInt(durationStr, 10) || 0;
-    const dbCallId = params.dbCallId || searchParams.get('dbCallId') || '';
+    const dbCallId = params.dbCallId || params.db_call_id || searchParams.get('dbCallId') || '';
+
+    console.log(
+      `[Twilio Status Callback] Received CallSid: "${callSid}", CallStatus: "${rawStatus}", dbCallId: "${dbCallId}", Duration: ${durationSeconds}s`
+    );
 
     if (!callSid && !dbCallId) {
+      console.warn('[Twilio Status Callback] Missing both CallSid and dbCallId. Ignoring callback.');
       return new NextResponse('<Response/>', {
         status: 200,
         headers: { 'Content-Type': 'text/xml' },
@@ -85,35 +90,46 @@ export async function POST(request: Request) {
 
     // 5. Update database call record using Admin client (bypassing RLS for server callback)
     const adminSupabase = createAdminClient();
+    let matchedRows = 0;
 
-    let query = (adminSupabase as any).from('calls').update(updatePayload);
-
+    // Try matching by twilio_call_sid first
     if (callSid) {
-      query = query.eq('twilio_call_sid', callSid);
-    } else if (dbCallId) {
-      query = query.eq('id', dbCallId);
-    }
-
-    const { error: updateError, count } = await query;
-
-    // If matching by callSid returned no rows and dbCallId exists, try matching by dbCallId
-    if (dbCallId && callSid && (!count || count === 0)) {
-      await (adminSupabase as any)
+      const { data, error: err1 } = await (adminSupabase as any)
         .from('calls')
         .update(updatePayload)
-        .eq('id', dbCallId);
+        .eq('twilio_call_sid', callSid)
+        .select();
+
+      if (err1) {
+        console.error('[Twilio Status Callback] DB Error updating by twilio_call_sid:', err1);
+      }
+      matchedRows = Array.isArray(data) ? data.length : 0;
     }
 
-    if (updateError) {
-      console.error('Error updating call record from Twilio status callback:', updateError);
+    // Fallback: If no row matched by callSid, update by dbCallId
+    if (matchedRows === 0 && dbCallId) {
+      const { data: data2, error: err2 } = await (adminSupabase as any)
+        .from('calls')
+        .update(updatePayload)
+        .eq('id', dbCallId)
+        .select();
+
+      if (err2) {
+        console.error('[Twilio Status Callback] DB Error updating by dbCallId:', err2);
+      }
+      matchedRows = Array.isArray(data2) ? data2.length : 0;
     }
+
+    console.log(
+      `[Twilio Status Callback] Database update complete for CallSid "${callSid}" / dbCallId "${dbCallId}". Matched ${matchedRows} row(s). Updated status to "${dbStatus}".`
+    );
 
     return new NextResponse('<Response/>', {
       status: 200,
       headers: { 'Content-Type': 'text/xml' },
     });
   } catch (error: any) {
-    console.error('Error handling Twilio status callback:', error.message || error);
+    console.error('[Twilio Status Callback] Error handling status callback:', error.message || error);
     return new NextResponse('<Response/>', {
       status: 200,
       headers: { 'Content-Type': 'text/xml' },

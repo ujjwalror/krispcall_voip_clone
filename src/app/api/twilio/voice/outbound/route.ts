@@ -48,16 +48,25 @@ export async function POST(request: Request) {
     const callSid = params.CallSid || params.callSid || '';
     const dbCallId = params.dbCallId || params.db_call_id || searchParams.get('dbCallId') || '';
 
+    console.log(`[Twilio Outbound Webhook] Received CallSid: "${callSid}", dbCallId: "${dbCallId}"`);
+
     // If dbCallId and CallSid are present, link them in Supabase using Admin client
     if (dbCallId && callSid) {
       try {
         const adminSupabase = createAdminClient();
-        await (adminSupabase as any)
+        const { data, error: linkErr } = await (adminSupabase as any)
           .from('calls')
           .update({ twilio_call_sid: callSid, updated_at: new Date().toISOString() })
-          .eq('id', dbCallId);
+          .eq('id', dbCallId)
+          .select();
+
+        const matchedRows = Array.isArray(data) ? data.length : 0;
+        console.log(`[Twilio Outbound Webhook] Linked CallSid "${callSid}" to dbCallId "${dbCallId}". Matched rows: ${matchedRows}`);
+        if (linkErr) {
+          console.error('[Twilio Outbound Webhook] Link error:', linkErr);
+        }
       } catch (dbErr) {
-        console.error('Error linking CallSid to database record:', dbErr);
+        console.error('[Twilio Outbound Webhook] Exception linking CallSid to DB record:', dbErr);
       }
     }
 
@@ -80,8 +89,11 @@ export async function POST(request: Request) {
     const callerId = process.env.TWILIO_PHONE_NUMBER || '+18005550199';
     const dial = voiceResponse.dial({ callerId });
 
-    // Attach Status Callback for Phase 6 Call Status Tracking
-    const statusCallbackUrl = '/api/twilio/status';
+    // Append dbCallId as query param to statusCallback so Twilio status webhooks carry dbCallId
+    const statusCallbackUrl = dbCallId
+      ? `/api/twilio/status?dbCallId=${encodeURIComponent(dbCallId)}`
+      : '/api/twilio/status';
+
     dial.number(
       {
         statusCallback: statusCallbackUrl,
