@@ -158,14 +158,35 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
         }
       }
 
-      // 4. Connect outbound call via Twilio SDK
+      // 4. Create database call record in Supabase (Phase 6)
+      let dbCallId = '';
+      try {
+        const createRes = await fetch('/api/twilio/calls/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ destination: validation.normalized }),
+        });
+        if (createRes.ok) {
+          const createData = await createRes.json();
+          dbCallId = createData.callId || '';
+        }
+      } catch (dbErr) {
+        console.warn('Could not create initial call record in database:', dbErr);
+      }
+
+      // 5. Connect outbound call via Twilio SDK
       try {
         setCallState('connecting');
 
+        const connectParams: Record<string, string> = {
+          To: validation.normalized,
+        };
+        if (dbCallId) {
+          connectParams.dbCallId = dbCallId;
+        }
+
         const call = await deviceRef.current.connect({
-          params: {
-            To: validation.normalized,
-          },
+          params: connectParams,
         });
 
         activeCallRef.current = call;

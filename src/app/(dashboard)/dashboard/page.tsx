@@ -1,4 +1,6 @@
-import React from 'react';
+'use client';
+
+import React, { useEffect, useState } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -10,21 +12,98 @@ import {
   PhoneMissed,
   MessageSquare,
   Users,
-  Mic,
   ArrowUpRight,
-  TrendingUp,
   Clock,
   ShieldCheck,
+  RefreshCw,
 } from 'lucide-react';
 import Link from 'next/link';
+import { CallRepository, CallWithProfile } from '@/lib/repositories/call.repository';
+import { formatDuration, formatCallTime } from '@/lib/utils';
 
 export default function DashboardPage() {
+  const [calls, setCalls] = useState<CallWithProfile[]>([]);
+  const [todayCount, setTodayCount] = useState<number>(0);
+  const [missedCount, setMissedCount] = useState<number>(0);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+
+  const callRepo = new CallRepository();
+
+  const loadDashboardData = async () => {
+    setIsLoading(true);
+    try {
+      const [fetchedCalls, today, missed] = await Promise.all([
+        callRepo.getCalls(undefined, 5),
+        callRepo.getTodayCallsCount(),
+        callRepo.getMissedCallsCount(),
+      ]);
+
+      setCalls(fetchedCalls);
+      setTodayCount(today);
+      setMissedCount(missed);
+    } catch (err) {
+      console.error('Error loading dashboard data:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadDashboardData();
+  }, []);
+
   const stats = [
-    { title: 'Total Calls Today', value: '48', change: '+12%', icon: PhoneCall, variant: 'blue' as const },
-    { title: 'Missed Calls', value: '3', change: 'Action Required', icon: PhoneMissed, variant: 'rose' as const },
-    { title: 'Messages Handled', value: '124', change: '+18%', icon: MessageSquare, variant: 'emerald' as const },
-    { title: 'Active Agents Online', value: '6 / 8', change: '75% Capacity', icon: Users, variant: 'purple' as const },
+    {
+      title: 'Total Calls Today',
+      value: todayCount.toString(),
+      change: 'Real-time',
+      icon: PhoneCall,
+      variant: 'blue' as const,
+    },
+    {
+      title: 'Missed / Failed Calls',
+      value: missedCount.toString(),
+      change: missedCount > 0 ? 'Needs Follow-up' : 'All Clear',
+      icon: PhoneMissed,
+      variant: (missedCount > 0 ? 'rose' : 'emerald') as 'rose' | 'emerald',
+    },
+    {
+      title: 'Messages Handled',
+      value: '0',
+      change: 'SMS Module',
+      icon: MessageSquare,
+      variant: 'emerald' as const,
+    },
+    {
+      title: 'Active Agents Online',
+      value: '1 Active',
+      change: 'Capacity OK',
+      icon: Users,
+      variant: 'purple' as const,
+    },
   ];
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'completed':
+      case 'answered':
+        return <Badge variant="emerald" size="sm">Completed</Badge>;
+      case 'no-answer':
+        return <Badge variant="rose" size="sm">No Answer</Badge>;
+      case 'busy':
+        return <Badge variant="rose" size="sm">Busy</Badge>;
+      case 'failed':
+        return <Badge variant="rose" size="sm">Failed</Badge>;
+      case 'canceled':
+        return <Badge variant="neutral" size="sm">Canceled</Badge>;
+      case 'ringing':
+        return <Badge variant="amber" pulse size="sm">Ringing</Badge>;
+      case 'initiated':
+        return <Badge variant="blue" pulse size="sm">Initiated</Badge>;
+      default:
+        return <Badge variant="neutral" size="sm">{status}</Badge>;
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -42,15 +121,14 @@ export default function DashboardPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <Button variant="outline" size="sm" onClick={loadDashboardData} disabled={isLoading}>
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+            <span>Refresh</span>
+          </Button>
           <Link href="/phone">
             <Button variant="primary" size="md">
               <PhoneCall className="w-4 h-4" />
               <span>Open Dialer</span>
-            </Button>
-          </Link>
-          <Link href="/calls">
-            <Button variant="secondary" size="md">
-              <span>View Call History</span>
             </Button>
           </Link>
         </div>
@@ -96,7 +174,7 @@ export default function DashboardPage() {
             <CardHeader>
               <CardTitle className="text-sm flex items-center gap-2">
                 <Clock className="w-4 h-4 text-indigo-400" />
-                <span>Recent Team Activity</span>
+                <span>Recent Calls & Activity</span>
               </CardTitle>
               <Link href="/calls" className="text-xs text-blue-400 hover:underline flex items-center gap-1">
                 <span>View all</span>
@@ -105,55 +183,70 @@ export default function DashboardPage() {
             </CardHeader>
 
             <div className="space-y-3">
-              <div className="flex items-center justify-between p-3 rounded-lg bg-slate-950/60 border border-slate-800/80">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
-                    <PhoneIncoming className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold text-slate-200">Inbound Call from Acme Corp (+1 555-0144)</p>
-                    <p className="text-[10px] text-slate-400">Handled by Sarah Jenkins • 04:12 mins</p>
-                  </div>
+              {calls.length === 0 ? (
+                <div className="p-6 text-center text-xs text-slate-500 rounded-lg bg-slate-950/40 border border-slate-800/50">
+                  No call records found yet. Place an outbound call from the dialer to get started.
                 </div>
-                <span className="text-[11px] text-slate-400 font-mono">10 mins ago</span>
-              </div>
+              ) : (
+                calls.map((call) => {
+                  const isOutbound = call.direction === 'outbound';
+                  const isMissed = ['no-answer', 'busy', 'failed', 'canceled'].includes(call.status);
+                  const agentName = call.profiles?.full_name || 'Agent';
 
-              <div className="flex items-center justify-between p-3 rounded-lg bg-slate-950/60 border border-slate-800/80">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-rose-500/10 text-rose-400">
-                    <PhoneMissed className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold text-slate-200">Missed Call from Tech Solutions (+1 555-0188)</p>
-                    <p className="text-[10px] text-rose-400">Unanswered • Needs Follow-up</p>
-                  </div>
-                </div>
-                <span className="text-[11px] text-slate-400 font-mono">24 mins ago</span>
-              </div>
+                  return (
+                    <div
+                      key={call.id}
+                      className="flex items-center justify-between p-3 rounded-lg bg-slate-950/60 border border-slate-800/80 hover:border-slate-700 transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div
+                          className={`p-2 rounded-lg ${
+                            isMissed
+                              ? 'bg-rose-500/10 text-rose-400'
+                              : isOutbound
+                              ? 'bg-blue-500/10 text-blue-400'
+                              : 'bg-emerald-500/10 text-emerald-400'
+                          }`}
+                        >
+                          {isMissed ? (
+                            <PhoneMissed className="w-4 h-4" />
+                          ) : isOutbound ? (
+                            <PhoneOutgoing className="w-4 h-4" />
+                          ) : (
+                            <PhoneIncoming className="w-4 h-4" />
+                          )}
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold text-slate-200">
+                            {isOutbound ? `To: ${call.to_number}` : `From: ${call.from_number}`}
+                          </p>
+                          <p className="text-[10px] text-slate-400">
+                            Agent: {agentName} • Duration: {formatDuration(call.duration_seconds || 0)}
+                          </p>
+                        </div>
+                      </div>
 
-              <div className="flex items-center justify-between p-3 rounded-lg bg-slate-950/60 border border-slate-800/80">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-blue-500/10 text-blue-400">
-                    <PhoneOutgoing className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold text-slate-200">Outbound Call to Global Freight (+1 555-0199)</p>
-                    <p className="text-[10px] text-slate-400">Handled by Alex Smith • 08:45 mins</p>
-                  </div>
-                </div>
-                <span className="text-[11px] text-slate-400 font-mono">1 hour ago</span>
-              </div>
+                      <div className="flex items-center gap-3">
+                        {getStatusBadge(call.status)}
+                        <span className="text-[11px] text-slate-400 font-mono">
+                          {formatCallTime(call.created_at)}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
             </div>
           </Card>
 
-          {/* System Security & Configuration Summary */}
+          {/* System Security Summary */}
           <Card className="bg-slate-900/40">
             <div className="flex items-center gap-3">
               <ShieldCheck className="w-5 h-5 text-emerald-400 shrink-0" />
               <div>
-                <h4 className="text-xs font-semibold text-slate-200">Internal Security & Credentials Isolation</h4>
+                <h4 className="text-xs font-semibold text-slate-200">Twilio Call Logging & Database Protection</h4>
                 <p className="text-[11px] text-slate-400 mt-0.5">
-                  Twilio credentials and Supabase database keys are isolated in server routes. No private API tokens are exposed to browser clients.
+                  Call records and status callbacks are securely synchronized with PostgreSQL Row Level Security (RLS).
                 </p>
               </div>
             </div>

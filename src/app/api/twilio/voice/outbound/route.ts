@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import twilio from 'twilio';
 import { normalizeE164PhoneNumber } from '@/lib/utils';
 import { validateTwilioRequest } from '@/lib/twilio/signature';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 /**
  * Outbound Voice TwiML Webhook Endpoint for Twilio Programmable Voice.
@@ -43,6 +44,23 @@ export async function POST(request: Request) {
       });
     }
 
+    // Extract CallSid and database call ID if available
+    const callSid = params.CallSid || params.callSid || '';
+    const dbCallId = params.dbCallId || params.db_call_id || searchParams.get('dbCallId') || '';
+
+    // If dbCallId and CallSid are present, link them in Supabase using Admin client
+    if (dbCallId && callSid) {
+      try {
+        const adminSupabase = createAdminClient();
+        await (adminSupabase as any)
+          .from('calls')
+          .update({ twilio_call_sid: callSid, updated_at: new Date().toISOString() })
+          .eq('id', dbCallId);
+      } catch (dbErr) {
+        console.error('Error linking CallSid to database record:', dbErr);
+      }
+    }
+
     // Extract destination number passed from browser device.connect({ params: { To: ... } })
     const rawDestination = params.To || params.to || params.PhoneNumber || '';
     const validation = normalizeE164PhoneNumber(rawDestination);
@@ -61,7 +79,17 @@ export async function POST(request: Request) {
     // Dial destination using approved server-side TWILIO_PHONE_NUMBER caller ID
     const callerId = process.env.TWILIO_PHONE_NUMBER || '+18005550199';
     const dial = voiceResponse.dial({ callerId });
-    dial.number(validation.normalized);
+
+    // Attach Status Callback for Phase 6 Call Status Tracking
+    const statusCallbackUrl = '/api/twilio/status';
+    dial.number(
+      {
+        statusCallback: statusCallbackUrl,
+        statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
+        statusCallbackMethod: 'POST',
+      },
+      validation.normalized
+    );
 
     return new NextResponse(voiceResponse.toString(), {
       status: 200,
