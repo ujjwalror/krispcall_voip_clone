@@ -23,9 +23,12 @@ export interface UseTwilioDeviceReturn {
   identity: string | null;
   autoRecordingEnabled: boolean;
   recordCallPreference: boolean;
+  incomingCaller: string | null;
   setRecordCallPreference: (val: boolean) => void;
   initDevice: () => Promise<void>;
   makeCall: (destinationNumber: string) => Promise<boolean>;
+  acceptIncomingCall: () => void;
+  rejectIncomingCall: () => void;
   endCall: () => void;
   toggleMute: () => void;
   clearError: () => void;
@@ -40,9 +43,11 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
   const [identity, setIdentity] = useState<string | null>(null);
   const [autoRecordingEnabled, setAutoRecordingEnabled] = useState<boolean>(true);
   const [recordCallPreference, setRecordCallPreference] = useState<boolean>(true);
+  const [incomingCaller, setIncomingCaller] = useState<string | null>(null);
 
   const deviceRef = useRef<any>(null);
   const activeCallRef = useRef<any>(null);
+  const incomingCallRef = useRef<any>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Timer helpers for connected call duration
@@ -66,6 +71,8 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
       setCallState('idle');
       setIsMuted(false);
       activeCallRef.current = null;
+      incomingCallRef.current = null;
+      setIncomingCaller(null);
     }, 3000);
   }, []);
 
@@ -139,6 +146,37 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
         }
       });
 
+      // Register listener for incoming calls from company number
+      device.on('incoming', (incomingCall: any) => {
+        console.log('[Twilio Device] Incoming browser call detected:', incomingCall.parameters);
+        incomingCallRef.current = incomingCall;
+        const callerNum = incomingCall.parameters?.From || 'Customer';
+        setIncomingCaller(callerNum);
+        setCallState('ringing');
+
+        incomingCall.on('accept', () => {
+          console.log('[Twilio Device] Incoming call accepted.');
+          setCallState('connected');
+          startTimer();
+          activeCallRef.current = incomingCall;
+        });
+
+        incomingCall.on('disconnect', () => {
+          console.log('[Twilio Device] Incoming call disconnected.');
+          stopTimer();
+          setCallState('ended');
+          resetCallStateAfterDelay();
+        });
+
+        incomingCall.on('cancel', () => {
+          console.log('[Twilio Device] Incoming call canceled.');
+          stopTimer();
+          setCallState('idle');
+          setIncomingCaller(null);
+          incomingCallRef.current = null;
+        });
+      });
+
       // Register device
       await device.register();
       deviceRef.current = device;
@@ -147,7 +185,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
       setDeviceStatus('error');
       setErrorMessage(err.message || 'Initialization failed.');
     }
-  }, [fetchRecordingSettings]);
+  }, [fetchRecordingSettings, startTimer, stopTimer, resetCallStateAfterDelay]);
 
   // Make Outbound Call
   const makeCall = useCallback(
@@ -261,8 +299,29 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
     [deviceStatus, initDevice, recordCallPreference, startTimer, stopTimer, resetCallStateAfterDelay]
   );
 
+  // Accept Incoming Call
+  const acceptIncomingCall = useCallback(() => {
+    if (incomingCallRef.current) {
+      incomingCallRef.current.accept();
+    }
+  }, []);
+
+  // Reject Incoming Call
+  const rejectIncomingCall = useCallback(() => {
+    if (incomingCallRef.current) {
+      incomingCallRef.current.reject();
+      incomingCallRef.current = null;
+      setCallState('idle');
+      setIncomingCaller(null);
+    }
+  }, []);
+
   // End Call
   const endCall = useCallback(() => {
+    if (incomingCallRef.current) {
+      incomingCallRef.current.reject();
+      incomingCallRef.current = null;
+    }
     if (activeCallRef.current) {
       activeCallRef.current.disconnect();
       activeCallRef.current = null;
@@ -308,9 +367,12 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
     identity,
     autoRecordingEnabled,
     recordCallPreference,
+    incomingCaller,
     setRecordCallPreference,
     initDevice,
     makeCall,
+    acceptIncomingCall,
+    rejectIncomingCall,
     endCall,
     toggleMute,
     clearError,

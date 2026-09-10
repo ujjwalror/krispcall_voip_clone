@@ -33,9 +33,12 @@ export function DialerWidget() {
     identity,
     autoRecordingEnabled,
     recordCallPreference,
+    incomingCaller,
     setRecordCallPreference,
     initDevice,
     makeCall,
+    acceptIncomingCall,
+    rejectIncomingCall,
     endCall,
     toggleMute,
     clearError,
@@ -132,8 +135,47 @@ export function DialerWidget() {
         </button>
       </div>
 
+      {/* Incoming Call Popup Banner */}
+      {incomingCaller && callState === 'ringing' && (
+        <div className="p-4 rounded-xl bg-blue-950/90 border-2 border-blue-500 shadow-2xl flex flex-col gap-3 animate-bounce">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Phone className="w-4 h-4 text-blue-400 animate-pulse" />
+              <span className="text-xs font-bold text-slate-100 uppercase tracking-wider font-mono">Incoming Call</span>
+            </div>
+            <span className="text-[10px] text-blue-300 font-mono animate-pulse">Ringing...</span>
+          </div>
+
+          <div>
+            <h4 className="text-base font-bold text-white font-mono">{incomingCaller}</h4>
+            <p className="text-[11px] text-slate-400">Customer calling company number</p>
+          </div>
+
+          <div className="flex items-center gap-2 pt-1">
+            <Button
+              variant="success"
+              size="sm"
+              className="flex-1 font-semibold py-2"
+              onClick={acceptIncomingCall}
+            >
+              <Phone className="w-3.5 h-3.5" />
+              <span>Accept</span>
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              className="flex-1 font-semibold py-2"
+              onClick={rejectIncomingCall}
+            >
+              <PhoneOff className="w-3.5 h-3.5" />
+              <span>Reject</span>
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Call State Alert Banner */}
-      {callState !== 'idle' && (
+      {callState !== 'idle' && !incomingCaller && (
         <div
           className={`p-3 rounded-xl border flex items-center justify-between text-xs font-medium ${
             callState === 'connected'

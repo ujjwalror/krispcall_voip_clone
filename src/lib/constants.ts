@@ -70,6 +70,12 @@ export const NAVIGATION_ITEMS: NavItem[] = [
     category: 'admin',
   },
   {
+    name: 'Team & Users',
+    href: '/settings/users',
+    icon: Users,
+    category: 'admin',
+  },
+  {
     name: 'Settings',
     href: '/settings',
     icon: Settings,

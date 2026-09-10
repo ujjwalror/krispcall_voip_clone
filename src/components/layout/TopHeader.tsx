@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { NAVIGATION_ITEMS } from '@/lib/constants';
 import { AgentStatus } from '@/lib/types';
 import { AgentStatusSelector } from './AgentStatusSelector';
+import { PresenceSelector } from './PresenceSelector';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { useAuth } from '@/components/providers/AuthProvider';
@@ -60,8 +61,8 @@ export function TopHeader() {
 
         <div className="h-5 w-px bg-slate-800" />
 
-        {/* Agent Live Status Selector */}
-        <AgentStatusSelector currentStatus={agentStatus} onStatusChange={setAgentStatus} />
+        {/* Agent Presence & Heartbeat Selector */}
+        <PresenceSelector />
 
         <div className="h-5 w-px bg-slate-800" />
 

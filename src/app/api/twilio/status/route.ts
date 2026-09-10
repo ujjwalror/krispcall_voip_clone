@@ -62,12 +62,29 @@ export async function POST(request: Request) {
     let dbStatus = rawStatus;
     if (rawStatus === 'in-progress') {
       dbStatus = 'answered';
+    } else if (['no-answer', 'busy', 'canceled', 'failed'].includes(rawStatus)) {
+      dbStatus = 'missed';
     }
 
     const updatePayload: Record<string, any> = {
       status: dbStatus,
       updated_at: new Date().toISOString(),
     };
+
+    // Extract answering agent identity if available from Twilio client call
+    const calledTarget = params.Called || params.DialCallTarget || params.To || '';
+    if (calledTarget.includes('client:')) {
+      const twilioIdentity = calledTarget.split('client:')[1] || '';
+      const adminSupabase = createAdminClient();
+      const { data: profileMatch } = await (adminSupabase as any)
+        .from('profiles')
+        .select('id')
+        .eq('twilio_identity', twilioIdentity)
+        .single();
+      if (profileMatch && profileMatch.id) {
+        updatePayload.user_id = profileMatch.id;
+      }
+    }
 
     if (callSid) {
       updatePayload.twilio_call_sid = callSid;
@@ -79,10 +96,7 @@ export async function POST(request: Request) {
       updatePayload.answered_at = nowIso;
     } else if (
       dbStatus === 'completed' ||
-      dbStatus === 'no-answer' ||
-      dbStatus === 'busy' ||
-      dbStatus === 'failed' ||
-      dbStatus === 'canceled'
+      dbStatus === 'missed'
     ) {
       updatePayload.ended_at = nowIso;
       updatePayload.duration_seconds = durationSeconds;
