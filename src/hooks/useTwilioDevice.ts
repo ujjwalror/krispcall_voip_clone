@@ -21,6 +21,9 @@ export interface UseTwilioDeviceReturn {
   isMuted: boolean;
   errorMessage: string | null;
   identity: string | null;
+  autoRecordingEnabled: boolean;
+  recordCallPreference: boolean;
+  setRecordCallPreference: (val: boolean) => void;
   initDevice: () => Promise<void>;
   makeCall: (destinationNumber: string) => Promise<boolean>;
   endCall: () => void;
@@ -35,6 +38,8 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [identity, setIdentity] = useState<string | null>(null);
+  const [autoRecordingEnabled, setAutoRecordingEnabled] = useState<boolean>(true);
+  const [recordCallPreference, setRecordCallPreference] = useState<boolean>(true);
 
   const deviceRef = useRef<any>(null);
   const activeCallRef = useRef<any>(null);
@@ -64,6 +69,21 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
     }, 3000);
   }, []);
 
+  // Fetch workspace recording settings
+  const fetchRecordingSettings = useCallback(async () => {
+    try {
+      const res = await fetch('/api/twilio/settings/recording');
+      if (res.ok) {
+        const data = await res.json();
+        const isAuto = Boolean(data.autoRecordingEnabled);
+        setAutoRecordingEnabled(isAuto);
+        setRecordCallPreference(isAuto);
+      }
+    } catch (err) {
+      console.warn('Error fetching workspace recording settings:', err);
+    }
+  }, []);
+
   // Initialize Twilio.Device (client-side only)
   const initDevice = useCallback(async () => {
     if (typeof window === 'undefined') return;
@@ -73,8 +93,12 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
     setErrorMessage(null);
 
     try {
-      // 1. Fetch access token from server endpoint
-      const tokenData = await fetchVoiceAccessToken();
+      // 1. Fetch access token and workspace recording preferences
+      const [tokenData] = await Promise.all([
+        fetchVoiceAccessToken(),
+        fetchRecordingSettings(),
+      ]);
+
       if (!tokenData || !tokenData.token) {
         setDeviceStatus('error');
         setErrorMessage('Failed to retrieve Twilio Voice token from server.');
@@ -123,7 +147,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
       setDeviceStatus('error');
       setErrorMessage(err.message || 'Initialization failed.');
     }
-  }, []);
+  }, [fetchRecordingSettings]);
 
   // Make Outbound Call
   const makeCall = useCallback(
@@ -140,7 +164,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
       // 2. Request microphone permission
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach((track) => track.stop()); // release temporary test stream
+        stream.getTracks().forEach((track) => track.stop());
       } catch (micErr: any) {
         console.warn('Microphone permission denied:', micErr);
         setCallState('permission_denied');
@@ -158,13 +182,16 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
         }
       }
 
-      // 4. Create database call record in Supabase (Phase 6)
+      // 4. Create database call record in Supabase with recordCall preference (Phase 6 & 7)
       let dbCallId = '';
       try {
         const createRes = await fetch('/api/twilio/calls/create', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ destination: validation.normalized }),
+          body: JSON.stringify({
+            destination: validation.normalized,
+            recordCall: recordCallPreference,
+          }),
         });
         if (createRes.ok) {
           const createData = await createRes.json();
@@ -180,6 +207,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
 
         const connectParams: Record<string, string> = {
           To: validation.normalized,
+          recordCall: String(recordCallPreference),
         };
         if (dbCallId) {
           connectParams.dbCallId = dbCallId;
@@ -230,7 +258,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
         return false;
       }
     },
-    [deviceStatus, initDevice, startTimer, stopTimer, resetCallStateAfterDelay]
+    [deviceStatus, initDevice, recordCallPreference, startTimer, stopTimer, resetCallStateAfterDelay]
   );
 
   // End Call
@@ -278,6 +306,9 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
     isMuted,
     errorMessage,
     identity,
+    autoRecordingEnabled,
+    recordCallPreference,
+    setRecordCallPreference,
     initDevice,
     makeCall,
     endCall,

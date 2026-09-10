@@ -47,6 +47,7 @@ export async function POST(request: Request) {
       );
     }
 
+    const recordCall = Boolean(body.recordCall);
     const fromNumber = process.env.TWILIO_PHONE_NUMBER || '+18005550199';
 
     // 4. Create database call record
@@ -59,6 +60,7 @@ export async function POST(request: Request) {
         from_number: fromNumber,
         to_number: validation.normalized,
         status: 'initiated',
+        record_call: recordCall,
         started_at: new Date().toISOString(),
       } as any)
       .select()

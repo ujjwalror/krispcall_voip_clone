@@ -36,8 +36,12 @@ export async function middleware(request: NextRequest) {
 
   const pathname = request.nextUrl.pathname;
 
-  // Exclude Twilio server webhooks (e.g. /api/twilio/voice/outbound, /api/twilio/status) from browser authentication redirects
-  if (pathname.startsWith('/api/twilio/voice/') || pathname.startsWith('/api/twilio/status')) {
+  // Exclude Twilio server webhooks (e.g. /api/twilio/voice/outbound, /api/twilio/status, /api/twilio/recording) from browser authentication redirects
+  if (
+    pathname.startsWith('/api/twilio/voice/') ||
+    pathname.startsWith('/api/twilio/status') ||
+    pathname.startsWith('/api/twilio/recording')
+  ) {
     return NextResponse.next();
   }
 

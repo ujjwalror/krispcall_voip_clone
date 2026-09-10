@@ -16,6 +16,7 @@ import {
   AlertTriangle,
   Loader2,
   CheckCircle2,
+  Radio,
 } from 'lucide-react';
 import { formatPhoneNumber, formatDuration } from '@/lib/utils';
 import { useTwilioDevice } from '@/hooks/useTwilioDevice';
@@ -30,6 +31,9 @@ export function DialerWidget() {
     isMuted,
     errorMessage,
     identity,
+    autoRecordingEnabled,
+    recordCallPreference,
+    setRecordCallPreference,
     initDevice,
     makeCall,
     endCall,
@@ -104,6 +108,28 @@ export function DialerWidget() {
             Unconfigured
           </Badge>
         )}
+      </div>
+
+      {/* Per-Call Recording Override Controls */}
+      <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-slate-950/60 border border-slate-800/80 text-xs">
+        <div className="flex items-center gap-2">
+          <Radio className={`w-3.5 h-3.5 ${recordCallPreference ? 'text-rose-400 animate-pulse' : 'text-slate-500'}`} />
+          <span className="text-slate-300 font-medium text-[11px]">
+            Call Recording: <strong className={recordCallPreference ? 'text-rose-400' : 'text-slate-400'}>{recordCallPreference ? 'ON' : 'OFF'}</strong>
+          </span>
+        </div>
+        <button
+          onClick={() => setRecordCallPreference(!recordCallPreference)}
+          disabled={isCallActive}
+          title={`Workspace default is ${autoRecordingEnabled ? 'Auto-Record ON' : 'Auto-Record OFF'}. Click to toggle for this call.`}
+          className={`px-2.5 py-1 rounded-lg text-[10px] font-bold tracking-wider uppercase transition-colors border ${
+            recordCallPreference
+              ? 'bg-rose-950/80 border-rose-600/80 text-rose-300 hover:bg-rose-900/80'
+              : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:text-slate-200'
+          }`}
+        >
+          {recordCallPreference ? 'Disable REC' : 'Enable REC'}
+        </button>
       </div>
 
       {/* Call State Alert Banner */}

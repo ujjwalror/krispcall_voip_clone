@@ -48,22 +48,40 @@ export async function POST(request: Request) {
     const callSid = params.CallSid || params.callSid || '';
     const dbCallId = params.dbCallId || params.db_call_id || searchParams.get('dbCallId') || '';
 
-    console.log(`[Twilio Outbound Webhook] Received CallSid: "${callSid}", dbCallId: "${dbCallId}"`);
+    // Check recordCall preference from parameters or DB
+    let shouldRecord = params.recordCall === 'true' || params.record_call === 'true';
 
-    // If dbCallId and CallSid are present, link them in Supabase using Admin client
-    if (dbCallId && callSid) {
+    console.log(`[Twilio Outbound Webhook] Received CallSid: "${callSid}", dbCallId: "${dbCallId}", RecordCallParam: "${params.recordCall}"`);
+
+    // If dbCallId is present, query DB record or link CallSid
+    if (dbCallId) {
       try {
         const adminSupabase = createAdminClient();
-        const { data, error: linkErr } = await (adminSupabase as any)
-          .from('calls')
-          .update({ twilio_call_sid: callSid, updated_at: new Date().toISOString() })
-          .eq('id', dbCallId)
-          .select();
 
-        const matchedRows = Array.isArray(data) ? data.length : 0;
-        console.log(`[Twilio Outbound Webhook] Linked CallSid "${callSid}" to dbCallId "${dbCallId}". Matched rows: ${matchedRows}`);
-        if (linkErr) {
-          console.error('[Twilio Outbound Webhook] Link error:', linkErr);
+        // Query database call record to verify record_call setting if not explicitly set
+        if (!shouldRecord) {
+          const { data: dbCall } = await (adminSupabase as any)
+            .from('calls')
+            .select('record_call')
+            .eq('id', dbCallId)
+            .single();
+          if (dbCall && dbCall.record_call) {
+            shouldRecord = true;
+          }
+        }
+
+        if (callSid) {
+          const { data, error: linkErr } = await (adminSupabase as any)
+            .from('calls')
+            .update({ twilio_call_sid: callSid, updated_at: new Date().toISOString() })
+            .eq('id', dbCallId)
+            .select();
+
+          const matchedRows = Array.isArray(data) ? data.length : 0;
+          console.log(`[Twilio Outbound Webhook] Linked CallSid "${callSid}" to dbCallId "${dbCallId}". Matched rows: ${matchedRows}`);
+          if (linkErr) {
+            console.error('[Twilio Outbound Webhook] Link error:', linkErr);
+          }
         }
       } catch (dbErr) {
         console.error('[Twilio Outbound Webhook] Exception linking CallSid to DB record:', dbErr);
@@ -89,19 +107,33 @@ export async function POST(request: Request) {
     const callerId = process.env.TWILIO_PHONE_NUMBER || '+18005550199';
     const dial = voiceResponse.dial({ callerId });
 
-    // Append dbCallId as query param to statusCallback so Twilio status webhooks carry dbCallId
+    // Append dbCallId as query param to statusCallback and recordingStatusCallback
     const statusCallbackUrl = dbCallId
       ? `/api/twilio/status?dbCallId=${encodeURIComponent(dbCallId)}`
       : '/api/twilio/status';
 
-    dial.number(
-      {
-        statusCallback: statusCallbackUrl,
-        statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
-        statusCallbackMethod: 'POST',
-      },
-      validation.normalized
-    );
+    const dialOptions: Record<string, any> = {
+      statusCallback: statusCallbackUrl,
+      statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
+      statusCallbackMethod: 'POST',
+    };
+
+    // If recording is enabled for this call, attach record="record-from-answer" and recordingStatusCallback
+    if (shouldRecord) {
+      console.log(`[Twilio Outbound Webhook] Call recording is ENABLED for call ${dbCallId || callSid}. Attaching record="record-from-answer".`);
+      const recordingStatusCallbackUrl = dbCallId
+        ? `/api/twilio/recording?dbCallId=${encodeURIComponent(dbCallId)}`
+        : '/api/twilio/recording';
+
+      dialOptions.record = 'record-from-answer'; // Twilio records ONLY when answered
+      dialOptions.recordingStatusCallback = recordingStatusCallbackUrl;
+      dialOptions.recordingStatusCallbackEvent = ['completed'];
+      dialOptions.recordingStatusCallbackMethod = 'POST';
+    } else {
+      console.log(`[Twilio Outbound Webhook] Call recording is DISABLED for call ${dbCallId || callSid}.`);
+    }
+
+    dial.number(dialOptions, validation.normalized);
 
     return new NextResponse(voiceResponse.toString(), {
       status: 200,

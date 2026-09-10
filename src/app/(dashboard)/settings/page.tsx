@@ -1,18 +1,130 @@
-import React from 'react';
+'use client';
+
+import React, { useEffect, useState } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Settings, Volume2, Mic, Bell, Shield, Radio } from 'lucide-react';
+import { Settings, Volume2, Mic, Bell, Radio, Shield, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react';
 
 export default function SettingsPage() {
+  const [autoRecording, setAutoRecording] = useState<boolean>(true);
+  const [role, setRole] = useState<string>('agent');
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const fetchSettings = async () => {
+    setIsLoading(true);
+    try {
+      const res = await fetch('/api/twilio/settings/recording');
+      if (res.ok) {
+        const data = await res.json();
+        setAutoRecording(Boolean(data.autoRecordingEnabled));
+        setRole(data.role || 'agent');
+      }
+    } catch (err) {
+      console.error('Error fetching settings:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchSettings();
+  }, []);
+
+  const handleToggleAutoRecording = async (nextVal: boolean) => {
+    if (role !== 'admin') return;
+    setIsSaving(true);
+    setMessage(null);
+    try {
+      const res = await fetch('/api/twilio/settings/recording', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ autoRecordingEnabled: nextVal }),
+      });
+      if (res.ok) {
+        setAutoRecording(nextVal);
+        setMessage('Workspace call recording preferences updated successfully.');
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setMessage(errData.error || 'Failed to update workspace setting.');
+      }
+    } catch (err) {
+      console.error('Error updating recording setting:', err);
+      setMessage('Network error updating setting.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
       <div className="border-b border-slate-800 pb-4">
         <h1 className="text-xl font-bold text-slate-100">Agent & Telecom Settings</h1>
-        <p className="text-xs text-slate-400">Configure WebRTC audio devices, notifications, and workplace preferences.</p>
+        <p className="text-xs text-slate-400">Configure WebRTC audio devices, workspace call recording, and alert preferences.</p>
       </div>
 
       <div className="space-y-6">
+        {/* Workspace Call Recording Preferences */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Radio className="w-4 h-4 text-rose-400" />
+              <span>Workspace Automatic Call Recording</span>
+            </CardTitle>
+            {role === 'admin' ? (
+              <Badge variant="purple" size="sm">ADMIN CONTROL</Badge>
+            ) : (
+              <Badge variant="neutral" size="sm">AGENT VIEW</Badge>
+            )}
+          </CardHeader>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between p-4 rounded-xl bg-slate-950/80 border border-slate-800">
+              <div className="space-y-1 pr-4">
+                <p className="text-xs font-bold text-slate-200 flex items-center gap-2">
+                  <span>Automatic Recording for All Calls</span>
+                  <Badge variant={autoRecording ? 'rose' : 'neutral'} size="sm">
+                    {autoRecording ? 'AUTO REC ON' : 'AUTO REC OFF'}
+                  </Badge>
+                </p>
+                <p className="text-[11px] text-slate-400">
+                  When enabled, all outbound calls in the workspace default to recording ON. Individual agents can override this setting per-call in the dialer.
+                </p>
+              </div>
+
+              {role === 'admin' ? (
+                <button
+                  onClick={() => handleToggleAutoRecording(!autoRecording)}
+                  disabled={isSaving || isLoading}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border shrink-0 ${
+                    autoRecording
+                      ? 'bg-rose-950/90 border-rose-600 text-rose-200 hover:bg-rose-900/90'
+                      : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                  }`}
+                >
+                  {isSaving ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : autoRecording ? (
+                    'Disable Auto REC'
+                  ) : (
+                    'Enable Auto REC'
+                  )}
+                </button>
+              ) : (
+                <span className="text-[10px] text-slate-500 font-mono">Managed by Admin</span>
+              )}
+            </div>
+
+            {message && (
+              <p className="text-xs text-emerald-400 font-medium flex items-center gap-1.5 pt-1">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>{message}</span>
+              </p>
+            )}
+          </div>
+        </Card>
+
         {/* WebRTC Audio Preferences */}
         <Card>
           <CardHeader>
