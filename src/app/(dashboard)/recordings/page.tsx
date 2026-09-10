@@ -42,7 +42,8 @@ export default function RecordingsPage() {
       if (audioRef.current) {
         audioRef.current.pause();
       }
-      const audio = new Audio(rec.recording_url);
+      const playUrl = `/api/twilio/recording/play/${rec.id}`;
+      const audio = new Audio(playUrl);
       audio.onended = () => setActivePlayingId(null);
       audio.play().catch((err) => console.error('Audio playback error:', err));
       audioRef.current = audio;
@@ -131,10 +132,10 @@ export default function RecordingsPage() {
                       </div>
                     </div>
                     <a
-                      href={rec.recording_url}
+                      href={`/api/twilio/recording/play/${rec.id}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      download
+                      download={`recording-${rec.id}.mp3`}
                       className="p-1.5 text-slate-400 hover:text-slate-200"
                       title="Download Audio MP3"
                     >
