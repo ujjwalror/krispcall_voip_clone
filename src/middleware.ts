@@ -35,6 +35,12 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const pathname = request.nextUrl.pathname;
+
+  // Exclude Twilio server webhooks (e.g. /api/twilio/voice/outbound) from browser authentication redirects
+  if (pathname.startsWith('/api/twilio/voice/')) {
+    return NextResponse.next();
+  }
+
   const isAuthRoute =
     pathname === '/login' ||
     pathname === '/forgot-password' ||
