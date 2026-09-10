@@ -103,37 +103,45 @@ export async function POST(request: Request) {
       });
     }
 
+    // Base application URL for absolute callbacks
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://krispcall-voip-clone-udlg.vercel.app';
+
     // Dial destination using approved server-side TWILIO_PHONE_NUMBER caller ID
     const callerId = process.env.TWILIO_PHONE_NUMBER || '+18005550199';
-    const dial = voiceResponse.dial({ callerId });
-
-    // Append dbCallId as query param to statusCallback and recordingStatusCallback
-    const statusCallbackUrl = dbCallId
-      ? `/api/twilio/status?dbCallId=${encodeURIComponent(dbCallId)}`
-      : '/api/twilio/status';
 
     const dialOptions: Record<string, any> = {
-      statusCallback: statusCallbackUrl,
-      statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
-      statusCallbackMethod: 'POST',
+      callerId,
     };
 
-    // If recording is enabled for this call, attach record="record-from-answer" and recordingStatusCallback
+    // If recording is enabled for this call, attach record="record-from-answer" and recordingStatusCallback to <Dial>
     if (shouldRecord) {
-      console.log(`[Twilio Outbound Webhook] Call recording is ENABLED for call ${dbCallId || callSid}. Attaching record="record-from-answer".`);
+      console.log(`[Twilio Recording] Enabled for dbCallId: ${dbCallId || callSid}`);
       const recordingStatusCallbackUrl = dbCallId
-        ? `/api/twilio/recording?dbCallId=${encodeURIComponent(dbCallId)}`
-        : '/api/twilio/recording';
+        ? `${baseUrl}/api/twilio/recording?dbCallId=${encodeURIComponent(dbCallId)}`
+        : `${baseUrl}/api/twilio/recording`;
 
       dialOptions.record = 'record-from-answer'; // Twilio records ONLY when answered
       dialOptions.recordingStatusCallback = recordingStatusCallbackUrl;
-      dialOptions.recordingStatusCallbackEvent = ['completed'];
+      dialOptions.recordingStatusCallbackEvent = 'completed';
       dialOptions.recordingStatusCallbackMethod = 'POST';
     } else {
       console.log(`[Twilio Outbound Webhook] Call recording is DISABLED for call ${dbCallId || callSid}.`);
     }
 
-    dial.number(dialOptions, validation.normalized);
+    const dial = voiceResponse.dial(dialOptions);
+
+    // Call leg status callbacks attached to <Number>
+    const statusCallbackUrl = dbCallId
+      ? `${baseUrl}/api/twilio/status?dbCallId=${encodeURIComponent(dbCallId)}`
+      : `${baseUrl}/api/twilio/status`;
+
+    const numberOptions: Record<string, any> = {
+      statusCallback: statusCallbackUrl,
+      statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
+      statusCallbackMethod: 'POST',
+    };
+
+    dial.number(numberOptions, validation.normalized);
 
     return new NextResponse(voiceResponse.toString(), {
       status: 200,
