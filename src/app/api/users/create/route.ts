@@ -72,31 +72,33 @@ export async function POST(request: Request) {
       .eq('organization_id', adminProfile.organization_id)
       .order('created_at', { ascending: true });
 
-    const existingExtensions: string[] = [];
+    const assignedExtensions: string[] = [];
     const profilesToUpdate: { id: string; ext: string }[] = [];
-    let nextAvailableDefault = 101;
 
     (orgProfiles || []).forEach((p: any) => {
-      if (p.extension && typeof p.extension === 'string' && p.extension.trim()) {
-        const trimmed = p.extension.trim();
-        existingExtensions.push(trimmed);
-        const parsed = parseInt(trimmed, 10);
-        if (!isNaN(parsed) && parsed >= nextAvailableDefault) {
-          nextAvailableDefault = parsed + 1;
-        }
+      const ext = p.extension && typeof p.extension === 'string' ? p.extension.trim() : '';
+      if (ext && !assignedExtensions.includes(ext)) {
+        assignedExtensions.push(ext);
       } else {
-        // Auto-assign default extension to legacy profile with null extension
-        while (existingExtensions.includes(String(nextAvailableDefault))) {
-          nextAvailableDefault++;
+        // Calculate next available numeric extension >= 101 for duplicate or null extensions
+        const numericExts = assignedExtensions
+          .map((e) => parseInt(e, 10))
+          .filter((n) => !isNaN(n) && n >= 100);
+
+        let nextExt = 101;
+        if (numericExts.length > 0) {
+          nextExt = Math.max(...numericExts) + 1;
         }
-        const assignedExt = String(nextAvailableDefault);
-        existingExtensions.push(assignedExt);
-        profilesToUpdate.push({ id: p.id, ext: assignedExt });
-        nextAvailableDefault++;
+        while (assignedExtensions.includes(String(nextExt))) {
+          nextExt++;
+        }
+        const newExtStr = String(nextExt);
+        assignedExtensions.push(newExtStr);
+        profilesToUpdate.push({ id: p.id, ext: newExtStr });
       }
     });
 
-    // Backfill any legacy profiles in database that had NULL extensions
+    // Backfill any duplicate/null extension profiles in database
     for (const updateItem of profilesToUpdate) {
       await (adminSupabase as any)
         .from('profiles')
@@ -107,7 +109,7 @@ export async function POST(request: Request) {
     let finalExtension = (extension || '').trim();
 
     if (finalExtension) {
-      if (existingExtensions.includes(finalExtension)) {
+      if (assignedExtensions.includes(finalExtension)) {
         return NextResponse.json(
           { error: `Extension "${finalExtension}" is already assigned in your organization.` },
           { status: 400 }
@@ -115,7 +117,7 @@ export async function POST(request: Request) {
       }
     } else {
       // Find highest numeric extension >= 100
-      const numericExts = existingExtensions
+      const numericExts = assignedExtensions
         .map((ext) => parseInt(ext, 10))
         .filter((n) => !isNaN(n) && n >= 100);
 
@@ -124,7 +126,7 @@ export async function POST(request: Request) {
         nextExt = Math.max(...numericExts) + 1;
       }
 
-      while (existingExtensions.includes(String(nextExt))) {
+      while (assignedExtensions.includes(String(nextExt))) {
         nextExt++;
       }
       finalExtension = String(nextExt);
