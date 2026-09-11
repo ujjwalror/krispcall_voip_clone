@@ -36,10 +36,20 @@ EXCEPTION
     WHEN OTHERS THEN NULL;
 END $$;
 
--- 3. Populate twilio_identity for any profile where it is null
+-- 3. Populate twilio_identity & extension for any profile where it is null
 UPDATE public.profiles
 SET twilio_identity = 'agent_' || REPLACE(id::text, '-', '')
 WHERE twilio_identity IS NULL;
+
+WITH numbered_profiles AS (
+    SELECT id, ROW_NUMBER() OVER (PARTITION BY organization_id ORDER BY created_at ASC) + 100 AS auto_ext
+    FROM public.profiles
+    WHERE extension IS NULL
+)
+UPDATE public.profiles p
+SET extension = np.auto_ext::text
+FROM numbered_profiles np
+WHERE p.id = np.id;
 
 -- 4. Add routing_strategy and last_routed_user_id columns to public.organizations
 DO $$

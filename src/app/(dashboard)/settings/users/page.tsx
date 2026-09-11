@@ -351,7 +351,7 @@ Please change your password after first login.`;
                         )}
                       </div>
                       <p className="text-xs text-slate-400 font-mono mt-0.5">
-                        {member.email} • Ext: <span className="text-blue-400">{member.extension || '101'}</span> • Identity: <span className="text-slate-300">{member.twilio_identity}</span>
+                        {member.email} • Ext: <span className="text-blue-400">{member.extension || 'Unassigned'}</span> • Identity: <span className="text-slate-300">{member.twilio_identity}</span>
                       </p>
                     </div>
                   </div>

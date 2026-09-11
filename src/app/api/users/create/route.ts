@@ -68,12 +68,41 @@ export async function POST(request: Request) {
     // 4. Extension Auto-Assignment & Uniqueness Check within organization
     const { data: orgProfiles } = await (adminSupabase as any)
       .from('profiles')
-      .select('extension')
-      .eq('organization_id', adminProfile.organization_id);
+      .select('id, extension, created_at')
+      .eq('organization_id', adminProfile.organization_id)
+      .order('created_at', { ascending: true });
 
-    const existingExtensions = (orgProfiles || [])
-      .map((p: any) => p.extension)
-      .filter((ext: any) => ext && typeof ext === 'string');
+    const existingExtensions: string[] = [];
+    const profilesToUpdate: { id: string; ext: string }[] = [];
+    let nextAvailableDefault = 101;
+
+    (orgProfiles || []).forEach((p: any) => {
+      if (p.extension && typeof p.extension === 'string' && p.extension.trim()) {
+        const trimmed = p.extension.trim();
+        existingExtensions.push(trimmed);
+        const parsed = parseInt(trimmed, 10);
+        if (!isNaN(parsed) && parsed >= nextAvailableDefault) {
+          nextAvailableDefault = parsed + 1;
+        }
+      } else {
+        // Auto-assign default extension to legacy profile with null extension
+        while (existingExtensions.includes(String(nextAvailableDefault))) {
+          nextAvailableDefault++;
+        }
+        const assignedExt = String(nextAvailableDefault);
+        existingExtensions.push(assignedExt);
+        profilesToUpdate.push({ id: p.id, ext: assignedExt });
+        nextAvailableDefault++;
+      }
+    });
+
+    // Backfill any legacy profiles in database that had NULL extensions
+    for (const updateItem of profilesToUpdate) {
+      await (adminSupabase as any)
+        .from('profiles')
+        .update({ extension: updateItem.ext, updated_at: new Date().toISOString() })
+        .eq('id', updateItem.id);
+    }
 
     let finalExtension = (extension || '').trim();
 
@@ -85,17 +114,16 @@ export async function POST(request: Request) {
         );
       }
     } else {
-      // Auto-assign next integer extension starting at 101
+      // Find highest numeric extension >= 100
       const numericExts = existingExtensions
-        .map((ext: string) => parseInt(ext, 10))
-        .filter((n: number) => !isNaN(n) && n >= 100);
+        .map((ext) => parseInt(ext, 10))
+        .filter((n) => !isNaN(n) && n >= 100);
 
       let nextExt = 101;
       if (numericExts.length > 0) {
         nextExt = Math.max(...numericExts) + 1;
       }
 
-      // Ensure calculated extension doesn't conflict
       while (existingExtensions.includes(String(nextExt))) {
         nextExt++;
       }
