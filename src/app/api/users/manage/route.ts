@@ -103,10 +103,33 @@ export async function POST(request: Request) {
     }
 
     if (action === 'update_member' && userId) {
+      const { fullName } = body;
       const updates: Record<string, any> = { updated_at: new Date().toISOString() };
+      if (fullName && typeof fullName === 'string') updates.full_name = fullName.trim();
       if (role && ['admin', 'manager', 'agent'].includes(role)) updates.role = role;
-      if (extension !== undefined) updates.extension = extension;
       if (typeof active === 'boolean') updates.active = active;
+
+      if (extension !== undefined) {
+        const trimmedExt = String(extension).trim();
+        if (trimmedExt) {
+          // Check extension uniqueness in org
+          const { data: extConflict } = await (adminSupabase as any)
+            .from('profiles')
+            .select('id')
+            .eq('organization_id', profile.organization_id)
+            .eq('extension', trimmedExt)
+            .neq('id', userId)
+            .maybeSingle();
+
+          if (extConflict) {
+            return NextResponse.json(
+              { error: `Extension "${trimmedExt}" is already in use by another team member.` },
+              { status: 400 }
+            );
+          }
+        }
+        updates.extension = trimmedExt || null;
+      }
 
       const { data: updatedMember, error: err } = await (adminSupabase as any)
         .from('profiles')
