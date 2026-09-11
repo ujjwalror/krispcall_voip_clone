@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { formatDuration, formatCallTime } from '@/lib/utils';
 import { CallRepository, CallWithProfile } from '@/lib/repositories/call.repository';
+import { useAuth } from '@/components/providers/AuthProvider';
 import Link from 'next/link';
 
 export default function CallsPage() {
@@ -30,12 +31,14 @@ export default function CallsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
 
+  const { profile } = useAuth();
   const callRepo = new CallRepository();
 
   const loadCalls = useCallback(async () => {
     setIsLoading(true);
     try {
       const results = await callRepo.getFilteredCalls({
+        organizationId: profile?.organization_id,
         direction: directionFilter,
         status: statusFilter,
         search: searchQuery,
@@ -47,7 +50,7 @@ export default function CallsPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [directionFilter, statusFilter, searchQuery]);
+  }, [profile?.organization_id, directionFilter, statusFilter, searchQuery]);
 
   useEffect(() => {
     loadCalls();
@@ -60,50 +63,57 @@ export default function CallsPage() {
         return (
           <Badge variant="emerald" size="sm">
             <CheckCircle2 className="w-2.5 h-2.5" />
-            Completed
+            COMPLETED
+          </Badge>
+        );
+      case 'in-progress':
+        return (
+          <Badge variant="blue" pulse size="sm">
+            <PhoneCall className="w-2.5 h-2.5" />
+            IN CALL
           </Badge>
         );
       case 'no-answer':
         return (
           <Badge variant="rose" size="sm">
             <PhoneMissed className="w-2.5 h-2.5" />
-            No Answer
+            NO ANSWER
           </Badge>
         );
       case 'busy':
         return (
           <Badge variant="rose" size="sm">
             <XCircle className="w-2.5 h-2.5" />
-            Busy
+            BUSY
           </Badge>
         );
       case 'failed':
         return (
           <Badge variant="rose" size="sm">
             <AlertTriangle className="w-2.5 h-2.5" />
-            Failed
+            FAILED
           </Badge>
         );
       case 'canceled':
         return (
           <Badge variant="neutral" size="sm">
-            Canceled
+            CANCELED
           </Badge>
         );
       case 'ringing':
         return (
           <Badge variant="amber" pulse size="sm">
-            Ringing
+            RINGING
           </Badge>
         );
       case 'initiated':
         return (
           <Badge variant="blue" pulse size="sm">
-            Initiated
+            INITIATED
           </Badge>
         );
       default:
-        return <Badge variant="neutral" size="sm">{status}</Badge>;
+        return <Badge variant="neutral" size="sm">{status ? status.toUpperCase() : 'UNKNOWN'}</Badge>;
     }
   };
 
@@ -259,7 +269,7 @@ export default function CallsPage() {
                         {formatCallTime(log.created_at)}
                       </td>
                       <td className="px-5 py-4 text-right">
-                        <Link href="/phone">
+                        <Link href={`/phone?number=${encodeURIComponent(isOutbound ? log.to_number : log.from_number)}`}>
                           <Button variant="ghost" size="sm" className="text-blue-400 hover:text-blue-300">
                             <PhoneCall className="w-3.5 h-3.5" />
                             <span>Redial</span>

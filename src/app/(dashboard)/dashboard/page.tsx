@@ -19,28 +19,37 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { CallRepository, CallWithProfile } from '@/lib/repositories/call.repository';
+import { useAuth } from '@/components/providers/AuthProvider';
 import { formatDuration, formatCallTime } from '@/lib/utils';
 
 export default function DashboardPage() {
   const [calls, setCalls] = useState<CallWithProfile[]>([]);
-  const [todayCount, setTodayCount] = useState<number>(0);
+  const [totalCount, setTotalCount] = useState<number>(0);
   const [missedCount, setMissedCount] = useState<number>(0);
+  const [activeAgentsCount, setActiveAgentsCount] = useState<number>(0);
+  const [messagesCount, setMessagesCount] = useState<number>(0);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
+  const { profile } = useAuth();
   const callRepo = new CallRepository();
 
   const loadDashboardData = async () => {
     setIsLoading(true);
     try {
-      const [fetchedCalls, today, missed] = await Promise.all([
-        callRepo.getCalls(undefined, 5),
-        callRepo.getTodayCallsCount(),
-        callRepo.getMissedCallsCount(),
+      const orgId = profile?.organization_id;
+      const [fetchedCalls, total, missed, activeAgents, messages] = await Promise.all([
+        callRepo.getCalls(orgId, 5),
+        callRepo.getTotalCallsCount(orgId),
+        callRepo.getMissedInboundCallsCount(orgId),
+        callRepo.getActiveAgentsCount(orgId),
+        callRepo.getMessagesCount(orgId),
       ]);
 
       setCalls(fetchedCalls);
-      setTodayCount(today);
+      setTotalCount(total);
       setMissedCount(missed);
+      setActiveAgentsCount(activeAgents);
+      setMessagesCount(messages);
     } catch (err) {
       console.error('Error loading dashboard data:', err);
     } finally {
@@ -49,19 +58,23 @@ export default function DashboardPage() {
   };
 
   useEffect(() => {
-    loadDashboardData();
-  }, []);
+    if (profile?.organization_id) {
+      loadDashboardData();
+    } else {
+      setIsLoading(false);
+    }
+  }, [profile?.organization_id]);
 
   const stats = [
     {
-      title: 'Total Calls Today',
-      value: todayCount.toString(),
+      title: 'Total Workspace Calls',
+      value: totalCount.toString(),
       change: 'Real-time',
       icon: PhoneCall,
       variant: 'blue' as const,
     },
     {
-      title: 'Missed / Failed Calls',
+      title: 'Missed / Unhandled Calls',
       value: missedCount.toString(),
       change: missedCount > 0 ? 'Needs Follow-up' : 'All Clear',
       icon: PhoneMissed,
@@ -69,17 +82,17 @@ export default function DashboardPage() {
     },
     {
       title: 'Messages Handled',
-      value: '0',
+      value: messagesCount.toString(),
       change: 'SMS Module',
       icon: MessageSquare,
       variant: 'emerald' as const,
     },
     {
       title: 'Active Agents Online',
-      value: '1 Active',
-      change: 'Capacity OK',
+      value: `${activeAgentsCount} Active`,
+      change: activeAgentsCount > 0 ? 'Capacity OK' : 'Offline',
       icon: Users,
-      variant: 'purple' as const,
+      variant: (activeAgentsCount > 0 ? 'purple' : 'neutral') as 'purple' | 'neutral',
     },
   ];
 
@@ -87,21 +100,23 @@ export default function DashboardPage() {
     switch (status) {
       case 'completed':
       case 'answered':
-        return <Badge variant="emerald" size="sm">Completed</Badge>;
+        return <Badge variant="emerald" size="sm">COMPLETED</Badge>;
+      case 'in-progress':
+        return <Badge variant="blue" pulse size="sm">IN CALL</Badge>;
       case 'no-answer':
-        return <Badge variant="rose" size="sm">No Answer</Badge>;
+        return <Badge variant="rose" size="sm">NO ANSWER</Badge>;
       case 'busy':
-        return <Badge variant="rose" size="sm">Busy</Badge>;
+        return <Badge variant="rose" size="sm">BUSY</Badge>;
       case 'failed':
-        return <Badge variant="rose" size="sm">Failed</Badge>;
+        return <Badge variant="rose" size="sm">FAILED</Badge>;
       case 'canceled':
-        return <Badge variant="neutral" size="sm">Canceled</Badge>;
+        return <Badge variant="neutral" size="sm">CANCELED</Badge>;
       case 'ringing':
-        return <Badge variant="amber" pulse size="sm">Ringing</Badge>;
+        return <Badge variant="amber" pulse size="sm">RINGING</Badge>;
       case 'initiated':
-        return <Badge variant="blue" pulse size="sm">Initiated</Badge>;
+        return <Badge variant="blue" pulse size="sm">INITIATED</Badge>;
       default:
-        return <Badge variant="neutral" size="sm">{status}</Badge>;
+        return <Badge variant="neutral" size="sm">{status ? status.toUpperCase() : 'UNKNOWN'}</Badge>;
     }
   };
 

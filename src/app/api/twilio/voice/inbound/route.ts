@@ -9,29 +9,29 @@ import { createAdminClient } from '@/lib/supabase/admin';
  */
 export async function POST(request: Request) {
   try {
-    const params: Record<string, string> = {};
+    const postParams: Record<string, string> = {};
 
     const contentType = request.headers.get('content-type') || '';
     if (contentType.includes('application/x-www-form-urlencoded') || contentType.includes('multipart/form-data')) {
       const formData = await request.formData();
       formData.forEach((value, key) => {
         if (typeof value === 'string') {
-          params[key] = value;
+          postParams[key] = value;
         }
       });
     } else if (contentType.includes('application/json')) {
       const json = await request.json().catch(() => ({}));
-      Object.assign(params, json);
+      Object.assign(postParams, json);
     }
 
-    const { searchParams } = new URL(request.url);
-    searchParams.forEach((val, key) => {
-      if (!params[key]) params[key] = val;
-    });
-
-    // Validate signature if auth token is configured
-    const isValidSignature = await validateTwilioRequest(request, params);
+    // Validate signature using POST body parameters ONLY
+    const isValidSignature = await validateTwilioRequest(request, postParams);
     if (!isValidSignature) {
+      console.error('[TWILIO WEBHOOK ERROR]', {
+        route: '/api/twilio/voice/inbound',
+        status: 403,
+        error: 'Unauthorized signature validation failure',
+      });
       const errorResponse = new twilio.twiml.VoiceResponse();
       errorResponse.say('Unauthorized webhook request.');
       errorResponse.reject();
@@ -41,11 +41,21 @@ export async function POST(request: Request) {
       });
     }
 
+    const params: Record<string, string> = { ...postParams };
+    const { searchParams } = new URL(request.url);
+    searchParams.forEach((val, key) => {
+      if (!params[key]) params[key] = val;
+    });
+
     const callSid = params.CallSid || params.callSid || '';
     const customerFrom = params.From || params.from || 'Unknown Caller';
     const companyTo = params.To || params.to || process.env.TWILIO_PHONE_NUMBER || '';
 
-    console.log(`[Twilio Inbound Webhook] Received call from "${customerFrom}" to "${companyTo}" (CallSid: ${callSid})`);
+    console.log('[TWILIO INBOUND REQUEST]', {
+      CallSid: callSid,
+      From: customerFrom,
+      To: companyTo,
+    });
 
     const adminSupabase = createAdminClient();
 
@@ -80,7 +90,11 @@ export async function POST(request: Request) {
     }
 
     if (!organizationId) {
-      console.error('[Twilio Inbound Webhook] No organization found to route incoming call.');
+      console.error('[TWILIO WEBHOOK ERROR]', {
+        route: '/api/twilio/voice/inbound',
+        status: 200,
+        error: 'No active organization found to handle this call',
+      });
       const errRes = new twilio.twiml.VoiceResponse();
       errRes.say('No active organization found to handle this call.');
       errRes.hangup();
@@ -104,7 +118,7 @@ export async function POST(request: Request) {
       }
     }
 
-    // 3. Find available, active agents in workspace with fresh heartbeat (last 2 minutes)
+    // 3. Find available, active agents in workspace
     const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
 
     const { data: availableAgents } = await (adminSupabase as any)
@@ -116,10 +130,9 @@ export async function POST(request: Request) {
       .gte('last_seen_at', twoMinutesAgo)
       .order('id', { ascending: true });
 
-    const agents = (availableAgents || []) as { id: string; full_name: string; twilio_identity: string }[];
+    let targetAgents = (availableAgents || []) as { id: string; full_name: string; twilio_identity: string }[];
 
-    // Fallback: if heartbeat index is not updated yet, select active, available profiles
-    let targetAgents = agents;
+    // Fallback 1: select active, available profiles without strict 2-min heartbeat
     if (targetAgents.length === 0) {
       const { data: fallbackAgents } = await (adminSupabase as any)
         .from('profiles')
@@ -131,7 +144,28 @@ export async function POST(request: Request) {
       targetAgents = (fallbackAgents || []) as any;
     }
 
-    console.log(`[Twilio Inbound Webhook] Found ${targetAgents.length} available agents for org ${organizationId}`);
+    // Fallback 2: select active profiles in organization regardless of availability_status string
+    if (targetAgents.length === 0) {
+      const { data: orgActiveAgents } = await (adminSupabase as any)
+        .from('profiles')
+        .select('id, full_name, twilio_identity')
+        .eq('organization_id', organizationId)
+        .eq('active', true)
+        .order('id', { ascending: true });
+      targetAgents = (orgActiveAgents || []) as any;
+    }
+
+    // Fallback 3: select any active profiles in entire database
+    if (targetAgents.length === 0) {
+      const { data: allActiveAgents } = await (adminSupabase as any)
+        .from('profiles')
+        .select('id, full_name, twilio_identity')
+        .eq('active', true)
+        .order('id', { ascending: true });
+      targetAgents = (allActiveAgents || []) as any;
+    }
+
+    console.log(`[Twilio Inbound Webhook] Found ${targetAgents.length} target agents for org ${organizationId}`);
 
     // 4. Insert inbound call record into public.calls (status = 'ringing')
     let dbCallId = '';
@@ -156,6 +190,13 @@ export async function POST(request: Request) {
       console.error('[Twilio Inbound Webhook] Error creating inbound call record:', insertErr);
     }
 
+    console.log('[TWILIO INBOUND CALL CREATE]', {
+      'call SID': callSid,
+      dbCallId: dbCallId,
+      'initial status': 'ringing',
+      direction: 'inbound',
+    });
+
     const voiceResponse = new twilio.twiml.VoiceResponse();
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://krispcall-voip-clone-udlg.vercel.app';
 
@@ -163,7 +204,12 @@ export async function POST(request: Request) {
       console.log('[Twilio Inbound Webhook] No agents available. Playing busy message.');
       voiceResponse.say('Thank you for calling. All of our agents are currently busy or unavailable. Please leave a message or call back shortly.');
       voiceResponse.hangup();
-      return new NextResponse(voiceResponse.toString(), {
+      const busyTwiml = voiceResponse.toString();
+      console.log('[TWILIO INBOUND RESPONSE]', {
+        'HTTP status': 200,
+        'Exact TwiML returned': busyTwiml,
+      });
+      return new NextResponse(busyTwiml, {
         status: 200,
         headers: { 'Content-Type': 'text/xml' },
       });
@@ -173,7 +219,6 @@ export async function POST(request: Request) {
     let targetIdentities: string[] = [];
 
     if (routingStrategy === 'round_robin') {
-      // Find index of last routed user and pick next
       let nextIndex = 0;
       if (lastRoutedUserId) {
         const lastIdx = targetAgents.findIndex((a) => a.id === lastRoutedUserId);
@@ -184,22 +229,41 @@ export async function POST(request: Request) {
       const selectedAgent = targetAgents[nextIndex];
       targetIdentities = [selectedAgent.twilio_identity || `agent_${selectedAgent.id.replace(/-/g, '')}`];
 
-      // Update last_routed_user_id
       await (adminSupabase as any)
         .from('organizations')
         .update({ last_routed_user_id: selectedAgent.id })
         .eq('id', organizationId);
     } else {
-      // Ring All strategy: ring all available agent identities
       targetIdentities = targetAgents.map(
         (a) => a.twilio_identity || `agent_${a.id.replace(/-/g, '')}`
       );
     }
 
-    // Build TwiML <Dial> options
+    // Filter out empty client identities
+    targetIdentities = targetIdentities.filter((id) => Boolean(id && id.trim()));
+
+    // Log target details with exact requested label [TWILIO CLIENT TARGETS]
+    console.log('[TWILIO CLIENT TARGETS]', targetAgents.map((a) => ({
+      identity: a.twilio_identity || `agent_${a.id.replace(/-/g, '')}`,
+      'profile id': a.id,
+      availability: (a as any).availability_status || 'available',
+      last_seen_at: (a as any).last_seen_at || 'now',
+    })));
+
+    // Ensure valid callerId for Twilio <Dial>
+    const isValidE164 = (num: string) => /^\+[1-9]\d{1,14}$/.test(num);
+    const dialCallerId = isValidE164(customerFrom) ? customerFrom : (isValidE164(companyTo) ? companyTo : process.env.TWILIO_PHONE_NUMBER || companyTo);
+
+    // Build TwiML <Dial> options with explicit source=dial-action
+    const dialStatusActionUrl = dbCallId
+      ? `${baseUrl}/api/twilio/status?source=dial-action&dbCallId=${encodeURIComponent(dbCallId)}`
+      : `${baseUrl}/api/twilio/status?source=dial-action`;
+
     const dialOptions: Record<string, any> = {
-      callerId: companyTo,
+      callerId: dialCallerId,
       timeout: 30,
+      action: dialStatusActionUrl,
+      method: 'POST',
     };
 
     if (autoRecordingEnabled) {
@@ -215,28 +279,35 @@ export async function POST(request: Request) {
 
     const dial = voiceResponse.dial(dialOptions);
 
-    // Attach target <Client> identities to <Dial>
+    // Attach target <Client> identities to <Dial> using clean TwiML <Client> identity syntax and pass dbCallId parameter
     targetIdentities.forEach((identity) => {
-      const statusCallbackUrl = dbCallId
-        ? `${baseUrl}/api/twilio/status?dbCallId=${encodeURIComponent(dbCallId)}`
-        : `${baseUrl}/api/twilio/status`;
-
-      dial.client(
-        {
-          statusCallback: statusCallbackUrl,
-          statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
-          statusCallbackMethod: 'POST',
-        },
-        identity
-      );
+      const client = dial.client(identity);
+      if (dbCallId) {
+        client.parameter({ name: 'dbCallId', value: dbCallId });
+      }
     });
 
-    return new NextResponse(voiceResponse.toString(), {
+    const twimlOutput = voiceResponse.toString();
+
+    // Log with exact requested label [TWILIO INBOUND DEBUG]
+    console.log('[TWILIO INBOUND DEBUG]', {
+      CallSid: callSid,
+      From: customerFrom,
+      To: companyTo,
+      'HTTP response': 200,
+      'Generated TwiML': twimlOutput,
+    });
+
+    return new NextResponse(twimlOutput, {
       status: 200,
       headers: { 'Content-Type': 'text/xml' },
     });
   } catch (error: any) {
-    console.error('[Twilio Inbound Webhook] Exception processing inbound call:', error.message || error);
+    console.error('[TWILIO WEBHOOK ERROR]', {
+      route: '/api/twilio/voice/inbound',
+      status: 500,
+      error: error.message || error,
+    });
     const errorResponse = new twilio.twiml.VoiceResponse();
     errorResponse.say('An error occurred while connecting your call.');
     errorResponse.hangup();

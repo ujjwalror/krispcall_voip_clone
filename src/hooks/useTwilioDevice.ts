@@ -155,10 +155,34 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
         setCallState('ringing');
 
         incomingCall.on('accept', () => {
-          console.log('[Twilio Device] Incoming call accepted.');
+          console.log('[Twilio Device] Incoming call accepted by agent.');
           setCallState('connected');
           startTimer();
           activeCallRef.current = incomingCall;
+
+          // Deterministically extract dbCallId passed via TwiML <Client><Parameter name="dbCallId" value="..."/></Client>
+          const dbCallId =
+            incomingCall.customParameters?.get?.('dbCallId') ||
+            incomingCall.customParameters?.dbCallId ||
+            incomingCall.parameters?.dbCallId ||
+            incomingCall.parameters?.DbCallId ||
+            '';
+
+          if (dbCallId) {
+            fetch(`/api/calls/${encodeURIComponent(dbCallId)}/answer`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+            })
+              .then((res) => res.json())
+              .then((data) => {
+                console.log('[Browser Answer Endpoint Success]', data);
+              })
+              .catch((err) => {
+                console.error('[Browser Answer Endpoint Error]', err);
+              });
+          } else {
+            console.warn('[Twilio Device] Incoming call accepted but no dbCallId parameter was attached.');
+          }
         });
 
         incomingCall.on('disconnect', () => {
