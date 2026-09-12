@@ -157,6 +157,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
         incomingCall.on('accept', () => {
           console.log('[Twilio Device] Incoming call accepted by agent.');
           setCallState('connected');
+          setIncomingCaller(null);
           startTimer();
           activeCallRef.current = incomingCall;
 
@@ -189,6 +190,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
           console.log('[Twilio Device] Incoming call disconnected.');
           stopTimer();
           setCallState('ended');
+          setIncomingCaller(null);
           resetCallStateAfterDelay();
         });
 
