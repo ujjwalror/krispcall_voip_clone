@@ -465,15 +465,15 @@ function SettingsContent() {
               )}
             </CardHeader>
             <div className="space-y-4">
-              <div className="flex items-center justify-between p-4 rounded-xl bg-slate-950/80 border border-slate-800">
-                <div className="space-y-1 pr-4">
-                  <p className="text-xs font-bold text-slate-200 flex items-center gap-2">
-                    <span>Automatic Recording for All Calls</span>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-slate-950/80 border border-slate-800 w-full">
+                <div className="space-y-1.5 w-full sm:pr-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-bold text-slate-200">Automatic Recording for All Calls</span>
                     <Badge variant={autoRecording ? 'rose' : 'neutral'} size="sm">
                       {autoRecording ? 'AUTO REC ON' : 'AUTO REC OFF'}
                     </Badge>
-                  </p>
-                  <p className="text-[11px] text-slate-400">
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
                     When enabled, all outbound calls in the workspace default to recording ON. Individual agents can override this setting per-call in the dialer.
                   </p>
                 </div>
@@ -482,7 +482,7 @@ function SettingsContent() {
                   <button
                     onClick={() => handleToggleAutoRecording(!autoRecording)}
                     disabled={isSaving || isLoadingSettings}
-                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border shrink-0 ${
+                    className={`w-full sm:w-auto px-4 py-2.5 rounded-xl text-xs font-bold transition-all border shrink-0 flex items-center justify-center ${
                       autoRecording
                         ? 'bg-rose-950/90 border-rose-600 text-rose-200 hover:bg-rose-900/90'
                         : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'

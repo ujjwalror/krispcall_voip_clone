@@ -310,16 +310,16 @@ Please change your password after first login.`;
             return (
               <Card
                 key={member.id}
-                className={`p-4 bg-slate-900/60 border transition-all rounded-xl ${
+                className={`p-4 bg-slate-900/60 border transition-all rounded-xl w-full min-w-0 ${
                   !member.active
                     ? 'border-slate-800/50 opacity-60'
                     : 'border-slate-800 hover:border-slate-700/80'
                 }`}
               >
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 w-full min-w-0">
                   {/* Member Info */}
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-blue-600/20 border border-blue-500/30 text-blue-300 font-bold flex items-center justify-center text-sm font-mono">
+                  <div className="flex items-start sm:items-center gap-3 w-full min-w-0">
+                    <div className="w-10 h-10 rounded-full bg-blue-600/20 border border-blue-500/30 text-blue-300 font-bold flex items-center justify-center text-sm font-mono shrink-0">
                       {member.full_name
                         .split(' ')
                         .map((n) => n[0])
@@ -328,88 +328,105 @@ Please change your password after first login.`;
                         .toUpperCase()}
                     </div>
 
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-bold text-slate-100">{member.full_name}</h3>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="text-sm font-bold text-slate-100 truncate">{member.full_name}</h3>
                         <Badge
                           variant={member.role === 'admin' ? 'purple' : member.role === 'manager' ? 'blue' : 'emerald'}
                           size="sm"
-                          className="uppercase text-[9px]"
+                          className="uppercase text-[9px] shrink-0"
                         >
                           {member.role === 'admin' && <ShieldCheck className="w-2.5 h-2.5 mr-0.5" />}
                           {member.role}
                         </Badge>
                         {member.active ? (
-                          <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-950 border border-slate-800 text-[10px] text-slate-400 font-mono">
+                          <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-950 border border-slate-800 text-[10px] text-slate-400 font-mono shrink-0">
                             <Circle className={`w-2 h-2 fill-current ${presence.color}`} />
                             {presence.label}
                           </span>
                         ) : (
-                          <Badge variant="rose" size="sm" className="text-[9px]">
+                          <Badge variant="rose" size="sm" className="text-[9px] shrink-0">
                             Disabled
                           </Badge>
                         )}
                       </div>
-                      <p className="text-xs text-slate-400 font-mono mt-0.5">
-                        {member.email} • Ext: <span className="text-blue-400">{member.extension || 'Unassigned'}</span> • Identity: <span className="text-slate-300">{member.twilio_identity}</span>
-                      </p>
+
+                      {/* Clean wrapped info line */}
+                      <div className="text-xs text-slate-400 font-mono mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 break-all">
+                        <span className="text-slate-300 font-semibold">{member.email}</span>
+                        <span className="text-slate-600 hidden sm:inline">•</span>
+                        <span>Ext: <strong className="text-blue-400 font-bold">{member.extension || 'Unassigned'}</strong></span>
+                        <span className="text-slate-600 hidden sm:inline">•</span>
+                        <span className="truncate max-w-full">Identity: <strong className="text-slate-300">{member.twilio_identity}</strong></span>
+                      </div>
                     </div>
                   </div>
 
-                  {/* Actions / Edit Form */}
+                  {/* Actions / Edit Form Grid */}
                   {canManage && (
-                    <div className="flex items-center gap-3 bg-slate-950/80 p-2 rounded-xl border border-slate-800/80">
+                    <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 bg-slate-950/80 p-2.5 sm:p-2 rounded-xl border border-slate-800/80 w-full sm:w-auto shrink-0">
                       {/* Full Name Edit */}
-                      <input
-                        type="text"
-                        defaultValue={member.full_name}
-                        onBlur={(e) => {
-                          if (e.target.value !== member.full_name) {
-                            handleUpdateMember(member.id, { full_name: e.target.value });
-                          }
-                        }}
-                        className="w-32 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-200 focus:outline-none"
-                        title="Edit Full Name"
-                      />
+                      <div className="col-span-2 sm:col-span-1">
+                        <label className="text-[9px] font-mono text-slate-500 block mb-0.5 sm:hidden">FULL NAME</label>
+                        <input
+                          type="text"
+                          defaultValue={member.full_name}
+                          onBlur={(e) => {
+                            if (e.target.value !== member.full_name) {
+                              handleUpdateMember(member.id, { full_name: e.target.value });
+                            }
+                          }}
+                          className="w-full sm:w-32 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 sm:py-1 text-xs text-slate-200 focus:outline-none focus:border-blue-500"
+                          title="Edit Full Name"
+                        />
+                      </div>
 
                       {/* Role Dropdown */}
-                      <select
-                        value={member.role}
-                        onChange={(e) =>
-                          handleUpdateMember(member.id, { role: e.target.value as any })
-                        }
-                        className="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-200 focus:outline-none"
-                      >
-                        <option value="admin">Admin</option>
-                        <option value="manager">Manager</option>
-                        <option value="agent">Agent</option>
-                      </select>
+                      <div>
+                        <label className="text-[9px] font-mono text-slate-500 block mb-0.5 sm:hidden">ROLE</label>
+                        <select
+                          value={member.role}
+                          onChange={(e) =>
+                            handleUpdateMember(member.id, { role: e.target.value as any })
+                          }
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 sm:py-1 text-xs text-slate-200 focus:outline-none focus:border-blue-500"
+                        >
+                          <option value="admin">Admin</option>
+                          <option value="manager">Manager</option>
+                          <option value="agent">Agent</option>
+                        </select>
+                      </div>
 
                       {/* Extension Input */}
-                      <input
-                        type="text"
-                        placeholder="Ext"
-                        defaultValue={member.extension || ''}
-                        onBlur={(e) => {
-                          if (e.target.value !== (member.extension || '')) {
-                            handleUpdateMember(member.id, { extension: e.target.value });
-                          }
-                        }}
-                        className="w-16 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-200 font-mono text-center focus:outline-none"
-                        title="Edit Extension"
-                      />
+                      <div>
+                        <label className="text-[9px] font-mono text-slate-500 block mb-0.5 sm:hidden">EXT</label>
+                        <input
+                          type="text"
+                          placeholder="Ext"
+                          defaultValue={member.extension || ''}
+                          onBlur={(e) => {
+                            if (e.target.value !== (member.extension || '')) {
+                              handleUpdateMember(member.id, { extension: e.target.value });
+                            }
+                          }}
+                          className="w-full sm:w-16 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 sm:py-1 text-xs text-slate-200 font-mono text-center focus:outline-none focus:border-blue-500"
+                          title="Edit Extension"
+                        />
+                      </div>
 
                       {/* Active Toggle */}
-                      <button
-                        onClick={() => handleUpdateMember(member.id, { active: !member.active })}
-                        className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
-                          member.active
-                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
-                            : 'bg-rose-500/10 text-rose-400 border border-rose-500/30'
-                        }`}
-                      >
-                        {member.active ? 'Active' : 'Disabled'}
-                      </button>
+                      <div className="col-span-2 sm:col-span-1 pt-1 sm:pt-0">
+                        <button
+                          onClick={() => handleUpdateMember(member.id, { active: !member.active })}
+                          className={`w-full sm:w-auto px-3 py-1.5 sm:py-1 rounded-lg text-xs font-medium transition-colors flex items-center justify-center ${
+                            member.active
+                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20'
+                              : 'bg-rose-500/10 text-rose-400 border border-rose-500/30 hover:bg-rose-500/20'
+                          }`}
+                        >
+                          {member.active ? 'Active' : 'Disabled'}
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>

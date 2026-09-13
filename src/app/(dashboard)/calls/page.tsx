@@ -167,22 +167,22 @@ export default function CallsPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 w-full max-w-full min-w-0">
       {/* Header & Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
-        <div>
-          <h1 className="text-xl font-bold text-slate-100">Call History & Logs</h1>
-          <p className="text-xs text-slate-400">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4 w-full min-w-0">
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold text-slate-100 truncate">Call History & Logs</h1>
+          <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">
             Real-time call logs with direct block list controls for inbound and outbound calls.
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <Button variant="outline" size="sm" onClick={loadCalls} disabled={isLoading}>
+        <div className="flex items-center gap-2.5 w-full sm:w-auto shrink-0">
+          <Button variant="outline" size="sm" onClick={loadCalls} disabled={isLoading} className="flex-1 sm:flex-none justify-center">
             <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
             <span>Refresh</span>
           </Button>
-          <Link href="/phone">
-            <Button variant="primary" size="md">
+          <Link href="/phone" className="flex-1 sm:flex-none">
+            <Button variant="primary" size="md" className="w-full justify-center">
               <PhoneCall className="w-4 h-4" />
               <span>Make Call</span>
             </Button>
@@ -191,9 +191,9 @@ export default function CallsPage() {
       </div>
 
       {/* Filter Toolbar */}
-      <Card className="p-4 bg-slate-900/60 border-slate-800 flex flex-wrap items-center justify-between gap-4">
+      <Card className="p-3.5 sm:p-4 bg-slate-900/60 border-slate-800 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4 w-full min-w-0">
         {/* Search Input */}
-        <div className="relative w-full sm:w-72">
+        <div className="relative w-full sm:w-72 min-w-0">
           <Input
             icon={<Search className="w-4 h-4" />}
             value={searchQuery}
@@ -203,32 +203,31 @@ export default function CallsPage() {
           />
         </div>
 
-        {/* Filter Selectors */}
-        <div className="flex items-center gap-3 w-full sm:w-auto">
-          <div className="flex items-center gap-1.5">
-            <Filter className="w-3.5 h-3.5 text-slate-400" />
-            <span className="text-xs text-slate-400 font-medium">Direction:</span>
+        {/* Filter Selectors (2-Column Grid on Mobile, Flex on Desktop) */}
+        <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 sm:gap-3 w-full sm:w-auto min-w-0">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-1.5 min-w-0">
+            <span className="text-[11px] text-slate-400 font-medium truncate">Direction:</span>
             <select
               value={directionFilter}
               onChange={(e: any) => setDirectionFilter(e.target.value)}
-              className="bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-200 p-2 outline-none focus:border-blue-500"
+              className="w-full sm:w-auto bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-200 p-2 outline-none focus:border-blue-500 transition-colors"
             >
               <option value="all">All Directions</option>
-              <option value="outbound">Outgoing (Outbound)</option>
-              <option value="inbound">Incoming (Inbound)</option>
+              <option value="outbound">Outgoing</option>
+              <option value="inbound">Incoming</option>
             </select>
           </div>
 
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-slate-400 font-medium">Status:</span>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-1.5 min-w-0">
+            <span className="text-[11px] text-slate-400 font-medium truncate">Status:</span>
             <select
               value={statusFilter}
               onChange={(e: any) => setStatusFilter(e.target.value)}
-              className="bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-200 p-2 outline-none focus:border-blue-500"
+              className="w-full sm:w-auto bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-200 p-2 outline-none focus:border-blue-500 transition-colors"
             >
               <option value="all">All Statuses</option>
               <option value="completed">Completed</option>
-              <option value="missed">Missed / No Answer</option>
+              <option value="missed">Missed</option>
               <option value="failed">Failed</option>
             </select>
           </div>
@@ -236,7 +235,7 @@ export default function CallsPage() {
       </Card>
 
       {/* Call History Container (Table on Desktop, Cards on Mobile) */}
-      <Card className="p-0 overflow-hidden">
+      <Card className="p-0 overflow-hidden w-full min-w-0">
         {/* Desktop Table View */}
         <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-left text-xs text-slate-300">
@@ -392,9 +391,9 @@ export default function CallsPage() {
               const agentName = log.profiles?.full_name || 'Agent';
 
               return (
-                <div key={log.id} className="p-4 space-y-3 bg-slate-900/60">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-2.5">
+                <div key={log.id} className="p-3.5 sm:p-4 space-y-3 bg-slate-900/60 w-full min-w-0">
+                  <div className="flex items-start justify-between gap-2.5 w-full min-w-0">
+                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
                       <div
                         className={`p-2 rounded-lg shrink-0 ${
                           log.status === 'blocked' || isBlocked
@@ -414,42 +413,42 @@ export default function CallsPage() {
                           <PhoneIncoming className="w-4 h-4" />
                         )}
                       </div>
-                      <div>
+                      <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <p className="font-semibold text-slate-100 font-mono text-sm">
+                          <p className="font-semibold text-slate-100 font-mono text-xs sm:text-sm truncate max-w-full">
                             {isOutbound ? `To: ${log.to_number}` : `From: ${log.from_number}`}
                           </p>
                           {isBlocked && (
-                            <Badge variant="rose" size="sm">
+                            <Badge variant="rose" size="sm" className="shrink-0">
                               <Ban className="w-2.5 h-2.5" />
                               BLOCKED
                             </Badge>
                           )}
                         </div>
-                        <p className="text-[10px] text-slate-400 font-mono">
-                          {formatCallTime(log.created_at, profile?.timezone, profile?.time_format)}
+                        <p className="text-[10px] text-slate-400 font-mono mt-0.5 truncate">
+                          {formatCallTime(log.created_at, profile?.timezone, profile?.time_format)} • {log.direction.toUpperCase()}
                         </p>
                       </div>
                     </div>
-                    <div>{getStatusBadge(log.status)}</div>
+                    <div className="shrink-0">{getStatusBadge(log.status)}</div>
                   </div>
 
-                  <div className="flex items-center justify-between text-xs text-slate-400 pt-1 border-t border-slate-800/60">
-                    <div className="flex items-center gap-1.5">
+                  <div className="flex items-center justify-between text-xs text-slate-400 pt-2 border-t border-slate-800/60 w-full min-w-0">
+                    <div className="flex items-center gap-1.5 truncate max-w-[60%]">
                       <Avatar name={agentName} size="sm" />
-                      <span>{agentName}</span>
+                      <span className="truncate">{agentName}</span>
                     </div>
-                    <span className="font-mono text-slate-300">
+                    <span className="font-mono text-slate-300 shrink-0">
                       Duration: {log.duration_seconds && log.duration_seconds > 0 ? formatDuration(log.duration_seconds) : '00:00'}
                     </span>
                   </div>
 
-                  <div className="flex items-center justify-end gap-2 pt-1">
+                  <div className="flex items-center justify-end gap-2 pt-1 w-full">
                     {isBlocked ? (
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="text-emerald-400 hover:bg-emerald-950/40 text-xs"
+                        className="text-emerald-400 hover:bg-emerald-950/40 text-xs flex-1 sm:flex-none justify-center"
                         onClick={() => handleUnblockPhone(targetNumber)}
                       >
                         <Ban className="w-3.5 h-3.5" />
@@ -459,7 +458,7 @@ export default function CallsPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="text-amber-400 hover:bg-amber-950/40 text-xs"
+                        className="text-amber-400 hover:bg-amber-950/40 text-xs flex-1 sm:flex-none justify-center"
                         onClick={() => setBlockingPhone(targetNumber)}
                       >
                         <Ban className="w-3.5 h-3.5" />
@@ -467,8 +466,8 @@ export default function CallsPage() {
                       </Button>
                     )}
 
-                    <Link href={`/phone?number=${encodeURIComponent(targetNumber)}`}>
-                      <Button variant="outline" size="sm" className="text-xs">
+                    <Link href={`/phone?number=${encodeURIComponent(targetNumber)}`} className="flex-1 sm:flex-none">
+                      <Button variant="outline" size="sm" className="text-xs w-full justify-center">
                         <PhoneCall className="w-3.5 h-3.5 text-blue-400" />
                         <span>Call Back</span>
                       </Button>
