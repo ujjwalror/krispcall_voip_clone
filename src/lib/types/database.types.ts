@@ -96,6 +96,7 @@ export interface Database {
           phone: string;
           email: string | null;
           notes: string | null;
+          is_blocked: boolean | null;
           created_by: string | null;
           created_at: string;
           updated_at: string;
@@ -111,6 +112,7 @@ export interface Database {
           phone: string;
           email?: string | null;
           notes?: string | null;
+          is_blocked?: boolean | null;
           created_by?: string | null;
           created_at?: string;
           updated_at?: string;
@@ -126,6 +128,7 @@ export interface Database {
           phone?: string;
           email?: string | null;
           notes?: string | null;
+          is_blocked?: boolean | null;
           created_by?: string | null;
           created_at?: string;
           updated_at?: string;

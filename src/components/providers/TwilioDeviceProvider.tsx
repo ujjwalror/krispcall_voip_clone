@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useEffect } from 'react';
 import { useTwilioDevice, UseTwilioDeviceReturn } from '@/hooks/useTwilioDevice';
 import { GlobalIncomingCall } from '@/components/call/GlobalIncomingCall';
+import { GlobalActiveCall } from '@/components/call/GlobalActiveCall';
 
 const TwilioDeviceContext = createContext<UseTwilioDeviceReturn | null>(null);
 
@@ -18,6 +19,7 @@ export function TwilioDeviceProvider({ children }: { children: React.ReactNode }
     <TwilioDeviceContext.Provider value={twilioDevice}>
       {children}
       <GlobalIncomingCall />
+      <GlobalActiveCall />
     </TwilioDeviceContext.Provider>
   );
 }

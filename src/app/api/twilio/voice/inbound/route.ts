@@ -104,6 +104,29 @@ export async function POST(request: Request) {
       });
     }
 
+    // Check if caller is BLOCKED in organization contacts directory
+    if (organizationId && customerFrom && customerFrom !== 'Unknown Caller') {
+      const { data: blockedContact } = await (adminSupabase as any)
+        .from('contacts')
+        .select('id, full_name, is_blocked')
+        .eq('organization_id', organizationId)
+        .eq('phone', customerFrom)
+        .eq('is_blocked', true)
+        .is('archived_at', null)
+        .maybeSingle();
+
+      if (blockedContact) {
+        console.log(`[Twilio Inbound Webhook] Caller ${customerFrom} (${blockedContact.full_name}) is BLOCKED in org ${organizationId}. Rejecting inbound call.`);
+        const rejectTwiml = new twilio.twiml.VoiceResponse();
+        rejectTwiml.say('Your call cannot be completed as your number has been blocked by the recipient.');
+        rejectTwiml.reject();
+        return new NextResponse(rejectTwiml.toString(), {
+          status: 200,
+          headers: { 'Content-Type': 'text/xml' },
+        });
+      }
+    }
+
     // 2. Fetch organization settings if not loaded
     if (!lastRoutedUserId) {
       const { data: orgInfo } = await (adminSupabase as any)

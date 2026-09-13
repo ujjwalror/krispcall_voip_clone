@@ -24,9 +24,11 @@ export interface UseTwilioDeviceReturn {
   autoRecordingEnabled: boolean;
   recordCallPreference: boolean;
   incomingCaller: string | null;
+  activeDestination: string | null;
+  activeCallContactName: string | null;
   setRecordCallPreference: (val: boolean) => void;
   initDevice: () => Promise<void>;
-  makeCall: (destinationNumber: string) => Promise<boolean>;
+  makeCall: (destinationNumber: string, contactName?: string) => Promise<boolean>;
   acceptIncomingCall: () => void;
   rejectIncomingCall: () => void;
   endCall: () => void;
@@ -44,6 +46,8 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
   const [autoRecordingEnabled, setAutoRecordingEnabled] = useState<boolean>(true);
   const [recordCallPreference, setRecordCallPreference] = useState<boolean>(true);
   const [incomingCaller, setIncomingCaller] = useState<string | null>(null);
+  const [activeDestination, setActiveDestination] = useState<string | null>(null);
+  const [activeCallContactName, setActiveCallContactName] = useState<string | null>(null);
 
   const deviceRef = useRef<any>(null);
   const activeCallRef = useRef<any>(null);
@@ -73,6 +77,8 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
       activeCallRef.current = null;
       incomingCallRef.current = null;
       setIncomingCaller(null);
+      setActiveDestination(null);
+      setActiveCallContactName(null);
     }, 3000);
   }, []);
 
@@ -215,7 +221,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
 
   // Make Outbound Call
   const makeCall = useCallback(
-    async (destinationNumber: string): Promise<boolean> => {
+    async (destinationNumber: string, contactName?: string): Promise<boolean> => {
       setErrorMessage(null);
 
       // 1. Validate destination phone number
@@ -224,6 +230,9 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
         setErrorMessage(validation.error || 'Invalid phone number format.');
         return false;
       }
+
+      setActiveDestination(validation.normalized);
+      setActiveCallContactName(contactName || null);
 
       // 2. Request microphone permission
       try {
@@ -394,6 +403,8 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
     autoRecordingEnabled,
     recordCallPreference,
     incomingCaller,
+    activeDestination,
+    activeCallContactName,
     setRecordCallPreference,
     initDevice,
     makeCall,
