@@ -585,7 +585,7 @@ Please change your password after first login.`;
                 <span className="text-slate-200">{createdUserResult.extension}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Twilio Identity:</span>
+                <span className="text-slate-400">Agent Identity:</span>
                 <span className="text-slate-300">{createdUserResult.twilioIdentity}</span>
               </div>
             </div>

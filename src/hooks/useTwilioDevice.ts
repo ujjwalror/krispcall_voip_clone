@@ -234,6 +234,24 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
       setActiveDestination(validation.normalized);
       setActiveCallContactName(contactName || null);
 
+      // Check if destination contact is blocked
+      try {
+        const checkRes = await fetch(`/api/contacts?query=${encodeURIComponent(validation.normalized)}`);
+        if (checkRes.ok) {
+          const checkData = await checkRes.json();
+          const matchingContact = (checkData.contacts || []).find((c: any) => c.phone === validation.normalized);
+          if (matchingContact && matchingContact.is_blocked) {
+            const displayName = matchingContact.full_name || validation.normalized;
+            setErrorMessage(`${displayName} is blocked. Unblock this contact before calling.`);
+            setCallState('failed');
+            resetCallStateAfterDelay();
+            return false;
+          }
+        }
+      } catch (checkErr) {
+        console.warn('Error checking contact block status before call:', checkErr);
+      }
+
       // 2. Request microphone permission
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -255,7 +273,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
         }
       }
 
-      // 4. Create database call record in Supabase with recordCall preference (Phase 6 & 7)
+      // 4. Create database call record in Supabase & check server-authoritative block status
       let dbCallId = '';
       try {
         const createRes = await fetch('/api/twilio/calls/create', {
@@ -266,12 +284,23 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
             recordCall: recordCallPreference,
           }),
         });
-        if (createRes.ok) {
-          const createData = await createRes.json();
+
+        const createData = await createRes.json().catch(() => ({}));
+
+        if (!createRes.ok) {
+          if (createRes.status === 403 || createData.error?.includes('blocked')) {
+            const err = createData.error || 'This number is blocked. Unblock it before calling.';
+            setErrorMessage(err);
+            setCallState('failed');
+            resetCallStateAfterDelay();
+            return false;
+          }
+          console.warn('Could not create initial call record in database:', createData.error);
+        } else {
           dbCallId = createData.callId || '';
         }
       } catch (dbErr) {
-        console.warn('Could not create initial call record in database:', dbErr);
+        console.warn('Exception creating initial call record in database:', dbErr);
       }
 
       // 5. Connect outbound call via Twilio SDK

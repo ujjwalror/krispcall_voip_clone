@@ -165,6 +165,16 @@ export async function POST(request: Request) {
       );
     }
 
+    // Check if phone number is already on organization block list
+    const { data: blockedEntry } = await (supabase as any)
+      .from('blocked_numbers')
+      .select('id')
+      .eq('organization_id', profile.organization_id)
+      .eq('normalized_phone', normalizedPhone)
+      .maybeSingle();
+
+    const isBlocked = Boolean(blockedEntry);
+
     // Insert new contact securely attaching organization_id from server
     const { data: newContact, error: insertError } = await (supabase as any)
       .from('contacts')
@@ -177,6 +187,7 @@ export async function POST(request: Request) {
         email: email || null,
         company: company || null,
         notes: notes || null,
+        is_blocked: isBlocked,
         created_by: user.id,
       })
       .select()
@@ -188,6 +199,14 @@ export async function POST(request: Request) {
         { error: 'Database error creating contact record.' },
         { status: 500 }
       );
+    }
+
+    // Link contact_id in blocked_numbers if record exists
+    if (blockedEntry && newContact) {
+      await (supabase as any)
+        .from('blocked_numbers')
+        .update({ contact_id: newContact.id })
+        .eq('id', blockedEntry.id);
     }
 
     return NextResponse.json({

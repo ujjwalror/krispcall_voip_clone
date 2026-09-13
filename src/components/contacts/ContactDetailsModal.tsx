@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { Contact } from '@/lib/types';
 import { formatCallTime, formatDuration } from '@/lib/utils';
+import { BlockContactConfirmationModal } from '@/components/contacts/BlockContactConfirmationModal';
 
 interface ContactDetailsModalProps {
   contactId: string | null;
@@ -50,6 +51,7 @@ export function ContactDetailsModal({
   const [activeTab, setActiveTab] = useState<'details' | 'calls' | 'messages'>('details');
   const [isLoading, setIsLoading] = useState(false);
   const [isBlocking, setIsBlocking] = useState(false);
+  const [isConfirmingBlock, setIsConfirmingBlock] = useState(false);
   const [blockedAlert, setBlockedAlert] = useState<string | null>(null);
 
   useEffect(() => {
@@ -78,23 +80,22 @@ export function ContactDetailsModal({
 
   if (!isOpen || !contactId) return null;
 
-  const handleToggleBlock = async () => {
+  const handleUnblock = async () => {
     if (!contact) return;
     setIsBlocking(true);
-    const nextBlocked = !contact.is_blocked;
     try {
       const res = await fetch(`/api/contacts/${contact.id}/block`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ isBlocked: nextBlocked }),
+        body: JSON.stringify({ isBlocked: false }),
       });
       if (res.ok) {
         const data = await res.json();
-        setContact(data.contact || { ...contact, is_blocked: nextBlocked });
+        setContact(data.contact || { ...contact, is_blocked: false });
         onStatusChange();
       }
     } catch (err) {
-      console.error('Error toggling block state:', err);
+      console.error('Error unblocking contact:', err);
     } finally {
       setIsBlocking(false);
     }
@@ -298,16 +299,30 @@ export function ContactDetailsModal({
         {contact && (
           <div className="p-4 border-t border-slate-800 flex items-center justify-between gap-3 bg-slate-950/40">
             <div className="flex items-center gap-2">
-              <Button
-                variant={contact.is_blocked ? 'outline' : 'danger'}
-                size="sm"
-                onClick={handleToggleBlock}
-                disabled={isBlocking}
-                title={contact.is_blocked ? 'Unblock this contact' : 'Block incoming & outgoing calls'}
-              >
-                <Ban className="w-3.5 h-3.5" />
-                <span>{contact.is_blocked ? 'Unblock' : 'Block'}</span>
-              </Button>
+              {contact.is_blocked ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleUnblock}
+                  disabled={isBlocking}
+                  className="border-emerald-700/60 text-emerald-300 hover:bg-emerald-950/60"
+                  title="Unblock this contact"
+                >
+                  <Ban className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Unblock Contact</span>
+                </Button>
+              ) : (
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={() => setIsConfirmingBlock(true)}
+                  disabled={isBlocking}
+                  title="Block this contact"
+                >
+                  <Ban className="w-3.5 h-3.5" />
+                  <span>Block Contact</span>
+                </Button>
+              )}
 
               <Button
                 variant="ghost"
@@ -336,19 +351,22 @@ export function ContactDetailsModal({
                 <span>Edit</span>
               </Button>
 
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => onMessage(contact.phone)}
-              >
-                <MessageSquare className="w-3.5 h-3.5 text-blue-400" />
-                <span>SMS</span>
-              </Button>
+              {!contact.is_blocked && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => onMessage(contact.phone)}
+                >
+                  <MessageSquare className="w-3.5 h-3.5 text-blue-400" />
+                  <span>SMS</span>
+                </Button>
+              )}
 
               <Button
-                variant="success"
+                variant={contact.is_blocked ? 'outline' : 'success'}
                 size="sm"
                 onClick={handleCallClick}
+                className={contact.is_blocked ? 'opacity-60 border-slate-700 text-slate-400 cursor-not-allowed' : ''}
               >
                 <PhoneCall className="w-3.5 h-3.5" />
                 <span>Call</span>
@@ -357,6 +375,18 @@ export function ContactDetailsModal({
           </div>
         )}
       </div>
+
+      <BlockContactConfirmationModal
+        contact={contact}
+        isOpen={isConfirmingBlock}
+        onClose={() => setIsConfirmingBlock(false)}
+        onSuccess={() => {
+          if (contact) {
+            setContact({ ...contact, is_blocked: true });
+          }
+          onStatusChange();
+        }}
+      />
     </div>
   );
 }

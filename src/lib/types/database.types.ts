@@ -18,7 +18,8 @@ export type CallStatus =
   | 'failed'
   | 'no-answer'
   | 'canceled'
-  | 'missed';
+  | 'missed'
+  | 'blocked';
 export type MessageDirection = 'inbound' | 'outbound';
 
 export interface Database {
@@ -322,6 +323,38 @@ export interface Database {
           organization_id?: string;
           user_id?: string;
           phone_number_id?: string;
+          created_at?: string;
+        };
+      };
+      blocked_numbers: {
+        Row: {
+          id: string;
+          organization_id: string;
+          phone_number: string;
+          normalized_phone: string;
+          contact_id: string | null;
+          reason: string | null;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          organization_id: string;
+          phone_number: string;
+          normalized_phone: string;
+          contact_id?: string | null;
+          reason?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          organization_id?: string;
+          phone_number?: string;
+          normalized_phone?: string;
+          contact_id?: string | null;
+          reason?: string | null;
+          created_by?: string | null;
           created_at?: string;
         };
       };

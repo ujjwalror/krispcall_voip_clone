@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import twilio from 'twilio';
 import { validateTwilioRequest } from '@/lib/twilio/signature';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { normalizeE164PhoneNumber } from '@/lib/utils';
 
 /**
  * Inbound Voice TwiML Webhook Endpoint for Twilio Programmable Voice.
@@ -104,22 +105,50 @@ export async function POST(request: Request) {
       });
     }
 
-    // Check if caller is BLOCKED in organization contacts directory
+    // Check if caller is BLOCKED in organization block list or contacts directory
     if (organizationId && customerFrom && customerFrom !== 'Unknown Caller') {
+      const fromValidation = normalizeE164PhoneNumber(customerFrom);
+      const normalizedFrom = fromValidation.normalized || customerFrom;
+
+      const { data: blockedNumber } = await (adminSupabase as any)
+        .from('blocked_numbers')
+        .select('id, phone_number, contact_id')
+        .eq('organization_id', organizationId)
+        .eq('normalized_phone', normalizedFrom)
+        .maybeSingle();
+
       const { data: blockedContact } = await (adminSupabase as any)
         .from('contacts')
         .select('id, full_name, is_blocked')
         .eq('organization_id', organizationId)
-        .eq('phone', customerFrom)
+        .eq('phone', normalizedFrom)
         .eq('is_blocked', true)
         .is('archived_at', null)
         .maybeSingle();
 
-      if (blockedContact) {
-        console.log(`[Twilio Inbound Webhook] Caller ${customerFrom} (${blockedContact.full_name}) is BLOCKED in org ${organizationId}. Rejecting inbound call.`);
+      if (blockedNumber || blockedContact) {
+        console.log(`[Twilio Inbound Webhook] Caller ${customerFrom} (${normalizedFrom}) is BLOCKED in org ${organizationId}. Terminating call cleanly.`);
+
+        // Log auditable call attempt with status = 'blocked'
+        try {
+          await (adminSupabase as any).from('calls').insert({
+            organization_id: organizationId,
+            twilio_call_sid: callSid,
+            direction: 'inbound',
+            from_number: customerFrom,
+            to_number: companyTo,
+            status: 'blocked',
+            contact_id: blockedContact?.id || blockedNumber?.contact_id || null,
+            started_at: new Date().toISOString(),
+            ended_at: new Date().toISOString(),
+          });
+        } catch (logErr) {
+          console.warn('[Twilio Inbound Webhook] Exception logging blocked call attempt:', logErr);
+        }
+
         const rejectTwiml = new twilio.twiml.VoiceResponse();
-        rejectTwiml.say('Your call cannot be completed as your number has been blocked by the recipient.');
-        rejectTwiml.reject();
+        rejectTwiml.say('The number you are trying to reach is unavailable.');
+        rejectTwiml.hangup();
         return new NextResponse(rejectTwiml.toString(), {
           status: 200,
           headers: { 'Content-Type': 'text/xml' },

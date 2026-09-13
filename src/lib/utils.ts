@@ -32,6 +32,30 @@ export function formatPhoneNumber(phone: string): string {
 }
 
 /**
+ * Formats E.164 phone numbers into clean, provider-neutral display strings.
+ * Example: +61348328472 -> +61 3 4832 8472
+ */
+export function formatDisplayPhoneNumber(phone: string): string {
+  if (!phone) return '';
+  const trimmed = phone.trim();
+
+  // Australian landline (+613XXXXXXXX -> +61 3 XXXX XXXX)
+  if (/^\+61[2378]\d{8}$/.test(trimmed)) {
+    return `${trimmed.slice(0, 3)} ${trimmed.slice(3, 4)} ${trimmed.slice(4, 8)} ${trimmed.slice(8)}`;
+  }
+  // Australian mobile (+614XXXXXXXX -> +61 4XX XXX XXX)
+  if (/^\+614\d{8}$/.test(trimmed)) {
+    return `${trimmed.slice(0, 3)} ${trimmed.slice(3, 6)} ${trimmed.slice(6, 9)} ${trimmed.slice(9)}`;
+  }
+  // US/Canada (+1XXXXXXXXXX -> +1 (XXX) XXX-XXXX)
+  if (/^\+1\d{10}$/.test(trimmed)) {
+    return `+1 (${trimmed.slice(2, 5)}) ${trimmed.slice(5, 8)}-${trimmed.slice(8)}`;
+  }
+
+  return trimmed;
+}
+
+/**
  * Formats ISO timestamps into friendly relative/absolute dates.
  */
 export function formatCallTime(isoString: string): string {

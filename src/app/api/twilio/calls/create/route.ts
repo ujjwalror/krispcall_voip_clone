@@ -47,6 +47,38 @@ export async function POST(request: Request) {
       );
     }
 
+    // 4. Server-authoritative blocked-number check for organization
+    const { data: blockedRecord } = await (supabase as any)
+      .from('blocked_numbers')
+      .select('id, phone_number')
+      .eq('organization_id', profile.organization_id)
+      .eq('normalized_phone', validation.normalized)
+      .maybeSingle();
+
+    if (blockedRecord) {
+      return NextResponse.json(
+        { error: 'This number is blocked. Unblock it before calling.' },
+        { status: 403 }
+      );
+    }
+
+    // Also check contacts table if contact exists with is_blocked = true
+    const { data: blockedContact } = await (supabase as any)
+      .from('contacts')
+      .select('id, full_name')
+      .eq('organization_id', profile.organization_id)
+      .eq('phone', validation.normalized)
+      .eq('is_blocked', true)
+      .is('archived_at', null)
+      .maybeSingle();
+
+    if (blockedContact) {
+      return NextResponse.json(
+        { error: 'This number is blocked. Unblock it before calling.' },
+        { status: 403 }
+      );
+    }
+
     const recordCall = Boolean(body.recordCall);
     const fromNumber = process.env.TWILIO_PHONE_NUMBER || '+18005550199';
 

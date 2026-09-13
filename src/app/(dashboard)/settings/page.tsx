@@ -27,13 +27,49 @@ import {
   UserCheck,
   RefreshCw,
   Sliders,
+  UserX,
 } from 'lucide-react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { useTheme } from '@/components/providers/ThemeProvider';
-import { Contact } from '@/lib/types';
 
-export default function SettingsPage() {
+interface BlockedNumberItem {
+  id: string;
+  organization_id: string;
+  phone_number: string;
+  normalized_phone: string;
+  contact_id: string | null;
+  reason: string | null;
+  created_at: string;
+  contacts?: {
+    id: string;
+    full_name: string;
+    email: string | null;
+    company: string | null;
+    phone: string;
+  } | null;
+}
+
+function SettingsContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const initialTab = searchParams.get('tab') === 'blocked' ? 'blocked' : 'general';
+
   const { theme, setTheme } = useTheme();
-  const [activeTab, setActiveTab] = useState<'general' | 'blocked'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'blocked'>(initialTab);
+
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    if (tabParam === 'blocked') {
+      setActiveTab('blocked');
+    } else if (tabParam === 'general') {
+      setActiveTab('general');
+    }
+  }, [searchParams]);
+
+  const handleTabChange = (tab: 'general' | 'blocked') => {
+    setActiveTab(tab);
+    router.replace(`/settings?tab=${tab}`);
+  };
 
   // Settings State
   const [autoRecording, setAutoRecording] = useState<boolean>(true);
@@ -42,8 +78,8 @@ export default function SettingsPage() {
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  // Blocked Contacts State
-  const [blockedContacts, setBlockedContacts] = useState<Contact[]>([]);
+  // Blocked Numbers State
+  const [blockedNumbers, setBlockedNumbers] = useState<BlockedNumberItem[]>([]);
   const [isLoadingBlocked, setIsLoadingBlocked] = useState<boolean>(false);
   const [blockedSearchQuery, setBlockedSearchQuery] = useState<string>('');
   const [unblockingId, setUnblockingId] = useState<string | null>(null);
@@ -65,21 +101,19 @@ export default function SettingsPage() {
     }
   };
 
-  const fetchBlockedContacts = useCallback(async () => {
+  const fetchBlockedNumbers = useCallback(async () => {
     setIsLoadingBlocked(true);
     try {
       const url = blockedSearchQuery.trim()
-        ? `/api/contacts?query=${encodeURIComponent(blockedSearchQuery.trim())}`
-        : '/api/contacts';
+        ? `/api/blocked-numbers?query=${encodeURIComponent(blockedSearchQuery.trim())}`
+        : '/api/blocked-numbers';
       const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
-        const allContacts: Contact[] = data.contacts || [];
-        const blockedOnly = allContacts.filter((c) => Boolean(c.is_blocked));
-        setBlockedContacts(blockedOnly);
+        setBlockedNumbers(data.blockedNumbers || []);
       }
     } catch (err) {
-      console.error('Error fetching blocked contacts:', err);
+      console.error('Error fetching blocked numbers:', err);
     } finally {
       setIsLoadingBlocked(false);
     }
@@ -91,9 +125,9 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (activeTab === 'blocked') {
-      fetchBlockedContacts();
+      fetchBlockedNumbers();
     }
-  }, [activeTab, fetchBlockedContacts]);
+  }, [activeTab, fetchBlockedNumbers]);
 
   const handleToggleAutoRecording = async (nextVal: boolean) => {
     if (role !== 'admin') return;
@@ -120,26 +154,30 @@ export default function SettingsPage() {
     }
   };
 
-  const handleUnblockContact = async (contact: Contact) => {
-    setUnblockingId(contact.id);
+  const handleUnblockNumber = async (item: BlockedNumberItem) => {
+    setUnblockingId(item.id);
     setBlockedSuccessMessage(null);
     try {
-      const res = await fetch(`/api/contacts/${contact.id}/block`, {
-        method: 'POST',
+      const res = await fetch('/api/blocked-numbers', {
+        method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ isBlocked: false }),
+        body: JSON.stringify({
+          id: item.id,
+          phone: item.normalized_phone || item.phone_number,
+        }),
       });
 
       if (res.ok) {
-        setBlockedContacts((prev) => prev.filter((c) => c.id !== contact.id));
-        setBlockedSuccessMessage(`Unblocked ${contact.full_name} (${contact.phone}) successfully.`);
+        setBlockedNumbers((prev) => prev.filter((b) => b.id !== item.id));
+        const label = item.contacts?.full_name || item.phone_number;
+        setBlockedSuccessMessage(`Unblocked ${label} successfully.`);
       } else {
         const errData = await res.json().catch(() => ({}));
-        alert(errData.error || 'Failed to unblock contact.');
+        alert(errData.error || 'Failed to unblock number.');
       }
     } catch (err) {
-      console.error('Error unblocking contact:', err);
-      alert('Network error unblocking contact.');
+      console.error('Error unblocking number:', err);
+      alert('Network error unblocking number.');
     } finally {
       setUnblockingId(null);
     }
@@ -155,14 +193,14 @@ export default function SettingsPage() {
             <span>Settings & Administration</span>
           </h1>
           <p className="text-xs text-slate-400 mt-0.5">
-            Manage audio devices, workspace preferences, themes, and organization blocklists.
+            Manage WebRTC audio devices, workspace preferences, themes, and organization blocklists.
           </p>
         </div>
 
         {/* Settings Navigation Sub-Tabs */}
         <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-950/80 border border-slate-800 text-xs">
           <button
-            onClick={() => setActiveTab('general')}
+            onClick={() => handleTabChange('general')}
             className={`px-3.5 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-2 ${
               activeTab === 'general'
                 ? 'bg-blue-600 text-white shadow-md'
@@ -173,7 +211,7 @@ export default function SettingsPage() {
             <span>General & Audio</span>
           </button>
           <button
-            onClick={() => setActiveTab('blocked')}
+            onClick={() => handleTabChange('blocked')}
             className={`px-3.5 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-2 ${
               activeTab === 'blocked'
                 ? 'bg-blue-600 text-white shadow-md'
@@ -181,10 +219,10 @@ export default function SettingsPage() {
             }`}
           >
             <Ban className="w-3.5 h-3.5 text-rose-400" />
-            <span>Blocked Contacts</span>
-            {blockedContacts.length > 0 && (
+            <span>Blocked Numbers</span>
+            {blockedNumbers.length > 0 && (
               <span className="px-1.5 py-0.2 rounded-full bg-rose-950 text-rose-300 font-mono text-[10px] border border-rose-800">
-                {blockedContacts.length}
+                {blockedNumbers.length}
               </span>
             )}
           </button>
@@ -345,7 +383,7 @@ export default function SettingsPage() {
           </Card>
         </div>
       ) : (
-        /* Blocked Contacts Management Section */
+        /* Blocked Numbers Management Section */
         <div className="space-y-6">
           <Card>
             <CardHeader>
@@ -353,17 +391,17 @@ export default function SettingsPage() {
                 <div>
                   <CardTitle className="text-sm flex items-center gap-2">
                     <Ban className="w-4 h-4 text-rose-400" />
-                    <span>Blocked Contacts Directory</span>
+                    <span>Blocked Numbers Directory</span>
                   </CardTitle>
                   <p className="text-xs text-slate-400 mt-1">
-                    Centralized list of all contacts and phone numbers blocked within your organization.
+                    Organization-level blocklist of saved contacts and unsaved phone numbers.
                   </p>
                 </div>
 
                 <div className="flex items-center gap-2">
                   <Input
                     icon={<Search className="w-4 h-4" />}
-                    placeholder="Search blocked contacts..."
+                    placeholder="Search blocked numbers..."
                     value={blockedSearchQuery}
                     onChange={(e) => setBlockedSearchQuery(e.target.value)}
                     className="w-48 sm:w-60"
@@ -371,8 +409,8 @@ export default function SettingsPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={fetchBlockedContacts}
-                    title="Refresh blocked contacts list"
+                    onClick={fetchBlockedNumbers}
+                    title="Refresh blocked numbers list"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${isLoadingBlocked ? 'animate-spin' : ''}`} />
                   </Button>
@@ -400,82 +438,114 @@ export default function SettingsPage() {
                 <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-rose-400" />
                 <span>Loading organization blocklist...</span>
               </div>
-            ) : blockedContacts.length === 0 ? (
+            ) : blockedNumbers.length === 0 ? (
               <div className="p-12 text-center text-xs text-slate-500 space-y-2">
                 <div className="w-12 h-12 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-center mx-auto text-slate-600">
                   <Ban className="w-6 h-6" />
                 </div>
-                <p className="text-slate-300 font-bold">No Blocked Contacts Found</p>
+                <p className="text-slate-300 font-bold">No Blocked Numbers</p>
                 <p className="text-slate-500 max-w-sm mx-auto">
                   {blockedSearchQuery
-                    ? `No blocked contacts match your search "${blockedSearchQuery}".`
-                    : 'There are currently no blocked contacts in your organization directory.'}
+                    ? `No blocked numbers match your search "${blockedSearchQuery}".`
+                    : 'There are currently no blocked numbers in your organization block list.'}
                 </p>
               </div>
             ) : (
               <div className="space-y-3">
-                {blockedContacts.map((contact) => (
-                  <div
-                    key={contact.id}
-                    className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:border-slate-700 transition-colors"
-                  >
-                    <div className="flex items-start gap-3">
-                      <Avatar name={contact.full_name || 'Blocked Contact'} size="md" />
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h3 className="text-sm font-bold text-slate-200">{contact.full_name}</h3>
-                          <Badge variant="rose" size="sm">
-                            <Ban className="w-2.5 h-2.5" />
-                            BLOCKED
-                          </Badge>
-                        </div>
+                {blockedNumbers.map((item) => {
+                  const hasContact = Boolean(item.contacts);
+                  const titleName = item.contacts?.full_name || item.phone_number;
 
-                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs font-mono text-slate-400">
-                          <span className="flex items-center gap-1 text-slate-300">
-                            <PhoneCall className="w-3 h-3 text-rose-400" />
-                            <span>{contact.phone}</span>
-                          </span>
+                  return (
+                    <div
+                      key={item.id}
+                      className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:border-slate-700 transition-colors"
+                    >
+                      <div className="flex items-start gap-3">
+                        <Avatar name={titleName} size="md" />
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-sm font-bold text-slate-200">{titleName}</h3>
+                            <Badge variant="rose" size="sm">
+                              <Ban className="w-2.5 h-2.5" />
+                              BLOCKED
+                            </Badge>
 
-                          {contact.email && (
-                            <span className="flex items-center gap-1 text-slate-400 font-sans">
-                              <Mail className="w-3 h-3 text-slate-500" />
-                              <span>{contact.email}</span>
+                            {hasContact ? (
+                              <Badge variant="blue" size="sm">
+                                <UserCheck className="w-2.5 h-2.5" />
+                                Saved Contact
+                              </Badge>
+                            ) : (
+                              <Badge variant="neutral" size="sm">
+                                <UserX className="w-2.5 h-2.5" />
+                                Not saved as contact
+                              </Badge>
+                            )}
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs font-mono text-slate-400">
+                            <span className="flex items-center gap-1 text-slate-300">
+                              <PhoneCall className="w-3 h-3 text-rose-400" />
+                              <span>{item.phone_number}</span>
                             </span>
-                          )}
 
-                          {contact.company && (
-                            <span className="flex items-center gap-1 text-slate-400 font-sans">
-                              <Building className="w-3 h-3 text-slate-500" />
-                              <span>{contact.company}</span>
-                            </span>
-                          )}
+                            {item.contacts?.email && (
+                              <span className="flex items-center gap-1 text-slate-400 font-sans">
+                                <Mail className="w-3 h-3 text-slate-500" />
+                                <span>{item.contacts.email}</span>
+                              </span>
+                            )}
+
+                            {item.contacts?.company && (
+                              <span className="flex items-center gap-1 text-slate-400 font-sans">
+                                <Building className="w-3 h-3 text-slate-500" />
+                                <span>{item.contacts.company}</span>
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    <div className="flex items-center justify-end shrink-0">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleUnblockContact(contact)}
-                        disabled={unblockingId === contact.id}
-                        className="font-bold border-rose-900/60 text-rose-300 hover:bg-rose-950/60 hover:text-white hover:border-rose-600 transition-all"
-                      >
-                        {unblockingId === contact.id ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                        )}
-                        <span>Unblock</span>
-                      </Button>
+                      <div className="flex items-center justify-end shrink-0">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleUnblockNumber(item)}
+                          disabled={unblockingId === item.id}
+                          className="font-bold border-rose-900/60 text-rose-300 hover:bg-rose-950/60 hover:text-white hover:border-rose-600 transition-all"
+                        >
+                          {unblockingId === item.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                          )}
+                          <span>Unblock</span>
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </Card>
         </div>
       )}
     </div>
+  );
+}
+
+export default function SettingsPage() {
+  return (
+    <React.Suspense
+      fallback={
+        <div className="p-12 text-center text-xs text-slate-400">
+          <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-blue-400" />
+          <span>Loading settings...</span>
+        </div>
+      }
+    >
+      <SettingsContent />
+    </React.Suspense>
   );
 }

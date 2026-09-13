@@ -17,11 +17,11 @@ export default function PhonePage() {
       <div className="flex items-center justify-between border-b border-slate-800 pb-4">
         <div>
           <h1 className="text-xl font-bold text-slate-100">Browser WebRTC Dialer</h1>
-          <p className="text-xs text-slate-400">Make and receive PSTN calls directly from your browser using Twilio Voice.</p>
+          <p className="text-xs text-slate-400">Make and receive business calls directly from your browser.</p>
         </div>
         <Badge variant="emerald" pulse size="md">
           <Shield className="w-3 h-3" />
-          Twilio Voice Connected
+          Voice Line Connected
         </Badge>
       </div>
 

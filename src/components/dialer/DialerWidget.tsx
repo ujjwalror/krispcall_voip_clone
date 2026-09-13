@@ -18,11 +18,12 @@ import {
   CheckCircle2,
   Radio,
 } from 'lucide-react';
-import { formatPhoneNumber, formatDuration } from '@/lib/utils';
+import { formatPhoneNumber, formatDuration, formatDisplayPhoneNumber } from '@/lib/utils';
 import { useTwilioDeviceContext } from '@/components/providers/TwilioDeviceProvider';
 
 export function DialerWidget() {
   const [phoneNumber, setPhoneNumber] = useState('');
+  const [businessNumber, setBusinessNumber] = useState('+61348328472');
 
   const {
     deviceStatus,
@@ -40,6 +41,30 @@ export function DialerWidget() {
     toggleMute,
     clearError,
   } = useTwilioDeviceContext();
+
+  useEffect(() => {
+    let isMounted = true;
+    async function fetchPrimaryNumber() {
+      try {
+        const res = await fetch('/api/phone-numbers');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.phoneNumbers && data.phoneNumbers.length > 0) {
+            const primary = data.phoneNumbers[0];
+            if (isMounted && primary?.phone_number) {
+              setBusinessNumber(primary.phone_number);
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Error loading dialer caller ID number:', err);
+      }
+    }
+    fetchPrimaryNumber();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const keys = [
     { num: '1', sub: '' },
@@ -70,6 +95,7 @@ export function DialerWidget() {
   };
 
   const isCallActive = callState === 'connecting' || callState === 'ringing' || callState === 'connected';
+  const displayCallerId = formatDisplayPhoneNumber(businessNumber);
 
   return (
     <div className="w-full max-w-sm mx-auto rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl p-5 flex flex-col gap-4">
@@ -77,8 +103,8 @@ export function DialerWidget() {
       <div className="flex items-center justify-between pb-3 border-b border-slate-800">
         <div className="flex items-center gap-2">
           <Badge variant="blue" size="sm">
-            <Globe className="w-3 h-3" />
-            Twilio PSTN
+            <Phone className="w-3 h-3 text-blue-400" />
+            Business Line
           </Badge>
           {identity && (
             <span className="text-[11px] text-slate-400 font-mono">Agent: {identity}</span>
@@ -89,13 +115,13 @@ export function DialerWidget() {
         {deviceStatus === 'ready' && (
           <Badge variant="emerald" size="sm">
             <Shield className="w-2.5 h-2.5" />
-            WebRTC Ready
+            Voice Line Ready
           </Badge>
         )}
         {deviceStatus === 'initializing' && (
           <Badge variant="amber" pulse size="sm">
             <Loader2 className="w-2.5 h-2.5 animate-spin" />
-            Initializing...
+            Connecting...
           </Badge>
         )}
         {deviceStatus === 'error' && (
@@ -104,6 +130,15 @@ export function DialerWidget() {
             Unconfigured
           </Badge>
         )}
+      </div>
+
+      {/* Outbound Caller ID Display */}
+      <div className="flex items-center justify-between text-xs px-3.5 py-2.5 rounded-xl bg-slate-950/80 border border-slate-800/80">
+        <div className="flex items-center gap-2 text-slate-400 font-medium text-[11px]">
+          <Phone className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+          <span>Calling from</span>
+        </div>
+        <span className="font-mono font-bold text-slate-100 text-xs tracking-wide">{displayCallerId}</span>
       </div>
 
       {/* Per-Call Recording Override Controls */}

@@ -18,43 +18,85 @@ import {
   CheckCircle2,
   XCircle,
   AlertTriangle,
+  Ban,
 } from 'lucide-react';
-import { formatDuration, formatCallTime } from '@/lib/utils';
+import { formatDuration, formatCallTime, normalizeE164PhoneNumber } from '@/lib/utils';
 import { CallRepository, CallWithProfile } from '@/lib/repositories/call.repository';
 import { useAuth } from '@/components/providers/AuthProvider';
+import { BlockNumberConfirmationModal } from '@/components/call/BlockNumberConfirmationModal';
 import Link from 'next/link';
 
 export default function CallsPage() {
   const [calls, setCalls] = useState<CallWithProfile[]>([]);
+  const [blockedNumbersMap, setBlockedNumbersMap] = useState<Record<string, boolean>>({});
   const [directionFilter, setDirectionFilter] = useState<'all' | 'inbound' | 'outbound'>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'missed' | 'failed'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
 
+  // Modal state for direct call history blocking
+  const [blockingPhone, setBlockingPhone] = useState<string | null>(null);
+
   const { profile } = useAuth();
   const callRepo = new CallRepository();
+
+  const loadBlockedNumbers = useCallback(async () => {
+    try {
+      const res = await fetch('/api/blocked-numbers');
+      if (res.ok) {
+        const data = await res.json();
+        const map: Record<string, boolean> = {};
+        (data.blockedNumbers || []).forEach((b: any) => {
+          if (b.normalized_phone) {
+            map[b.normalized_phone] = true;
+          }
+        });
+        setBlockedNumbersMap(map);
+      }
+    } catch (err) {
+      console.error('Error fetching blocked numbers map:', err);
+    }
+  }, []);
 
   const loadCalls = useCallback(async () => {
     setIsLoading(true);
     try {
-      const results = await callRepo.getFilteredCalls({
-        organizationId: profile?.organization_id,
-        direction: directionFilter,
-        status: statusFilter,
-        search: searchQuery,
-        limit: 100,
-      });
+      const [results] = await Promise.all([
+        callRepo.getFilteredCalls({
+          organizationId: profile?.organization_id,
+          direction: directionFilter,
+          status: statusFilter,
+          search: searchQuery,
+          limit: 100,
+        }),
+        loadBlockedNumbers(),
+      ]);
       setCalls(results);
     } catch (err) {
       console.error('Error loading calls:', err);
     } finally {
       setIsLoading(false);
     }
-  }, [profile?.organization_id, directionFilter, statusFilter, searchQuery]);
+  }, [profile?.organization_id, directionFilter, statusFilter, searchQuery, loadBlockedNumbers]);
 
   useEffect(() => {
     loadCalls();
   }, [loadCalls]);
+
+  const handleUnblockPhone = async (phone: string) => {
+    try {
+      const res = await fetch(`/api/blocked-numbers`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone }),
+      });
+      if (res.ok) {
+        loadCalls();
+      }
+    } catch (err) {
+      console.error('Error unblocking phone:', err);
+    }
+  };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -94,6 +136,13 @@ export default function CallsPage() {
             FAILED
           </Badge>
         );
+      case 'blocked':
+        return (
+          <Badge variant="rose" size="sm">
+            <Ban className="w-2.5 h-2.5" />
+            BLOCKED
+          </Badge>
+        );
       case 'canceled':
         return (
           <Badge variant="neutral" size="sm">
@@ -124,7 +173,7 @@ export default function CallsPage() {
         <div>
           <h1 className="text-xl font-bold text-slate-100">Call History & Logs</h1>
           <p className="text-xs text-slate-400">
-            Real-time Supabase call logs for inbound, outbound, and missed telephony calls.
+            Real-time call logs with direct block list controls for inbound and outbound calls.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -217,6 +266,9 @@ export default function CallsPage() {
               ) : (
                 calls.map((log) => {
                   const isOutbound = log.direction === 'outbound';
+                  const targetNumber = isOutbound ? log.to_number : log.from_number;
+                  const normalizedTarget = normalizeE164PhoneNumber(targetNumber).normalized || targetNumber;
+                  const isBlocked = Boolean(blockedNumbersMap[normalizedTarget]) || log.status === 'blocked';
                   const isMissed = ['no-answer', 'busy', 'failed', 'canceled'].includes(log.status);
                   const agentName = log.profiles?.full_name || 'Agent';
 
@@ -226,7 +278,9 @@ export default function CallsPage() {
                         <div className="flex items-center gap-3">
                           <div
                             className={`p-2 rounded-lg ${
-                              isMissed
+                              log.status === 'blocked' || isBlocked
+                                ? 'bg-rose-950/80 text-rose-400 border border-rose-800/80'
+                                : isMissed
                                 ? 'bg-rose-500/10 text-rose-400'
                                 : isOutbound
                                 ? 'bg-blue-500/10 text-blue-400'
@@ -242,10 +296,18 @@ export default function CallsPage() {
                             )}
                           </div>
                           <div>
-                            <p className="font-semibold text-slate-100 font-mono">
-                              {isOutbound ? `To: ${log.to_number}` : `From: ${log.from_number}`}
-                            </p>
-                            <p className="text-[10px] text-slate-400 uppercase font-mono">
+                            <div className="flex items-center gap-2">
+                              <p className="font-semibold text-slate-100 font-mono">
+                                {isOutbound ? `To: ${log.to_number}` : `From: ${log.from_number}`}
+                              </p>
+                              {isBlocked && (
+                                <Badge variant="rose" size="sm">
+                                  <Ban className="w-2.5 h-2.5" />
+                                  BLOCKED
+                                </Badge>
+                              )}
+                            </div>
+                            <p className="text-[10px] text-slate-400 uppercase font-mono mt-0.5">
                               {log.direction} Call
                             </p>
                           </div>
@@ -269,12 +331,36 @@ export default function CallsPage() {
                         {formatCallTime(log.created_at)}
                       </td>
                       <td className="px-5 py-4 text-right">
-                        <Link href={`/phone?number=${encodeURIComponent(isOutbound ? log.to_number : log.from_number)}`}>
-                          <Button variant="ghost" size="sm" className="text-blue-400 hover:text-blue-300">
-                            <PhoneCall className="w-3.5 h-3.5" />
-                            <span>Redial</span>
-                          </Button>
-                        </Link>
+                        <div className="flex items-center justify-end gap-2">
+                          {isBlocked ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/40"
+                              onClick={() => handleUnblockPhone(targetNumber)}
+                            >
+                              <Ban className="w-3.5 h-3.5 text-emerald-400" />
+                              <span>Unblock</span>
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-amber-400 hover:text-amber-300 hover:bg-amber-950/40"
+                              onClick={() => setBlockingPhone(targetNumber)}
+                            >
+                              <Ban className="w-3.5 h-3.5 text-amber-400" />
+                              <span>Block Number</span>
+                            </Button>
+                          )}
+
+                          <Link href={`/phone?number=${encodeURIComponent(targetNumber)}`}>
+                            <Button variant="ghost" size="sm" className="text-blue-400 hover:text-blue-300">
+                              <PhoneCall className="w-3.5 h-3.5" />
+                              <span>Redial</span>
+                            </Button>
+                          </Link>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -284,6 +370,13 @@ export default function CallsPage() {
           </table>
         </div>
       </Card>
+
+      <BlockNumberConfirmationModal
+        phoneNumber={blockingPhone}
+        isOpen={Boolean(blockingPhone)}
+        onClose={() => setBlockingPhone(null)}
+        onSuccess={loadCalls}
+      />
     </div>
   );
 }

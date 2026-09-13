@@ -259,7 +259,7 @@ export default function DashboardPage() {
             <div className="flex items-center gap-3">
               <ShieldCheck className="w-5 h-5 text-emerald-400 shrink-0" />
               <div>
-                <h4 className="text-xs font-semibold text-slate-200">Twilio Call Logging & Database Protection</h4>
+                <h4 className="text-xs font-semibold text-slate-200">Call Logging & Database Protection</h4>
                 <p className="text-[11px] text-slate-400 mt-0.5">
                   Call records and status callbacks are securely synchronized with PostgreSQL Row Level Security (RLS).
                 </p>

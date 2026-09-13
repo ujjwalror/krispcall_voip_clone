@@ -31,6 +31,7 @@ import { ImportContactsModal } from '@/components/contacts/ImportContactsModal';
 import { ContactDetailsModal } from '@/components/contacts/ContactDetailsModal';
 import { EditContactModal } from '@/components/contacts/EditContactModal';
 import { DeleteContactConfirmationModal } from '@/components/contacts/DeleteContactConfirmationModal';
+import { BlockContactConfirmationModal } from '@/components/contacts/BlockContactConfirmationModal';
 import { useTwilioDeviceContext } from '@/components/providers/TwilioDeviceProvider';
 
 export default function ContactsPage() {
@@ -46,6 +47,7 @@ export default function ContactsPage() {
   const [selectedDetailsId, setSelectedDetailsId] = useState<string | null>(null);
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
   const [deletingContact, setDeletingContact] = useState<Contact | null>(null);
+  const [blockingContact, setBlockingContact] = useState<Contact | null>(null);
 
   // Active 3-dot dropdown menu state
   const [activeMenuContactId, setActiveMenuContactId] = useState<string | null>(null);
@@ -101,21 +103,20 @@ export default function ContactsPage() {
     router.push(`/messages?to=${encodeURIComponent(phoneNumber)}`);
   };
 
-  const handleToggleBlock = async (contact: Contact) => {
+  const handleUnblockContact = async (contact: Contact) => {
     setActiveMenuContactId(null);
     setBlockedAlertMessage(null);
-    const nextBlocked = !contact.is_blocked;
     try {
       const res = await fetch(`/api/contacts/${contact.id}/block`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ isBlocked: nextBlocked }),
+        body: JSON.stringify({ isBlocked: false }),
       });
       if (res.ok) {
         fetchContacts();
       }
     } catch (err) {
-      console.error('Error toggling contact block state:', err);
+      console.error('Error unblocking contact:', err);
     }
   };
 
@@ -294,37 +295,54 @@ export default function ContactsPage() {
                           <span>Edit Contact</span>
                         </button>
 
-                        <button
-                          onClick={() => {
-                            setActiveMenuContactId(null);
-                            handleCallContact(contact);
-                          }}
-                          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
-                        >
-                          <PhoneCall className="w-3.5 h-3.5 text-emerald-400" />
-                          <span>Call</span>
-                        </button>
+                        {!contact.is_blocked && (
+                          <>
+                            <button
+                              onClick={() => {
+                                setActiveMenuContactId(null);
+                                handleCallContact(contact);
+                              }}
+                              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+                            >
+                              <PhoneCall className="w-3.5 h-3.5 text-emerald-400" />
+                              <span>Call</span>
+                            </button>
 
-                        <button
-                          onClick={() => {
-                            setActiveMenuContactId(null);
-                            handleMessageContact(contact.phone);
-                          }}
-                          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
-                        >
-                          <MessageSquare className="w-3.5 h-3.5 text-blue-400" />
-                          <span>SMS Message</span>
-                        </button>
+                            <button
+                              onClick={() => {
+                                setActiveMenuContactId(null);
+                                handleMessageContact(contact.phone);
+                              }}
+                              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+                            >
+                              <MessageSquare className="w-3.5 h-3.5 text-blue-400" />
+                              <span>SMS Message</span>
+                            </button>
+                          </>
+                        )}
 
                         <div className="h-px bg-slate-800 my-1" />
 
-                        <button
-                          onClick={() => handleToggleBlock(contact)}
-                          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-slate-300 hover:text-amber-300 hover:bg-slate-800 transition-colors"
-                        >
-                          <Ban className="w-3.5 h-3.5 text-amber-400" />
-                          <span>{contact.is_blocked ? 'Unblock Contact' : 'Block Contact'}</span>
-                        </button>
+                        {contact.is_blocked ? (
+                          <button
+                            onClick={() => handleUnblockContact(contact)}
+                            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/60 transition-colors"
+                          >
+                            <Ban className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>Unblock Contact</span>
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              setActiveMenuContactId(null);
+                              setBlockingContact(contact);
+                            }}
+                            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-amber-400 hover:text-amber-300 hover:bg-amber-950/60 transition-colors"
+                          >
+                            <Ban className="w-3.5 h-3.5 text-amber-400" />
+                            <span>Block Contact</span>
+                          </button>
+                        )}
 
                         <button
                           onClick={() => {
@@ -428,6 +446,13 @@ export default function ContactsPage() {
         contact={deletingContact}
         isOpen={Boolean(deletingContact)}
         onClose={() => setDeletingContact(null)}
+        onSuccess={fetchContacts}
+      />
+
+      <BlockContactConfirmationModal
+        contact={blockingContact}
+        isOpen={Boolean(blockingContact)}
+        onClose={() => setBlockingContact(null)}
         onSuccess={fetchContacts}
       />
     </div>
