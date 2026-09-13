@@ -23,7 +23,7 @@ export async function PATCH(request: Request) {
     }
 
     const body = await request.json().catch(() => ({}));
-    const timezone = (body.timezone || 'UTC').trim();
+    const rawTimezone = body.timezone;
     const timeFormat = (body.time_format || body.timeFormat || '12h').trim();
 
     // Validate timeFormat
@@ -34,21 +34,28 @@ export async function PATCH(request: Request) {
       );
     }
 
-    // Validate IANA timezone
-    try {
-      Intl.DateTimeFormat(undefined, { timeZone: timezone });
-    } catch {
-      return NextResponse.json(
-        { error: 'Invalid IANA time zone identifier.' },
-        { status: 400 }
-      );
+    let dbTimezone: string | null = null;
+    if (rawTimezone && typeof rawTimezone === 'string' && rawTimezone.trim() !== '' && rawTimezone.trim() !== 'AUTO') {
+      let tz = rawTimezone.trim();
+      if (tz === 'Asia/Calcutta') {
+        tz = 'Asia/Kolkata';
+      }
+      try {
+        Intl.DateTimeFormat(undefined, { timeZone: tz });
+        dbTimezone = tz;
+      } catch {
+        return NextResponse.json(
+          { error: 'Invalid IANA time zone identifier.' },
+          { status: 400 }
+        );
+      }
     }
 
     // Update public.profiles strictly scoped to auth.uid()
     const { data: updatedProfile, error: updateError } = await (supabase as any)
       .from('profiles')
       .update({
-        timezone,
+        timezone: dbTimezone,
         time_format: timeFormat,
         updated_at: new Date().toISOString(),
       })

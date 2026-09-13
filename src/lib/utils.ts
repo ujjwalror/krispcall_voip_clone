@@ -56,11 +56,49 @@ export function formatDisplayPhoneNumber(phone: string): string {
 }
 
 /**
+ * Normalizes legacy IANA time zone aliases (e.g. Asia/Calcutta -> Asia/Kolkata).
+ */
+export function normalizeTimeZone(tz?: string | null): string {
+  if (!tz) return '';
+  const trimmed = tz.trim();
+  if (trimmed === 'Asia/Calcutta') return 'Asia/Kolkata';
+  return trimmed;
+}
+
+/**
  * Safely resolves the current browser's IANA time zone identifier.
  */
 export function getBrowserTimeZone(): string {
   try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    const raw = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    return normalizeTimeZone(raw) || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+}
+
+/**
+ * Centralized effective timezone resolver.
+ * Priority:
+ * 1. Explicit saved user timezone (if non-null and non-empty)
+ * 2. Browser/device-detected IANA timezone
+ * 3. UTC fallback
+ */
+export function getEffectiveTimeZone(profileTimeZone?: string | null): string {
+  const normalized = normalizeTimeZone(profileTimeZone);
+  if (normalized) {
+    try {
+      Intl.DateTimeFormat(undefined, { timeZone: normalized });
+      return normalized;
+    } catch {
+      // Invalid profile timezone identifier, fallback to browser
+    }
+  }
+
+  const browserTz = getBrowserTimeZone();
+  try {
+    Intl.DateTimeFormat(undefined, { timeZone: browserTz });
+    return browserTz;
   } catch {
     return 'UTC';
   }
@@ -96,8 +134,9 @@ export const COMMON_TIMEZONES: TimeZoneOption[] = [
 export function getFormattedTimeZoneLabel(iana: string, baseLabel?: string): string {
   try {
     const now = new Date();
+    const target = normalizeTimeZone(iana);
     const formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: iana,
+      timeZone: target,
       timeZoneName: 'shortOffset',
     });
     const parts = formatter.formatToParts(now);
@@ -116,14 +155,14 @@ export function getFormattedTimeZoneLabel(iana: string, baseLabel?: string): str
  */
 export function formatUserDateTime(
   isoString: string,
-  timeZone?: string,
+  timeZone?: string | null,
   timeFormat: '12h' | '24h' | string = '12h'
 ): string {
   if (!isoString) return '';
   const date = new Date(isoString);
   if (isNaN(date.getTime())) return '';
 
-  const targetZone = timeZone || getBrowserTimeZone();
+  const targetZone = getEffectiveTimeZone(timeZone);
   const hour12 = timeFormat !== '24h';
 
   try {
@@ -172,7 +211,7 @@ export function formatUserDateTime(
 /**
  * Formats ISO timestamps into friendly relative/absolute dates using user timezone preferences.
  */
-export function formatCallTime(isoString: string, timeZone?: string, timeFormat: string = '12h'): string {
+export function formatCallTime(isoString: string, timeZone?: string | null, timeFormat: string = '12h'): string {
   return formatUserDateTime(isoString, timeZone, timeFormat);
 }
 

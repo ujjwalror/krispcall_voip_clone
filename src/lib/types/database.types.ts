@@ -58,7 +58,7 @@ export interface Database {
           active: boolean;
           twilio_identity: string | null;
           avatar_url: string | null;
-          timezone: string;
+          timezone: string | null;
           time_format: string;
           created_at: string;
           updated_at: string;
@@ -72,7 +72,7 @@ export interface Database {
           active?: boolean;
           twilio_identity?: string | null;
           avatar_url?: string | null;
-          timezone?: string;
+          timezone?: string | null;
           time_format?: string;
           created_at?: string;
           updated_at?: string;
@@ -86,7 +86,7 @@ export interface Database {
           active?: boolean;
           twilio_identity?: string | null;
           avatar_url?: string | null;
-          timezone?: string;
+          timezone?: string | null;
           time_format?: string;
           created_at?: string;
           updated_at?: string;

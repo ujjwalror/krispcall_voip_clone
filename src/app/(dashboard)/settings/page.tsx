@@ -90,7 +90,7 @@ function SettingsContent() {
   // Per-User Regional Preferences State
   const defaultBrowserTz = getBrowserTimeZone();
   const [selectedTimezone, setSelectedTimezone] = useState<string>(
-    profile?.timezone && profile.timezone !== 'UTC' ? profile.timezone : defaultBrowserTz
+    profile?.timezone ? profile.timezone : 'AUTO'
   );
   const [selectedTimeFormat, setSelectedTimeFormat] = useState<'12h' | '24h'>(
     (profile?.time_format as '12h' | '24h') || '12h'
@@ -102,6 +102,8 @@ function SettingsContent() {
     if (profile) {
       if (profile.timezone) {
         setSelectedTimezone(profile.timezone);
+      } else {
+        setSelectedTimezone('AUTO');
       }
       if (profile.time_format) {
         setSelectedTimeFormat(profile.time_format as '12h' | '24h');
@@ -113,11 +115,12 @@ function SettingsContent() {
     setIsSavingRegional(true);
     setRegionalMessage(null);
     try {
+      const tzPayload = selectedTimezone === 'AUTO' ? null : selectedTimezone;
       const res = await fetch('/api/users/profile', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          timezone: selectedTimezone,
+          timezone: tzPayload,
           time_format: selectedTimeFormat,
         }),
       });
@@ -131,7 +134,7 @@ function SettingsContent() {
       }
     } catch (err) {
       console.error('Error saving regional preferences:', err);
-      alert('Network error saving preferences.');
+      alert('Network error saving regional preferences.');
     } finally {
       setIsSavingRegional(false);
     }
@@ -360,14 +363,27 @@ function SettingsContent() {
                     onChange={(e) => setSelectedTimezone(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-100 p-2.5 outline-none focus:border-blue-500 transition-colors"
                   >
-                    {COMMON_TIMEZONES.map((tz) => (
-                      <option key={tz.iana} value={tz.iana}>
-                        {getFormattedTimeZoneLabel(tz.iana, tz.label)}
-                      </option>
-                    ))}
+                    <option value="AUTO">
+                      Automatic — Device Time Zone ({getFormattedTimeZoneLabel(defaultBrowserTz, defaultBrowserTz)})
+                    </option>
+                    <optgroup label="Manual IANA Time Zones">
+                      {COMMON_TIMEZONES.map((tz) => (
+                        <option key={tz.iana} value={tz.iana}>
+                          {getFormattedTimeZoneLabel(tz.iana, tz.label)}
+                        </option>
+                      ))}
+                    </optgroup>
                   </select>
                   <p className="text-[10px] text-slate-500 mt-1">
-                    Detected browser timezone: <span className="font-mono text-slate-400">{defaultBrowserTz}</span>
+                    {selectedTimezone === 'AUTO' ? (
+                      <span>
+                        Automatically using device timezone: <span className="font-mono text-slate-400">{defaultBrowserTz}</span>
+                      </span>
+                    ) : (
+                      <span>
+                        Manual override active: <span className="font-mono text-slate-300">{selectedTimezone}</span> (Device: {defaultBrowserTz})
+                      </span>
+                    )}
                   </p>
                 </div>
 
