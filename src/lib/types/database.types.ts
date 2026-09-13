@@ -279,6 +279,7 @@ export interface Database {
           phone_number: string;
           friendly_name: string | null;
           active: boolean;
+          is_primary: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -289,6 +290,7 @@ export interface Database {
           phone_number: string;
           friendly_name?: string | null;
           active?: boolean;
+          is_primary?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -299,6 +301,7 @@ export interface Database {
           phone_number?: string;
           friendly_name?: string | null;
           active?: boolean;
+          is_primary?: boolean;
           created_at?: string;
           updated_at?: string;
         };

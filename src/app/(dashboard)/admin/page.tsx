@@ -13,6 +13,7 @@ export interface BusinessPhoneNumber {
   phone_number: string;
   friendly_name?: string;
   active: boolean;
+  is_primary?: boolean;
   created_at?: string;
 }
 
@@ -158,7 +159,7 @@ export default function AdminPage() {
               ) : (
                 phoneNumbers.map((num, idx) => {
                   const formatted = formatDisplayPhoneNumber(num.phone_number);
-                  const isPrimary = idx === 0;
+                  const isPrimary = Boolean(num.is_primary) || idx === 0;
 
                   return (
                     <div

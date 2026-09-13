@@ -41,6 +41,7 @@ export async function GET() {
       .select('*')
       .eq('organization_id', profile.organization_id)
       .eq('active', true)
+      .order('is_primary', { ascending: false })
       .order('created_at', { ascending: true });
 
     if (fetchError) {
@@ -66,6 +67,7 @@ export async function GET() {
           phone_number: normalizedPhone,
           friendly_name: 'Primary Business Line',
           active: true,
+          is_primary: true,
         })
         .select()
         .maybeSingle();
@@ -81,6 +83,7 @@ export async function GET() {
             phone_number: normalizedPhone,
             friendly_name: 'Primary Business Line',
             active: true,
+            is_primary: true,
             created_at: new Date().toISOString(),
           },
         ];

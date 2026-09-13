@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
-import { Mic, Download, ArrowUpRight, ArrowDownLeft, Clock, User, Phone, CheckCircle2, Loader2 } from 'lucide-react';
+import { Mic, Download, ArrowUpRight, ArrowDownLeft, Clock, User, Phone, CheckCircle2, Loader2, Trash2 } from 'lucide-react';
 import { formatDuration, formatCallTime } from '@/lib/utils';
 import { RecordingWithDetails } from '@/lib/repositories/recording.repository';
 import { RecordingAudioPlayer } from './RecordingAudioPlayer';
@@ -11,10 +11,12 @@ import { RecordingAudioPlayer } from './RecordingAudioPlayer';
 interface RecordingCardProps {
   recording: RecordingWithDetails;
   isPlaying: boolean;
+  isAdmin?: boolean;
   onPlayToggle: () => void;
+  onRequestDelete?: (recording: RecordingWithDetails) => void;
 }
 
-export function RecordingCard({ recording, isPlaying, onPlayToggle }: RecordingCardProps) {
+export function RecordingCard({ recording, isPlaying, isAdmin = false, onPlayToggle, onRequestDelete }: RecordingCardProps) {
   const [isDownloading, setIsDownloading] = useState(false);
 
   const agentName = recording.calls?.profiles?.full_name || 'VoIP Agent';
@@ -128,6 +130,17 @@ export function RecordingCard({ recording, isPlaying, onPlayToggle }: RecordingC
                 <Download className="w-4 h-4" />
               )}
             </button>
+
+            {/* Admin-Only Delete Recording Action */}
+            {isAdmin && onRequestDelete && (
+              <button
+                onClick={() => onRequestDelete(recording)}
+                className="p-2 rounded-xl bg-slate-950/80 border border-slate-800 text-slate-400 hover:text-rose-400 hover:border-rose-900/80 hover:bg-rose-950/40 transition-all flex items-center justify-center"
+                title="Delete Recording (Admin Only)"
+              >
+                <Trash2 className="w-4 h-4 text-rose-400" />
+              </button>
+            )}
           </div>
         </div>
 

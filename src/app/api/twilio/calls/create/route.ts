@@ -80,9 +80,27 @@ export async function POST(request: Request) {
     }
 
     const recordCall = Boolean(body.recordCall);
-    const fromNumber = process.env.TWILIO_PHONE_NUMBER || '+18005550199';
 
-    // 4. Create database call record
+    // 5. Resolve caller ID from request body or organization primary active phone number
+    let fromNumber = (body.fromNumber || body.from || '').trim();
+    if (!fromNumber) {
+      const { data: primaryPhone } = await (supabase as any)
+        .from('phone_numbers')
+        .select('phone_number')
+        .eq('organization_id', profile.organization_id)
+        .eq('active', true)
+        .order('is_primary', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (primaryPhone?.phone_number) {
+        fromNumber = primaryPhone.phone_number;
+      } else {
+        fromNumber = process.env.TWILIO_PHONE_NUMBER || '+61348328472';
+      }
+    }
+
+    // 6. Create database call record
     const { data: callRecord, error: insertError } = await supabase
       .from('calls')
       .insert({

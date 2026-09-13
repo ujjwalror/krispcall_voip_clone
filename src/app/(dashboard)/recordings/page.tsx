@@ -4,14 +4,21 @@ import React, { useEffect, useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Mic, RefreshCw, Search, ShieldCheck, Clock, Headphones } from 'lucide-react';
+import { Mic, RefreshCw, Search, ShieldCheck, Clock, Headphones, CheckCircle2 } from 'lucide-react';
 import { formatDuration } from '@/lib/utils';
 import { RecordingRepository, RecordingWithDetails } from '@/lib/repositories/recording.repository';
 import { RecordingCard } from '@/components/recordings/RecordingCard';
+import { DeleteRecordingConfirmationModal } from '@/components/recordings/DeleteRecordingConfirmationModal';
+import { useAuth } from '@/components/providers/AuthProvider';
 
 export default function RecordingsPage() {
+  const { profile } = useAuth();
+  const isAdmin = profile?.role === 'admin';
+
   const [recordings, setRecordings] = useState<RecordingWithDetails[]>([]);
   const [activePlayingId, setActivePlayingId] = useState<string | null>(null);
+  const [deletingRecording, setDeletingRecording] = useState<RecordingWithDetails | null>(null);
+  const [notificationMessage, setNotificationMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -39,6 +46,14 @@ export default function RecordingsPage() {
     } else {
       setActivePlayingId(recordingId);
     }
+  };
+
+  const handleRecordingDeletedSuccess = (deletedId: string) => {
+    setRecordings((prev) => prev.filter((r) => r.id !== deletedId));
+    if (activePlayingId === deletedId) {
+      setActivePlayingId(null);
+    }
+    setNotificationMessage('Recording deleted');
   };
 
   // Filter recordings by phone number or agent name
@@ -91,6 +106,22 @@ export default function RecordingsPage() {
         </div>
       </div>
 
+      {/* Notification Banner */}
+      {notificationMessage && (
+        <div className="p-3 rounded-xl bg-emerald-950/80 border border-emerald-700 text-emerald-200 text-xs flex items-center justify-between animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>{notificationMessage}</span>
+          </div>
+          <button
+            onClick={() => setNotificationMessage(null)}
+            className="text-emerald-400 hover:text-emerald-200"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Filter / Search Control Bar */}
       <div className="flex items-center justify-between gap-4">
         <div className="relative flex-1 max-w-md">
@@ -134,11 +165,21 @@ export default function RecordingsPage() {
               key={rec.id}
               recording={rec}
               isPlaying={activePlayingId === rec.id}
+              isAdmin={isAdmin}
               onPlayToggle={() => handlePlayToggle(rec.id)}
+              onRequestDelete={(targetRec) => setDeletingRecording(targetRec)}
             />
           ))
         )}
       </div>
+
+      {/* Admin Delete Confirmation Modal */}
+      <DeleteRecordingConfirmationModal
+        recording={deletingRecording}
+        isOpen={Boolean(deletingRecording)}
+        onClose={() => setDeletingRecording(null)}
+        onSuccess={handleRecordingDeletedSuccess}
+      />
     </div>
   );
 }
