@@ -136,7 +136,7 @@ export default function MissedCallsPage() {
                         )}
                       </div>
                       <p className="text-xs text-slate-400 mt-0.5">
-                        {formatCallTime(item.created_at)}
+                        {formatCallTime(item.created_at, profile?.timezone, profile?.time_format)}
                         {agentName && ` • Ringing target: ${agentName}`}
                       </p>
                     </div>

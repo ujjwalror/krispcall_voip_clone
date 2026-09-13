@@ -28,9 +28,17 @@ import {
   RefreshCw,
   Sliders,
   UserX,
+  Globe,
+  Clock,
 } from 'lucide-react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useTheme } from '@/components/providers/ThemeProvider';
+import { useAuth } from '@/components/providers/AuthProvider';
+import {
+  COMMON_TIMEZONES,
+  getBrowserTimeZone,
+  getFormattedTimeZoneLabel,
+} from '@/lib/utils';
 
 interface BlockedNumberItem {
   id: string;
@@ -55,6 +63,7 @@ function SettingsContent() {
   const initialTab = searchParams.get('tab') === 'blocked' ? 'blocked' : 'general';
 
   const { theme, setTheme } = useTheme();
+  const { profile, refreshProfile } = useAuth();
   const [activeTab, setActiveTab] = useState<'general' | 'blocked'>(initialTab);
 
   useEffect(() => {
@@ -77,6 +86,56 @@ function SettingsContent() {
   const [isLoadingSettings, setIsLoadingSettings] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [message, setMessage] = useState<string | null>(null);
+
+  // Per-User Regional Preferences State
+  const defaultBrowserTz = getBrowserTimeZone();
+  const [selectedTimezone, setSelectedTimezone] = useState<string>(
+    profile?.timezone && profile.timezone !== 'UTC' ? profile.timezone : defaultBrowserTz
+  );
+  const [selectedTimeFormat, setSelectedTimeFormat] = useState<'12h' | '24h'>(
+    (profile?.time_format as '12h' | '24h') || '12h'
+  );
+  const [isSavingRegional, setIsSavingRegional] = useState<boolean>(false);
+  const [regionalMessage, setRegionalMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (profile) {
+      if (profile.timezone) {
+        setSelectedTimezone(profile.timezone);
+      }
+      if (profile.time_format) {
+        setSelectedTimeFormat(profile.time_format as '12h' | '24h');
+      }
+    }
+  }, [profile]);
+
+  const handleSaveRegionalPreferences = async () => {
+    setIsSavingRegional(true);
+    setRegionalMessage(null);
+    try {
+      const res = await fetch('/api/users/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          timezone: selectedTimezone,
+          time_format: selectedTimeFormat,
+        }),
+      });
+
+      if (res.ok) {
+        await refreshProfile();
+        setRegionalMessage('Preferences saved');
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        alert(errData.error || 'Failed to save regional preferences.');
+      }
+    } catch (err) {
+      console.error('Error saving regional preferences:', err);
+      alert('Network error saving preferences.');
+    } finally {
+      setIsSavingRegional(false);
+    }
+  };
 
   // Blocked Numbers State
   const [blockedNumbers, setBlockedNumbers] = useState<BlockedNumberItem[]>([]);
@@ -273,6 +332,106 @@ function SettingsContent() {
                   <p className="text-[11px] text-slate-400">Clean, crisp light SaaS dashboard theme for daytime productivity.</p>
                 </div>
               </button>
+            </div>
+          </Card>
+
+          {/* Per-User Regional & Time Display Preferences */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Globe className="w-4 h-4 text-emerald-400" />
+                <span>Regional & Time Display Preferences</span>
+              </CardTitle>
+            </CardHeader>
+            <div className="space-y-4">
+              <p className="text-xs text-slate-400">
+                Configure your personal time zone and 12-hour or 24-hour time format. All call logs, recordings, and message timestamps update dynamically for your user profile.
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Time Zone Selection */}
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1.5 flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-blue-400" />
+                    <span>Time Zone</span>
+                  </label>
+                  <select
+                    value={selectedTimezone}
+                    onChange={(e) => setSelectedTimezone(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-100 p-2.5 outline-none focus:border-blue-500 transition-colors"
+                  >
+                    {COMMON_TIMEZONES.map((tz) => (
+                      <option key={tz.iana} value={tz.iana}>
+                        {getFormattedTimeZoneLabel(tz.iana, tz.label)}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Detected browser timezone: <span className="font-mono text-slate-400">{defaultBrowserTz}</span>
+                  </p>
+                </div>
+
+                {/* 12-Hour vs 24-Hour Time Format Selection */}
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 block mb-1.5">
+                    Time Format
+                  </label>
+                  <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-slate-950/80 border border-slate-800">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedTimeFormat('12h')}
+                      className={`py-2 px-3 rounded-lg text-xs font-semibold transition-all ${
+                        selectedTimeFormat === '12h'
+                          ? 'bg-blue-600 text-white shadow'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      12-hour (3:45 PM)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedTimeFormat('24h')}
+                      className={`py-2 px-3 rounded-lg text-xs font-semibold transition-all ${
+                        selectedTimeFormat === '24h'
+                          ? 'bg-blue-600 text-white shadow'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      24-hour (15:45)
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Save Controls & Feedback */}
+              <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+                {regionalMessage ? (
+                  <p className="text-xs text-emerald-400 font-medium flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>{regionalMessage}</span>
+                  </p>
+                ) : (
+                  <span className="text-[10px] text-slate-500">
+                    Timestamps in your profile update automatically across all pages.
+                  </span>
+                )}
+
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={handleSaveRegionalPreferences}
+                  disabled={isSavingRegional}
+                >
+                  {isSavingRegional ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <span>Save Regional Preferences</span>
+                  )}
+                </Button>
+              </div>
             </div>
           </Card>
 

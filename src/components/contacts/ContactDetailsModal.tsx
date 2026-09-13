@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { Contact } from '@/lib/types';
 import { formatCallTime, formatDuration } from '@/lib/utils';
+import { useAuth } from '@/components/providers/AuthProvider';
 import { BlockContactConfirmationModal } from '@/components/contacts/BlockContactConfirmationModal';
 
 interface ContactDetailsModalProps {
@@ -46,6 +47,7 @@ export function ContactDetailsModal({
   onStatusChange,
 }: ContactDetailsModalProps) {
   const [contact, setContact] = useState<Contact | null>(null);
+  const { profile } = useAuth();
   const [callsHistory, setCallsHistory] = useState<any[]>([]);
   const [messagesHistory, setMessagesHistory] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<'details' | 'calls' | 'messages'>('details');
@@ -237,12 +239,12 @@ export function ContactDetailsModal({
                   <div className="flex items-center justify-between text-[11px] text-slate-500 pt-2 border-t border-slate-800 font-mono">
                     <span className="flex items-center gap-1">
                       <Calendar className="w-3 h-3 text-slate-600" />
-                      Created: {formatCallTime(contact.created_at)}
+                      Created: {formatCallTime(contact.created_at, profile?.timezone, profile?.time_format)}
                     </span>
                     {contact.updated_at && (
                       <span className="flex items-center gap-1">
                         <Clock className="w-3 h-3 text-slate-600" />
-                        Updated: {formatCallTime(contact.updated_at)}
+                        Updated: {formatCallTime(contact.updated_at, profile?.timezone, profile?.time_format)}
                       </span>
                     )}
                   </div>
@@ -263,7 +265,7 @@ export function ContactDetailsModal({
                           <span className="font-mono text-slate-300 capitalize">{call.status}</span>
                         </div>
                         <div className="text-right text-[11px] text-slate-400 font-mono">
-                          <p>{formatCallTime(call.created_at)}</p>
+                          <p>{formatCallTime(call.created_at, profile?.timezone, profile?.time_format)}</p>
                           <p>{formatDuration(call.duration_seconds || 0)}</p>
                         </div>
                       </div>
@@ -283,7 +285,7 @@ export function ContactDetailsModal({
                           <Badge variant={msg.direction === 'inbound' ? 'purple' : 'neutral'} size="sm">
                             {msg.direction.toUpperCase()}
                           </Badge>
-                          <span className="text-[10px] text-slate-500 font-mono">{formatCallTime(msg.created_at)}</span>
+                          <span className="text-[10px] text-slate-500 font-mono">{formatCallTime(msg.created_at, profile?.timezone, profile?.time_format)}</span>
                         </div>
                         <p className="text-slate-300 text-xs">{msg.body}</p>
                       </div>

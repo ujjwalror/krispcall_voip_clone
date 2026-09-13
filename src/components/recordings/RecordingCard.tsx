@@ -7,6 +7,7 @@ import { Mic, Download, ArrowUpRight, ArrowDownLeft, Clock, User, Phone, CheckCi
 import { formatDuration, formatCallTime } from '@/lib/utils';
 import { RecordingWithDetails } from '@/lib/repositories/recording.repository';
 import { RecordingAudioPlayer } from './RecordingAudioPlayer';
+import { useAuth } from '@/components/providers/AuthProvider';
 
 interface RecordingCardProps {
   recording: RecordingWithDetails;
@@ -18,6 +19,7 @@ interface RecordingCardProps {
 
 export function RecordingCard({ recording, isPlaying, isAdmin = false, onPlayToggle, onRequestDelete }: RecordingCardProps) {
   const [isDownloading, setIsDownloading] = useState(false);
+  const { profile } = useAuth();
 
   const agentName = recording.calls?.profiles?.full_name || 'VoIP Agent';
   const direction = recording.calls?.direction || 'outbound';
@@ -96,7 +98,7 @@ export function RecordingCard({ recording, isPlaying, isAdmin = false, onPlayTog
               </div>
               <p className="text-[11px] text-slate-400 flex items-center gap-1.5 mt-0.5">
                 <Clock className="w-3 h-3 text-slate-500" />
-                <span>{formatCallTime(recording.created_at)}</span>
+                <span>{formatCallTime(recording.created_at, profile?.timezone, profile?.time_format)}</span>
               </p>
             </div>
           </div>

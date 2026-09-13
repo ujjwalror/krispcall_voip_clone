@@ -328,7 +328,7 @@ export default function CallsPage() {
                         )}
                       </td>
                       <td className="px-5 py-4 text-slate-400">
-                        {formatCallTime(log.created_at)}
+                        {formatCallTime(log.created_at, profile?.timezone, profile?.time_format)}
                       </td>
                       <td className="px-5 py-4 text-right">
                         <div className="flex items-center justify-end gap-2">

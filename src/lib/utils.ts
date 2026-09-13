@@ -56,19 +56,124 @@ export function formatDisplayPhoneNumber(phone: string): string {
 }
 
 /**
- * Formats ISO timestamps into friendly relative/absolute dates.
+ * Safely resolves the current browser's IANA time zone identifier.
  */
-export function formatCallTime(isoString: string): string {
+export function getBrowserTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+}
+
+export interface TimeZoneOption {
+  iana: string;
+  label: string;
+}
+
+export const COMMON_TIMEZONES: TimeZoneOption[] = [
+  { iana: 'Asia/Kolkata', label: 'Asia/Kolkata (India)' },
+  { iana: 'Australia/Melbourne', label: 'Australia/Melbourne' },
+  { iana: 'Australia/Sydney', label: 'Australia/Sydney' },
+  { iana: 'Australia/Brisbane', label: 'Australia/Brisbane' },
+  { iana: 'Asia/Singapore', label: 'Asia/Singapore' },
+  { iana: 'Asia/Manila', label: 'Asia/Manila' },
+  { iana: 'Asia/Tokyo', label: 'Asia/Tokyo' },
+  { iana: 'Pacific/Auckland', label: 'Pacific/Auckland (New Zealand)' },
+  { iana: 'Europe/London', label: 'Europe/London (UK)' },
+  { iana: 'Europe/Paris', label: 'Europe/Paris (Central Europe)' },
+  { iana: 'America/New_York', label: 'America/New_York (US Eastern)' },
+  { iana: 'America/Chicago', label: 'America/Chicago (US Central)' },
+  { iana: 'America/Denver', label: 'America/Denver (US Mountain)' },
+  { iana: 'America/Los_Angeles', label: 'America/Los_Angeles (US Pacific)' },
+  { iana: 'UTC', label: 'UTC (Coordinated Universal Time)' },
+];
+
+/**
+ * Returns formatted time zone label with dynamic UTC offset calculated for current date.
+ * Example: "(UTC+05:30) Asia/Kolkata (India)"
+ */
+export function getFormattedTimeZoneLabel(iana: string, baseLabel?: string): string {
+  try {
+    const now = new Date();
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: iana,
+      timeZoneName: 'shortOffset',
+    });
+    const parts = formatter.formatToParts(now);
+    const offsetPart = parts.find((p) => p.type === 'timeZoneName')?.value || 'UTC';
+    const cleanOffset = offsetPart.replace('GMT', 'UTC');
+    const displayLabel = baseLabel || iana;
+    return `(${cleanOffset}) ${displayLabel}`;
+  } catch {
+    return iana;
+  }
+}
+
+/**
+ * Centralized date/time formatter that formats ISO timestamps into user's selected
+ * time zone & 12h/24h time format. Calculates 'Today' / 'Yesterday' relative to user's time zone.
+ */
+export function formatUserDateTime(
+  isoString: string,
+  timeZone?: string,
+  timeFormat: '12h' | '24h' | string = '12h'
+): string {
   if (!isoString) return '';
   const date = new Date(isoString);
-  const now = new Date();
-  const isToday = date.toDateString() === now.toDateString();
+  if (isNaN(date.getTime())) return '';
 
-  if (isToday) {
+  const targetZone = timeZone || getBrowserTimeZone();
+  const hour12 = timeFormat !== '24h';
+
+  try {
+    const dateParts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: targetZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+
+    const nowParts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: targetZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+
+    const isToday = dateParts === nowParts;
+
+    const timeString = new Intl.DateTimeFormat('en-US', {
+      timeZone: targetZone,
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: hour12,
+    }).format(date);
+
+    if (isToday) {
+      return timeString;
+    }
+
+    const dateString = new Intl.DateTimeFormat('en-US', {
+      timeZone: targetZone,
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: hour12,
+    }).format(date);
+
+    return dateString;
+  } catch (err) {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
+}
 
-  return date.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+/**
+ * Formats ISO timestamps into friendly relative/absolute dates using user timezone preferences.
+ */
+export function formatCallTime(isoString: string, timeZone?: string, timeFormat: string = '12h'): string {
+  return formatUserDateTime(isoString, timeZone, timeFormat);
 }
 
 /**

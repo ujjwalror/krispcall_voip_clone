@@ -244,7 +244,7 @@ export default function DashboardPage() {
                       <div className="flex items-center gap-3">
                         {getStatusBadge(call.status)}
                         <span className="text-[11px] text-slate-400 font-mono">
-                          {formatCallTime(call.created_at)}
+                          {formatCallTime(call.created_at, profile?.timezone, profile?.time_format)}
                         </span>
                       </div>
                     </div>

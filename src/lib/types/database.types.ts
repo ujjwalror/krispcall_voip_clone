@@ -58,11 +58,13 @@ export interface Database {
           active: boolean;
           twilio_identity: string | null;
           avatar_url: string | null;
+          timezone: string;
+          time_format: string;
           created_at: string;
           updated_at: string;
         };
         Insert: {
-          id: string;
+          id?: string;
           organization_id: string;
           full_name: string;
           email: string;
@@ -70,6 +72,8 @@ export interface Database {
           active?: boolean;
           twilio_identity?: string | null;
           avatar_url?: string | null;
+          timezone?: string;
+          time_format?: string;
           created_at?: string;
           updated_at?: string;
         };
@@ -82,6 +86,8 @@ export interface Database {
           active?: boolean;
           twilio_identity?: string | null;
           avatar_url?: string | null;
+          timezone?: string;
+          time_format?: string;
           created_at?: string;
           updated_at?: string;
         };
