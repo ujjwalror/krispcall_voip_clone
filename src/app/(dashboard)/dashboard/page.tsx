@@ -123,7 +123,7 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       {/* Welcome Banner */}
-      <div className="rounded-2xl bg-gradient-to-r from-blue-900/40 via-indigo-900/30 to-slate-900 border border-blue-500/20 p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xl">
+      <div className="rounded-2xl bg-gradient-to-r from-blue-50 via-indigo-50/60 to-slate-100 dark:from-blue-900/40 dark:via-indigo-900/30 dark:to-slate-900 border border-blue-200 dark:border-blue-500/20 p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xl">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-bold text-slate-100">Internal Telecom Dashboard</h1>

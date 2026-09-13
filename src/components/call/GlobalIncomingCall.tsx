@@ -14,7 +14,7 @@ export function GlobalIncomingCall() {
   }
 
   return (
-    <div className="fixed top-5 right-5 z-50 w-84 max-w-sm rounded-2xl bg-slate-900/95 border-2 border-blue-500 shadow-2xl p-4 flex flex-col gap-3 backdrop-blur-md animate-in fade-in slide-in-from-top-4">
+    <div className="fixed top-5 right-5 z-[9999] w-80 sm:w-96 max-w-sm rounded-2xl bg-slate-900 border-2 border-blue-500 shadow-2xl p-4 flex flex-col gap-3 backdrop-blur-md animate-in fade-in slide-in-from-top-4">
       {/* Header Badge */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
