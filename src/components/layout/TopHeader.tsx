@@ -9,11 +9,13 @@ import { PresenceSelector } from './PresenceSelector';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { useAuth } from '@/components/providers/AuthProvider';
-import { Search, LogOut, ShieldCheck, Bell, User } from 'lucide-react';
+import { Search, LogOut, ShieldCheck, Bell, User, Sun, Moon } from 'lucide-react';
+import { useTheme } from '@/components/providers/ThemeProvider';
 
 export function TopHeader() {
   const pathname = usePathname();
   const { profile, signOut } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const [agentStatus, setAgentStatus] = useState<AgentStatus>('online');
 
   // Determine current active page title
@@ -48,6 +50,19 @@ export function TopHeader() {
             ⌘K
           </span>
         </div>
+
+        {/* Theme Toggle (Light / Dark) */}
+        <button
+          onClick={toggleTheme}
+          className="p-2 rounded-lg text-slate-400 hover:text-amber-400 hover:bg-slate-900 transition-colors"
+          title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}
+        >
+          {theme === 'dark' ? (
+            <Sun className="w-4 h-4 text-amber-400" />
+          ) : (
+            <Moon className="w-4 h-4 text-indigo-500" />
+          )}
+        </button>
 
         {/* Notifications Icon */}
         <button

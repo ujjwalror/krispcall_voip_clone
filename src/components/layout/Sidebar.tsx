@@ -21,6 +21,17 @@ export function Sidebar() {
     return true;
   });
 
+  // Calculate the single best-matching navigation item to prevent multi-item activation
+  const activeNavHref = React.useMemo(() => {
+    const matches = NAVIGATION_ITEMS.filter(
+      (item) => pathname === item.href || pathname.startsWith(`${item.href}/`)
+    );
+    if (matches.length === 0) return null;
+    // Sort descending by href length so specific child routes (e.g. /settings/users) win over parent routes (e.g. /settings)
+    matches.sort((a, b) => b.href.length - a.href.length);
+    return matches[0].href;
+  }, [pathname]);
+
   return (
     <aside className="w-64 bg-slate-950/95 border-r border-slate-800/80 flex flex-col h-screen sticky top-0 z-30 select-none backdrop-blur-xl">
       {/* Brand Header */}
@@ -60,7 +71,7 @@ export function Sidebar() {
           <nav className="space-y-1">
             {mainItems.map((item) => {
               const Icon = item.icon;
-              const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+              const isActive = item.href === activeNavHref;
               return (
                 <Link
                   key={item.href}
@@ -100,7 +111,7 @@ export function Sidebar() {
           <nav className="space-y-1">
             {adminItems.map((item) => {
               const Icon = item.icon;
-              const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+              const isActive = item.href === activeNavHref;
               return (
                 <Link
                   key={item.href}

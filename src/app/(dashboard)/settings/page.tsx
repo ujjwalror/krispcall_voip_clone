@@ -4,9 +4,11 @@ import React, { useEffect, useState } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Settings, Volume2, Mic, Bell, Radio, Shield, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react';
+import { Settings, Volume2, Mic, Bell, Radio, Shield, CheckCircle2, AlertTriangle, Loader2, Sun, Moon, Palette } from 'lucide-react';
+import { useTheme } from '@/components/providers/ThemeProvider';
 
 export default function SettingsPage() {
+  const { theme, setTheme } = useTheme();
   const [autoRecording, setAutoRecording] = useState<boolean>(true);
   const [role, setRole] = useState<string>('agent');
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -66,6 +68,51 @@ export default function SettingsPage() {
       </div>
 
       <div className="space-y-6">
+        {/* Appearance & Interface Theme */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Palette className="w-4 h-4 text-indigo-400" />
+              <span>Appearance & Color Theme</span>
+            </CardTitle>
+          </CardHeader>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <button
+              onClick={() => setTheme('dark')}
+              className={`p-4 rounded-xl border flex items-center gap-3 text-left transition-all ${
+                theme === 'dark'
+                  ? 'bg-slate-900 border-blue-500 ring-1 ring-blue-500'
+                  : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
+              }`}
+            >
+              <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 text-amber-400">
+                <Moon className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-slate-100">Dark Interface</p>
+                <p className="text-[11px] text-slate-400">Classic high-contrast dark theme for low-light environments.</p>
+              </div>
+            </button>
+
+            <button
+              onClick={() => setTheme('light')}
+              className={`p-4 rounded-xl border flex items-center gap-3 text-left transition-all ${
+                theme === 'light'
+                  ? 'bg-slate-900 border-blue-500 ring-1 ring-blue-500'
+                  : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
+              }`}
+            >
+              <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 text-indigo-500">
+                <Sun className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-slate-100">Light Interface</p>
+                <p className="text-[11px] text-slate-400">Clean, crisp light SaaS dashboard theme for daytime productivity.</p>
+              </div>
+            </button>
+          </div>
+        </Card>
+
         {/* Workspace Call Recording Preferences */}
         <Card>
           <CardHeader>
