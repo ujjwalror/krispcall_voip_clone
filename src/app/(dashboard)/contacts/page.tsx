@@ -139,37 +139,38 @@ export default function ContactsPage() {
           </p>
         </div>
 
-        {/* Action Bar (Single-Line, Responsive) */}
-        <div className="flex items-center gap-2.5 flex-nowrap shrink-0">
+        {/* Action Bar (Responsive) */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full sm:w-auto">
           <Input
             icon={<Search className="w-4 h-4" />}
             placeholder="Search contacts..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-48 sm:w-64"
+            className="w-full sm:w-64"
           />
 
-          <Button
-            variant="outline"
-            size="md"
-            onClick={() => setIsImportModalOpen(true)}
-            className="whitespace-nowrap font-medium"
-            title="Import Contacts from CSV file"
-          >
-            <FileSpreadsheet className="w-4 h-4 text-blue-400" />
-            <span className="hidden md:inline">Import Contacts</span>
-            <span className="md:hidden">Import</span>
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="md"
+              onClick={() => setIsImportModalOpen(true)}
+              className="flex-1 sm:flex-none whitespace-nowrap font-medium justify-center"
+              title="Import Contacts from CSV file"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-blue-400" />
+              <span>Import</span>
+            </Button>
 
-          <Button
-            variant="primary"
-            size="md"
-            onClick={() => setIsAddModalOpen(true)}
-            className="whitespace-nowrap font-semibold shadow-lg shadow-blue-600/20"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Add Contact</span>
-          </Button>
+            <Button
+              variant="primary"
+              size="md"
+              onClick={() => setIsAddModalOpen(true)}
+              className="flex-1 sm:flex-none whitespace-nowrap font-semibold shadow-lg shadow-blue-600/20 justify-center"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Add Contact</span>
+            </Button>
+          </div>
         </div>
       </div>
 

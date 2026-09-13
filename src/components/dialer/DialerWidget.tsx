@@ -98,16 +98,16 @@ export function DialerWidget() {
   const displayCallerId = formatDisplayPhoneNumber(businessNumber);
 
   return (
-    <div className="w-full max-w-sm mx-auto rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl p-5 flex flex-col gap-4">
+    <div className="w-full max-w-sm mx-auto rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl p-4 sm:p-5 flex flex-col gap-3.5">
       {/* Dialer Header */}
-      <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800">
+        <div className="flex items-center gap-2 flex-wrap">
           <Badge variant="blue" size="sm">
             <Phone className="w-3 h-3 text-blue-400" />
             Business Line
           </Badge>
           {identity && (
-            <span className="text-[11px] text-slate-400 font-mono">Agent: {identity}</span>
+            <span className="text-[10px] sm:text-[11px] text-slate-400 font-mono truncate max-w-[150px]">Agent: {identity}</span>
           )}
         </div>
 
@@ -133,7 +133,7 @@ export function DialerWidget() {
       </div>
 
       {/* Outbound Caller ID Display */}
-      <div className="flex items-center justify-between text-xs px-3.5 py-2.5 rounded-xl bg-slate-950/80 border border-slate-800/80">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs px-3 sm:px-3.5 py-2.5 rounded-xl bg-slate-950/80 border border-slate-800/80">
         <div className="flex items-center gap-2 text-slate-400 font-medium text-[11px]">
           <Phone className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
           <span>Calling from</span>
@@ -142,7 +142,7 @@ export function DialerWidget() {
       </div>
 
       {/* Per-Call Recording Override Controls */}
-      <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-slate-950/60 border border-slate-800/80 text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl bg-slate-950/60 border border-slate-800/80 text-xs">
         <div className="flex items-center gap-2">
           <Radio className={`w-3.5 h-3.5 ${recordCallPreference ? 'text-rose-400 animate-pulse' : 'text-slate-500'}`} />
           <span className="text-slate-300 font-medium text-[11px]">

@@ -100,11 +100,11 @@ export default function AdminPage() {
             </CardHeader>
             <div className="divide-y divide-slate-800">
               {users.map((user) => (
-                <div key={user.id} className="py-3 flex items-center justify-between">
+                <div key={user.id} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div className="flex items-center gap-3">
                     <Avatar name={user.name} status={user.status} size="md" />
                     <div>
-                      <p className="text-xs font-bold text-slate-100 flex items-center gap-2">
+                      <p className="text-xs font-bold text-slate-100 flex items-center gap-2 flex-wrap">
                         <span>{user.name}</span>
                         {user.role === 'admin' && (
                           <Badge variant="purple" size="sm">
@@ -115,7 +115,7 @@ export default function AdminPage() {
                       <p className="text-[10px] text-slate-400">{user.email}</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center justify-between sm:justify-end gap-2 pt-1 sm:pt-0">
                     <span className="text-[10px] font-mono text-slate-500">ID: {user.identity}</span>
                     <Button variant="ghost" size="sm">
                       Edit Role

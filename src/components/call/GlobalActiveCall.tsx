@@ -39,7 +39,7 @@ export function GlobalActiveCall() {
   const showSubNumber = activeCallContactName && activeDestination;
 
   return (
-    <div className="fixed top-5 right-5 z-[9999] w-80 sm:w-96 max-w-sm rounded-2xl bg-slate-900 border-2 border-emerald-500/80 shadow-2xl p-4 flex flex-col gap-3 backdrop-blur-md animate-in fade-in slide-in-from-top-4">
+    <div className="fixed top-3 left-3 right-3 sm:left-auto sm:right-5 sm:top-5 z-[9999] w-auto sm:w-96 max-w-full sm:max-w-sm rounded-2xl bg-slate-900 border-2 border-emerald-500/80 shadow-2xl p-4 flex flex-col gap-3 backdrop-blur-md animate-in fade-in slide-in-from-top-4">
       {/* Header & Status Indicator */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">

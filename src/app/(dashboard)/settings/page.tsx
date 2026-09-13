@@ -260,7 +260,7 @@ function SettingsContent() {
         </div>
 
         {/* Settings Navigation Sub-Tabs */}
-        <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-950/80 border border-slate-800 text-xs">
+        <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-950/80 border border-slate-800 text-xs overflow-x-auto max-w-full shrink-0">
           <button
             onClick={() => handleTabChange('general')}
             className={`px-3.5 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-2 ${

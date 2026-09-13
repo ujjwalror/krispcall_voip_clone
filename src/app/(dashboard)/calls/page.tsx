@@ -235,9 +235,10 @@ export default function CallsPage() {
         </div>
       </Card>
 
-      {/* Call History Table */}
+      {/* Call History Container (Table on Desktop, Cards on Mobile) */}
       <Card className="p-0 overflow-hidden">
-        <div className="overflow-x-auto">
+        {/* Desktop Table View */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-left text-xs text-slate-300">
             <thead className="bg-slate-950/80 text-slate-400 uppercase font-semibold text-[10px] tracking-wider border-b border-slate-800">
               <tr>
@@ -368,6 +369,115 @@ export default function CallsPage() {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Mobile Card View */}
+        <div className="block md:hidden divide-y divide-slate-800">
+          {isLoading ? (
+            <div className="p-8 text-center text-slate-500">
+              <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-blue-400" />
+              <span>Loading call history...</span>
+            </div>
+          ) : calls.length === 0 ? (
+            <div className="p-8 text-center text-slate-500">
+              No calls match the selected criteria.
+            </div>
+          ) : (
+            calls.map((log) => {
+              const isOutbound = log.direction === 'outbound';
+              const targetNumber = isOutbound ? log.to_number : log.from_number;
+              const normalizedTarget = normalizeE164PhoneNumber(targetNumber).normalized || targetNumber;
+              const isBlocked = Boolean(blockedNumbersMap[normalizedTarget]) || log.status === 'blocked';
+              const isMissed = ['no-answer', 'busy', 'failed', 'canceled'].includes(log.status);
+              const agentName = log.profiles?.full_name || 'Agent';
+
+              return (
+                <div key={log.id} className="p-4 space-y-3 bg-slate-900/60">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <div
+                        className={`p-2 rounded-lg shrink-0 ${
+                          log.status === 'blocked' || isBlocked
+                            ? 'bg-rose-950/80 text-rose-400 border border-rose-800/80'
+                            : isMissed
+                            ? 'bg-rose-500/10 text-rose-400'
+                            : isOutbound
+                            ? 'bg-blue-500/10 text-blue-400'
+                            : 'bg-emerald-500/10 text-emerald-400'
+                        }`}
+                      >
+                        {isMissed ? (
+                          <PhoneMissed className="w-4 h-4" />
+                        ) : isOutbound ? (
+                          <PhoneOutgoing className="w-4 h-4" />
+                        ) : (
+                          <PhoneIncoming className="w-4 h-4" />
+                        )}
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className="font-semibold text-slate-100 font-mono text-sm">
+                            {isOutbound ? `To: ${log.to_number}` : `From: ${log.from_number}`}
+                          </p>
+                          {isBlocked && (
+                            <Badge variant="rose" size="sm">
+                              <Ban className="w-2.5 h-2.5" />
+                              BLOCKED
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-slate-400 font-mono">
+                          {formatCallTime(log.created_at, profile?.timezone, profile?.time_format)}
+                        </p>
+                      </div>
+                    </div>
+                    <div>{getStatusBadge(log.status)}</div>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs text-slate-400 pt-1 border-t border-slate-800/60">
+                    <div className="flex items-center gap-1.5">
+                      <Avatar name={agentName} size="sm" />
+                      <span>{agentName}</span>
+                    </div>
+                    <span className="font-mono text-slate-300">
+                      Duration: {log.duration_seconds && log.duration_seconds > 0 ? formatDuration(log.duration_seconds) : '00:00'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 pt-1">
+                    {isBlocked ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-emerald-400 hover:bg-emerald-950/40 text-xs"
+                        onClick={() => handleUnblockPhone(targetNumber)}
+                      >
+                        <Ban className="w-3.5 h-3.5" />
+                        <span>Unblock</span>
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-amber-400 hover:bg-amber-950/40 text-xs"
+                        onClick={() => setBlockingPhone(targetNumber)}
+                      >
+                        <Ban className="w-3.5 h-3.5" />
+                        <span>Block</span>
+                      </Button>
+                    )}
+
+                    <Link href={`/phone?number=${encodeURIComponent(targetNumber)}`}>
+                      <Button variant="outline" size="sm" className="text-xs">
+                        <PhoneCall className="w-3.5 h-3.5 text-blue-400" />
+                        <span>Call Back</span>
+                      </Button>
+                    </Link>
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
       </Card>
 

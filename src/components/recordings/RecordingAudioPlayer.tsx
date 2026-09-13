@@ -151,7 +151,7 @@ export function RecordingAudioPlayer({
 
   return (
     <div className="flex flex-col gap-2 bg-slate-950/80 p-3 rounded-xl border border-slate-800/80 backdrop-blur-md w-full">
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 sm:gap-3">
         {/* Play / Pause / Replay Button */}
         <button
           onClick={handleTogglePlay}

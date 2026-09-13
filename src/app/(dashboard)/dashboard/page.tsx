@@ -123,13 +123,13 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       {/* Modern Enterprise SaaS Hero Card */}
-      <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 border-t-4 border-t-blue-600 dark:border-t-blue-500 p-6 md:p-7 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 shadow-sm dark:shadow-xl transition-all">
-        <div className="space-y-1.5 max-w-2xl">
-          <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight">
+      <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 border-t-4 border-t-blue-600 dark:border-t-blue-500 p-4 sm:p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-sm dark:shadow-xl transition-all w-full">
+        <div className="space-y-1.5 max-w-2xl w-full">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            <h1 className="text-lg sm:text-2xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight leading-snug">
               Internal Telecom Dashboard
             </h1>
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 font-bold text-[11px] border border-emerald-200 dark:border-emerald-800/80 shadow-xs">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 font-bold text-[11px] border border-emerald-200 dark:border-emerald-800/80 shadow-xs shrink-0">
               <span className="relative flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
@@ -141,17 +141,17 @@ export default function DashboardPage() {
             Internal VoIP operations center. WebRTC browser calling & Twilio telephony backend ready.
           </p>
         </div>
-        <div className="flex items-center gap-3 shrink-0 self-end md:self-auto">
+        <div className="flex items-center gap-2.5 w-full md:w-auto shrink-0 pt-1 md:pt-0">
           <button
             onClick={loadDashboardData}
             disabled={isLoading}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold text-xs border border-slate-200 dark:border-slate-700 shadow-xs hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 transition-all disabled:opacity-50"
+            className="flex-1 md:flex-none inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold text-xs border border-slate-200 dark:border-slate-700 shadow-xs hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 transition-all disabled:opacity-50"
           >
             <RefreshCw className={`w-3.5 h-3.5 text-slate-500 dark:text-slate-400 ${isLoading ? 'animate-spin' : ''}`} />
             <span>Refresh</span>
           </button>
-          <Link href="/phone">
-            <button className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500 text-white font-semibold text-xs shadow-md shadow-blue-600/20 transition-all active:scale-[0.98]">
+          <Link href="/phone" className="flex-1 md:flex-none">
+            <button className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500 text-white font-semibold text-xs shadow-md shadow-blue-600/20 transition-all active:scale-[0.98]">
               <PhoneCall className="w-4 h-4" />
               <span>Open Dialer</span>
             </button>
@@ -160,19 +160,19 @@ export default function DashboardPage() {
       </div>
 
       {/* Metrics Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 w-full">
         {stats.map((stat) => {
           const Icon = stat.icon;
           return (
             <Card key={stat.title} hoverable>
               <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-slate-400">{stat.title}</span>
-                <div className="p-2 rounded-lg bg-slate-800/80 text-slate-300">
+                <span className="text-xs font-medium text-slate-500 dark:text-slate-400">{stat.title}</span>
+                <div className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300">
                   <Icon className="w-4 h-4" />
                 </div>
               </div>
               <div className="mt-3 flex items-baseline justify-between">
-                <span className="text-2xl font-bold text-slate-100 tracking-tight">{stat.value}</span>
+                <span className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">{stat.value}</span>
                 <Badge variant={stat.variant} size="sm">
                   {stat.change}
                 </Badge>
@@ -183,25 +183,25 @@ export default function DashboardPage() {
       </div>
 
       {/* Workspace Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 w-full">
         {/* Quick Launcher Dialer Widget */}
-        <div className="space-y-4">
-          <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
-            <PhoneCall className="w-4 h-4 text-blue-400" />
+        <div className="space-y-4 w-full">
+          <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-2">
+            <PhoneCall className="w-4 h-4 text-blue-500" />
             <span>Browser WebRTC Dialer</span>
           </h3>
           <DialerWidget />
         </div>
 
         {/* Activity Feed & Team Overview */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className="lg:col-span-2 space-y-6 w-full">
           <Card>
             <CardHeader>
               <CardTitle className="text-sm flex items-center gap-2">
-                <Clock className="w-4 h-4 text-indigo-400" />
+                <Clock className="w-4 h-4 text-indigo-500" />
                 <span>Recent Calls & Activity</span>
               </CardTitle>
-              <Link href="/calls" className="text-xs text-blue-400 hover:underline flex items-center gap-1">
+              <Link href="/calls" className="text-xs text-blue-500 hover:underline flex items-center gap-1">
                 <span>View all</span>
                 <ArrowUpRight className="w-3 h-3" />
               </Link>
@@ -209,7 +209,7 @@ export default function DashboardPage() {
 
             <div className="space-y-3">
               {calls.length === 0 ? (
-                <div className="p-6 text-center text-xs text-slate-500 rounded-lg bg-slate-950/40 border border-slate-800/50">
+                <div className="p-6 text-center text-xs text-slate-500 rounded-lg bg-slate-50 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800/50">
                   No call records found yet. Place an outbound call from the dialer to get started.
                 </div>
               ) : (
@@ -221,16 +221,16 @@ export default function DashboardPage() {
                   return (
                     <div
                       key={call.id}
-                      className="flex items-center justify-between p-3 rounded-lg bg-slate-950/60 border border-slate-800/80 hover:border-slate-700 transition-colors"
+                      className="flex flex-col sm:flex-row sm:items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800/80 hover:border-slate-300 dark:hover:border-slate-700 transition-colors gap-2.5"
                     >
                       <div className="flex items-center gap-3">
                         <div
-                          className={`p-2 rounded-lg ${
+                          className={`p-2 rounded-lg shrink-0 ${
                             isMissed
-                              ? 'bg-rose-500/10 text-rose-400'
+                              ? 'bg-rose-500/10 text-rose-500'
                               : isOutbound
-                              ? 'bg-blue-500/10 text-blue-400'
-                              : 'bg-emerald-500/10 text-emerald-400'
+                              ? 'bg-blue-500/10 text-blue-500'
+                              : 'bg-emerald-500/10 text-emerald-500'
                           }`}
                         >
                           {isMissed ? (
@@ -241,19 +241,19 @@ export default function DashboardPage() {
                             <PhoneIncoming className="w-4 h-4" />
                           )}
                         </div>
-                        <div>
-                          <p className="text-xs font-semibold text-slate-200">
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-slate-900 dark:text-slate-200 truncate">
                             {isOutbound ? `To: ${call.to_number}` : `From: ${call.from_number}`}
                           </p>
-                          <p className="text-[10px] text-slate-400">
+                          <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
                             Agent: {agentName} • Duration: {formatDuration(call.duration_seconds || 0)}
                           </p>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-1 sm:pt-0 border-t sm:border-t-0 border-slate-200/60 dark:border-slate-800/60">
                         {getStatusBadge(call.status)}
-                        <span className="text-[11px] text-slate-400 font-mono">
+                        <span className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
                           {formatCallTime(call.created_at, profile?.timezone, profile?.time_format)}
                         </span>
                       </div>
@@ -265,12 +265,12 @@ export default function DashboardPage() {
           </Card>
 
           {/* System Security Summary */}
-          <Card className="bg-slate-900/40">
+          <Card className="bg-slate-50 dark:bg-slate-900/40">
             <div className="flex items-center gap-3">
-              <ShieldCheck className="w-5 h-5 text-emerald-400 shrink-0" />
+              <ShieldCheck className="w-5 h-5 text-emerald-500 shrink-0" />
               <div>
-                <h4 className="text-xs font-semibold text-slate-200">Call Logging & Database Protection</h4>
-                <p className="text-[11px] text-slate-400 mt-0.5">
+                <h4 className="text-xs font-semibold text-slate-900 dark:text-slate-200">Call Logging & Database Protection</h4>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
                   Call records and status callbacks are securely synchronized with PostgreSQL Row Level Security (RLS).
                 </p>
               </div>
