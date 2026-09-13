@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import twilio from 'twilio';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 /**
  * DELETE /api/recordings/[recordingId]
@@ -54,16 +55,17 @@ export async function DELETE(
       );
     }
 
-    // 4. Fetch target recording record
-    const { data: recordingRecord, error: fetchError } = await (supabase as any)
+    // 4. Fetch target recording record using Admin Client to bypass RLS SELECT restrictions
+    const adminSupabase = createAdminClient();
+    const { data: recordingRecord, error: fetchError } = await (adminSupabase as any)
       .from('recordings')
       .select('id, organization_id, twilio_recording_sid, call_id')
       .eq('id', recordingId)
-      .single();
+      .maybeSingle();
 
     if (fetchError || !recordingRecord) {
       return NextResponse.json(
-        { error: 'Recording not found.' },
+        { error: 'Recording not found or already deleted.' },
         { status: 404 }
       );
     }
@@ -106,17 +108,26 @@ export async function DELETE(
       }
     }
 
-    // 7. Delete public.recordings database row (preserves public.calls row intact)
-    const { error: deleteError } = await (supabase as any)
+    // 7. Delete public.recordings database row using adminSupabase (preserves public.calls row intact)
+    const { data: deletedRows, error: deleteError } = await (adminSupabase as any)
       .from('recordings')
       .delete()
       .eq('id', recordingId)
-      .eq('organization_id', profile.organization_id);
+      .eq('organization_id', profile.organization_id)
+      .select();
 
     if (deleteError) {
       console.error('Error deleting recording row from database:', deleteError);
       return NextResponse.json(
         { error: `Database error removing recording metadata: ${deleteError.message || deleteError.code}` },
+        { status: 500 }
+      );
+    }
+
+    if (!deletedRows || deletedRows.length === 0) {
+      console.error(`Database deletion matched 0 rows for recording ID ${recordingId}`);
+      return NextResponse.json(
+        { error: 'Database record deletion failed. Record was not found or could not be removed.' },
         { status: 500 }
       );
     }
