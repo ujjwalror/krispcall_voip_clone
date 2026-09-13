@@ -278,7 +278,7 @@ export default function ContactsPage() {
                             setActiveMenuContactId(null);
                             setSelectedDetailsId(contact.id);
                           }}
-                          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+                          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-slate-300 hover:text-slate-100 hover:bg-slate-800 transition-colors"
                         >
                           <Eye className="w-3.5 h-3.5 text-blue-400" />
                           <span>View Details</span>
@@ -289,7 +289,7 @@ export default function ContactsPage() {
                             setActiveMenuContactId(null);
                             setEditingContact(contact);
                           }}
-                          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+                          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-slate-300 hover:text-slate-100 hover:bg-slate-800 transition-colors"
                         >
                           <Edit className="w-3.5 h-3.5 text-indigo-400" />
                           <span>Edit Contact</span>
@@ -302,7 +302,7 @@ export default function ContactsPage() {
                                 setActiveMenuContactId(null);
                                 handleCallContact(contact);
                               }}
-                              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+                              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-slate-300 hover:text-slate-100 hover:bg-slate-800 transition-colors"
                             >
                               <PhoneCall className="w-3.5 h-3.5 text-emerald-400" />
                               <span>Call</span>
@@ -313,7 +313,7 @@ export default function ContactsPage() {
                                 setActiveMenuContactId(null);
                                 handleMessageContact(contact.phone);
                               }}
-                              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+                              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-slate-300 hover:text-slate-100 hover:bg-slate-800 transition-colors"
                             >
                               <MessageSquare className="w-3.5 h-3.5 text-blue-400" />
                               <span>SMS Message</span>

@@ -688,7 +688,7 @@ function SettingsContent() {
                           size="sm"
                           onClick={() => handleUnblockNumber(item)}
                           disabled={unblockingId === item.id}
-                          className="font-bold border-rose-900/60 text-rose-300 hover:bg-rose-950/60 hover:text-white hover:border-rose-600 transition-all"
+                          className="font-bold border-rose-300 dark:border-rose-900/60 text-rose-600 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-950/60 hover:text-rose-900 dark:hover:text-white hover:border-rose-500 transition-all"
                         >
                           {unblockingId === item.id ? (
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />

@@ -71,12 +71,12 @@ export function BlockNumberConfirmationModal({
         </div>
 
         {/* Warning Body */}
-        <div className="p-3.5 rounded-xl bg-rose-950/60 border border-rose-800/80 text-rose-200 text-xs space-y-1">
-          <div className="flex items-center gap-1.5 font-semibold text-rose-300">
+        <div className="p-3.5 rounded-xl bg-rose-100 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-800/80 text-rose-900 dark:text-rose-200 text-xs space-y-1">
+          <div className="flex items-center gap-1.5 font-semibold text-rose-800 dark:text-rose-300">
             <AlertTriangle className="w-4 h-4 shrink-0" />
             <span>Inbound & Outbound Block Protection</span>
           </div>
-          <p className="text-slate-300 text-[11px] leading-relaxed pt-1">
+          <p className="text-slate-700 dark:text-slate-300 text-[11px] leading-relaxed pt-1">
             Future incoming calls from this number will not ring your team, and outgoing calls to this number will be prevented.
           </p>
         </div>

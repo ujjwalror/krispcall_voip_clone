@@ -71,10 +71,10 @@ export function GlobalActiveCall() {
         <span
           className={`text-[10px] font-mono font-semibold px-2.5 py-0.5 rounded-full border ${
             callState === 'connected'
-              ? 'bg-emerald-950/90 border-emerald-700 text-emerald-300'
+              ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/90 dark:border-emerald-700 dark:text-emerald-300'
               : callState === 'connecting' || callState === 'ringing'
-              ? 'bg-amber-950/90 border-amber-700 text-amber-300 animate-pulse'
-              : 'bg-rose-950/90 border-rose-700 text-rose-300'
+              ? 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/90 dark:border-amber-700 dark:text-amber-300'
+              : 'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950/90 dark:border-rose-700 dark:text-rose-300'
           }`}
         >
           {callState === 'connected'
@@ -91,7 +91,7 @@ export function GlobalActiveCall() {
 
       {/* Contact Name & Number Info */}
       <div className="py-1">
-        <h4 className="text-base font-extrabold text-white font-mono tracking-wide flex items-center gap-2 truncate">
+        <h4 className="text-base font-extrabold text-slate-100 font-mono tracking-wide flex items-center gap-2 truncate">
           <User className="w-4 h-4 text-emerald-400 shrink-0" />
           <span className="truncate">{displayName}</span>
         </h4>

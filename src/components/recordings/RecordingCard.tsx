@@ -123,7 +123,7 @@ export function RecordingCard({ recording, isPlaying, isAdmin = false, onPlayTog
             <button
               onClick={handleDownload}
               disabled={isDownloading}
-              className="p-2 rounded-xl bg-slate-950/80 border border-slate-800 text-slate-400 hover:text-white hover:border-slate-700 transition-all flex items-center justify-center"
+              className="p-2 rounded-xl bg-slate-950/80 border border-slate-800 text-slate-400 hover:text-slate-100 hover:border-slate-700 transition-all flex items-center justify-center"
               title="Download MP3 Audio"
             >
               {isDownloading ? (

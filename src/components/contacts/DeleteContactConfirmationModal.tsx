@@ -82,7 +82,7 @@ export function DeleteContactConfirmationModal({
           )}
 
           <p className="text-slate-300 font-medium leading-relaxed">
-            Are you sure you want to delete <strong className="text-white font-bold">{contact.full_name}</strong> ({contact.phone})?
+            Are you sure you want to delete <strong className="text-slate-100 font-bold">{contact.full_name}</strong> ({contact.phone})?
           </p>
 
           <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 text-slate-400 leading-relaxed text-[11px]">

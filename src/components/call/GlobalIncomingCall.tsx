@@ -27,14 +27,14 @@ export function GlobalIncomingCall() {
             Incoming Call
           </span>
         </div>
-        <span className="text-[10px] text-blue-300 font-mono font-semibold animate-pulse px-2 py-0.5 rounded-full bg-blue-950/80 border border-blue-800/60">
+        <span className="text-[10px] text-blue-600 dark:text-blue-300 font-mono font-semibold animate-pulse px-2.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/80 border border-blue-300 dark:border-blue-800/60">
           Ringing...
         </span>
       </div>
 
       {/* Caller Info */}
       <div className="py-1">
-        <h4 className="text-lg font-extrabold text-white font-mono tracking-wide">
+        <h4 className="text-lg font-extrabold text-slate-100 font-mono tracking-wide">
           {incomingCaller}
         </h4>
         <p className="text-xs text-slate-400 font-medium">Customer calling company number</p>

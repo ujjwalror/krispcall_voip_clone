@@ -88,7 +88,7 @@ export function DeleteRecordingConfirmationModal({
           )}
 
           <p className="text-slate-200 font-medium leading-relaxed">
-            This will permanently delete this call recording for <strong className="text-white font-mono">{targetNumber}</strong>.
+            This will permanently delete this call recording for <strong className="text-slate-100 font-mono">{targetNumber}</strong>.
           </p>
 
           <p className="text-rose-400 font-semibold text-xs">

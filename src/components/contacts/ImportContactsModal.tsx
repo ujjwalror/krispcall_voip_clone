@@ -399,19 +399,19 @@ export function ImportContactsModal({ isOpen, onClose, onSuccess }: ImportContac
 
               {/* Summary Stats Badges */}
               <div className="grid grid-cols-3 gap-3">
-                <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-800/60 text-center">
-                  <p className="text-lg font-extrabold text-emerald-400 font-mono">{readyCount}</p>
-                  <p className="text-[11px] text-emerald-300/80 font-medium">Ready to Import</p>
+                <div className="p-3 rounded-xl bg-emerald-100 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800/60 text-center">
+                  <p className="text-lg font-extrabold text-emerald-600 dark:text-emerald-400 font-mono">{readyCount}</p>
+                  <p className="text-[11px] text-emerald-800 dark:text-emerald-300/80 font-medium">Ready to Import</p>
                 </div>
 
-                <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-800/60 text-center">
-                  <p className="text-lg font-extrabold text-amber-400 font-mono">{duplicateCount}</p>
-                  <p className="text-[11px] text-amber-300/80 font-medium">Duplicates (Skipped)</p>
+                <div className="p-3 rounded-xl bg-amber-100 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800/60 text-center">
+                  <p className="text-lg font-extrabold text-amber-600 dark:text-amber-400 font-mono">{duplicateCount}</p>
+                  <p className="text-[11px] text-amber-800 dark:text-amber-300/80 font-medium">Duplicates (Skipped)</p>
                 </div>
 
-                <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-800/60 text-center">
-                  <p className="text-lg font-extrabold text-rose-400 font-mono">{invalidCount}</p>
-                  <p className="text-[11px] text-rose-300/80 font-medium">Invalid Rows (Skipped)</p>
+                <div className="p-3 rounded-xl bg-rose-100 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800/60 text-center">
+                  <p className="text-lg font-extrabold text-rose-600 dark:text-rose-400 font-mono">{invalidCount}</p>
+                  <p className="text-[11px] text-rose-800 dark:text-rose-300/80 font-medium">Invalid Rows (Skipped)</p>
                 </div>
               </div>
 
