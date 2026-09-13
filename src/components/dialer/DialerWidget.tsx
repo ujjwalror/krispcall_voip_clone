@@ -188,7 +188,7 @@ export function DialerWidget() {
       <div className="relative">
         <Input
           type="text"
-          value={formatPhoneNumber(phoneNumber)}
+          value={phoneNumber}
           onChange={(e) => setPhoneNumber(e.target.value)}
           placeholder="Enter phone number..."
           disabled={isCallActive}

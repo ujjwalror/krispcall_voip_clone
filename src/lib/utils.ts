@@ -24,18 +24,11 @@ export function formatDuration(seconds: number): string {
 }
 
 /**
- * Standard phone number formatter (E.164 or US/International presentation).
+ * Returns raw/literal phone string to preserve keystrokes during dialing.
  */
 export function formatPhoneNumber(phone: string): string {
   if (!phone) return '';
-  const cleaned = phone.replace(/\D/g, '');
-  if (cleaned.length === 10) {
-    return `(${cleaned.slice(0, 3)}) ${cleaned.slice(3, 6)}-${cleaned.slice(6)}`;
-  }
-  if (cleaned.length === 11 && cleaned.startsWith('1')) {
-    return `+1 (${cleaned.slice(1, 4)}) ${cleaned.slice(4, 7)}-${cleaned.slice(7)}`;
-  }
-  return phone.startsWith('+') ? phone : `+${phone}`;
+  return phone;
 }
 
 /**
