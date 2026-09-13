@@ -122,29 +122,39 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      {/* Welcome Banner */}
-      <div className="rounded-2xl bg-gradient-to-r from-blue-50 via-indigo-50/60 to-slate-100 dark:from-blue-900/40 dark:via-indigo-900/30 dark:to-slate-900 border border-blue-200 dark:border-blue-500/20 p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xl">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold text-slate-100">Internal Telecom Dashboard</h1>
-            <Badge variant="blue" pulse size="sm">
-              SYSTEM ONLINE
-            </Badge>
+      {/* Modern Enterprise SaaS Hero Card */}
+      <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 border-t-4 border-t-blue-600 dark:border-t-blue-500 p-6 md:p-7 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 shadow-sm dark:shadow-xl transition-all">
+        <div className="space-y-1.5 max-w-2xl">
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight">
+              Internal Telecom Dashboard
+            </h1>
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 font-bold text-[11px] border border-emerald-200 dark:border-emerald-800/80 shadow-xs">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+              <span>SYSTEM ONLINE</span>
+            </span>
           </div>
-          <p className="text-xs text-slate-400">
+          <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 font-medium leading-relaxed">
             Internal VoIP operations center. WebRTC browser calling & Twilio telephony backend ready.
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <Button variant="outline" size="sm" onClick={loadDashboardData} disabled={isLoading}>
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+        <div className="flex items-center gap-3 shrink-0 self-end md:self-auto">
+          <button
+            onClick={loadDashboardData}
+            disabled={isLoading}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold text-xs border border-slate-200 dark:border-slate-700 shadow-xs hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 transition-all disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-slate-500 dark:text-slate-400 ${isLoading ? 'animate-spin' : ''}`} />
             <span>Refresh</span>
-          </Button>
+          </button>
           <Link href="/phone">
-            <Button variant="primary" size="md">
+            <button className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500 text-white font-semibold text-xs shadow-md shadow-blue-600/20 transition-all active:scale-[0.98]">
               <PhoneCall className="w-4 h-4" />
               <span>Open Dialer</span>
-            </Button>
+            </button>
           </Link>
         </div>
       </div>
