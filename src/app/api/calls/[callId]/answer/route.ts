@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 /**
  * Authenticated Browser Agent Answer Endpoint.
@@ -48,20 +49,83 @@ export async function POST(
       );
     }
 
-    // 3. Fetch call record
+    const adminSupabase = createAdminClient();
+
+    // 3. Attempt atomic call claim via database RPC function (requires service_role execution rights)
+    const { data: rpcRes, error: rpcErr } = await (adminSupabase as any).rpc(
+      'claim_inbound_call_answer',
+      {
+        p_call_id: callId,
+        p_user_id: user.id,
+        p_organization_id: profile.organization_id,
+      }
+    );
+
+    if (!rpcErr && rpcRes && rpcRes.length > 0) {
+      const claimResult = rpcRes[0];
+      if (!claimResult.success) {
+        return NextResponse.json(
+          {
+            error: claimResult.error_message || 'Call already answered by another agent.',
+            callId,
+            alreadyAnswered: claimResult.already_answered,
+          },
+          { status: 409 }
+        );
+      }
+
+      console.log('[API Answer Success via RPC]', {
+        dbCallId: callId,
+        agentId: user.id,
+        answered_at: claimResult.answered_at,
+        status: 'in-progress',
+      });
+
+      return NextResponse.json({
+        success: true,
+        callId: callId,
+        answered_at: claimResult.answered_at,
+        alreadyAnswered: claimResult.already_answered,
+      });
+    }
+
+    // Fallback: If RPC function is not yet available, execute application-level atomic answer & reservation cleanup
+    const { data: userActiveCall } = await (supabase as any)
+      .from('calls')
+      .select('id')
+      .eq('organization_id', profile.organization_id)
+      .in('status', ['initiated', 'ringing', 'in-progress', 'queued'])
+      .eq('user_id', user.id)
+      .neq('id', callId)
+      .maybeSingle();
+
+    if (userActiveCall) {
+      return NextResponse.json(
+        { error: 'You are already handling another active call.', callId },
+        { status: 409 }
+      );
+    }
+
+    // Fetch call record
     const { data: callData, error: callError } = await (supabase as any)
       .from('calls')
-      .select('id, organization_id, direction, status, answered_at')
+      .select('id, organization_id, direction, status, user_id, answered_at')
       .eq('id', callId)
       .single();
 
-    const call = callData as { id: string; organization_id: string; direction: string; status: string; answered_at: string | null } | null;
+    const call = callData as {
+      id: string;
+      organization_id: string;
+      direction: string;
+      status: string;
+      user_id: string | null;
+      answered_at: string | null;
+    } | null;
 
     if (callError || !call) {
       return NextResponse.json({ error: 'Call record not found.' }, { status: 404 });
     }
 
-    // 4. Validate authorization & inbound call direction
     if (call.organization_id !== profile.organization_id) {
       return NextResponse.json({ error: 'Forbidden. Call belongs to another organization.' }, { status: 403 });
     }
@@ -70,8 +134,14 @@ export async function POST(
       return NextResponse.json({ error: 'Invalid call direction for answer endpoint.' }, { status: 400 });
     }
 
-    // 5. Idempotent check: if already answered, return success without mutating
-    if (call.answered_at) {
+    if (call.user_id && call.user_id !== user.id) {
+      return NextResponse.json(
+        { error: 'Call already answered by another agent.', callId, alreadyAnswered: true },
+        { status: 409 }
+      );
+    }
+
+    if (call.answered_at && call.user_id === user.id) {
       return NextResponse.json({
         success: true,
         alreadyAnswered: true,
@@ -82,7 +152,7 @@ export async function POST(
 
     const nowIso = new Date().toISOString();
 
-    // 6. Update call record: mark status = 'in-progress', populate answered_at and user_id
+    // Atomic update: claim ownership ONLY if user_id is null OR matches user.id
     const { data: updatedCall, error: updateError } = await (supabase as any)
       .from('calls')
       .update({
@@ -92,13 +162,23 @@ export async function POST(
         updated_at: nowIso,
       })
       .eq('id', callId)
+      .or(`user_id.is.null,user_id.eq.${user.id}`)
       .select()
-      .single();
+      .maybeSingle();
 
-    if (updateError) {
-      console.error('[API Answer Error] Error updating call answer status:', updateError);
-      return NextResponse.json({ error: 'Failed to update call answer status.' }, { status: 500 });
+    if (updateError || !updatedCall) {
+      console.warn('[API Answer Conflict] Call ownership claim failed or already answered:', { callId, userId: user.id, updateError });
+      return NextResponse.json(
+        { error: 'Call already answered by another agent.', callId, alreadyAnswered: true },
+        { status: 409 }
+      );
     }
+
+    // Release reservations for this call and winning user
+    await (supabase as any)
+      .from('agent_call_reservations')
+      .delete()
+      .or(`call_id.eq.${callId},user_id.eq.${user.id}`);
 
     console.log('[API Answer Success]', {
       dbCallId: callId,

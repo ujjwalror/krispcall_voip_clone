@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { normalizeE164PhoneNumber } from '@/lib/utils';
 
 export async function POST(request: Request) {
@@ -35,100 +36,150 @@ export async function POST(request: Request) {
       );
     }
 
-    // 3. Extract & validate destination
-    const body = await request.json().catch(() => ({}));
-    const destination = body.destination || body.to || '';
-    const validation = normalizeE164PhoneNumber(destination);
+    const adminSupabase = createAdminClient();
 
-    if (!validation.isValid || !validation.normalized) {
-      return NextResponse.json(
-        { error: validation.error || 'Invalid destination phone number.' },
-        { status: 400 }
-      );
-    }
+    // 3. Clean up expired reservations
+    await (adminSupabase as any)
+      .from('agent_call_reservations')
+      .delete()
+      .lte('expires_at', new Date().toISOString());
 
-    // 4. Server-authoritative blocked-number check for organization
-    const { data: blockedRecord } = await (supabase as any)
-      .from('blocked_numbers')
-      .select('id, phone_number')
-      .eq('organization_id', profile.organization_id)
-      .eq('normalized_phone', validation.normalized)
-      .maybeSingle();
-
-    if (blockedRecord) {
-      return NextResponse.json(
-        { error: 'This number is blocked. Unblock it before calling.' },
-        { status: 403 }
-      );
-    }
-
-    // Also check contacts table if contact exists with is_blocked = true
-    const { data: blockedContact } = await (supabase as any)
-      .from('contacts')
-      .select('id, full_name')
-      .eq('organization_id', profile.organization_id)
-      .eq('phone', validation.normalized)
-      .eq('is_blocked', true)
-      .is('archived_at', null)
-      .maybeSingle();
-
-    if (blockedContact) {
-      return NextResponse.json(
-        { error: 'This number is blocked. Unblock it before calling.' },
-        { status: 403 }
-      );
-    }
-
-    const recordCall = Boolean(body.recordCall);
-
-    // 5. Resolve caller ID from request body or organization primary active phone number
-    let fromNumber = (body.fromNumber || body.from || '').trim();
-    if (!fromNumber) {
-      const { data: primaryPhone } = await (supabase as any)
-        .from('phone_numbers')
-        .select('phone_number')
-        .eq('organization_id', profile.organization_id)
-        .eq('active', true)
-        .order('is_primary', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (primaryPhone?.phone_number) {
-        fromNumber = primaryPhone.phone_number;
-      } else {
-        fromNumber = process.env.TWILIO_PHONE_NUMBER || '+61348328472';
-      }
-    }
-
-    // 6. Create database call record
-    const { data: callRecord, error: insertError } = await supabase
-      .from('calls')
+    // 4. Atomic outbound reservation lock: Guarantee only 1 call setup per user at a time
+    const expiresAt = new Date(Date.now() + 45 * 1000).toISOString();
+    const { data: resRow, error: resErr } = await (adminSupabase as any)
+      .from('agent_call_reservations')
       .insert({
         organization_id: profile.organization_id,
         user_id: user.id,
-        direction: 'outbound',
-        from_number: fromNumber,
-        to_number: validation.normalized,
-        status: 'initiated',
-        record_call: recordCall,
-        started_at: new Date().toISOString(),
-      } as any)
-      .select()
-      .single();
+        reservation_type: 'outbound',
+        expires_at: expiresAt,
+      })
+      .select('id')
+      .maybeSingle();
 
-    if (insertError || !callRecord) {
-      console.error('Error creating database call record:', insertError);
+    if (resErr || !resRow) {
       return NextResponse.json(
-        { error: 'Failed to create database call log.' },
-        { status: 500 }
+        { error: 'You already have an active call or pending call setup. Finish your current call before starting another.' },
+        { status: 409 }
       );
     }
 
-    return NextResponse.json({
-      success: true,
-      callId: (callRecord as any).id,
-      call: callRecord,
-    });
+    const reservationId = resRow.id;
+
+    try {
+      // 5. Check if agent already owns an active call row in database
+      const { data: existingActiveCall } = await (adminSupabase as any)
+        .from('calls')
+        .select('id')
+        .eq('organization_id', profile.organization_id)
+        .in('status', ['initiated', 'ringing', 'in-progress', 'queued'])
+        .eq('user_id', user.id)
+        .limit(1)
+        .maybeSingle();
+
+      if (existingActiveCall) {
+        throw new Error('You already have an active call. Finish your current call before starting another.');
+      }
+
+      // 6. Extract & validate destination
+      const body = await request.json().catch(() => ({}));
+      const destination = body.destination || body.to || '';
+      const validation = normalizeE164PhoneNumber(destination);
+
+      if (!validation.isValid || !validation.normalized) {
+        throw new Error(validation.error || 'Invalid destination phone number.');
+      }
+
+      // 7. Blocked-number check for organization
+      const { data: blockedRecord } = await (adminSupabase as any)
+        .from('blocked_numbers')
+        .select('id')
+        .eq('organization_id', profile.organization_id)
+        .eq('normalized_phone', validation.normalized)
+        .maybeSingle();
+
+      if (blockedRecord) {
+        throw new Error('This number is blocked. Unblock it before calling.');
+      }
+
+      const { data: blockedContact } = await (adminSupabase as any)
+        .from('contacts')
+        .select('id')
+        .eq('organization_id', profile.organization_id)
+        .eq('phone', validation.normalized)
+        .eq('is_blocked', true)
+        .is('archived_at', null)
+        .maybeSingle();
+
+      if (blockedContact) {
+        throw new Error('This number is blocked. Unblock it before calling.');
+      }
+
+      const recordCall = Boolean(body.recordCall);
+
+      // 8. Resolve caller ID
+      let fromNumber = (body.fromNumber || body.from || '').trim();
+      if (!fromNumber) {
+        const { data: primaryPhone } = await (adminSupabase as any)
+          .from('phone_numbers')
+          .select('phone_number')
+          .eq('organization_id', profile.organization_id)
+          .eq('active', true)
+          .order('is_primary', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (primaryPhone?.phone_number) {
+          fromNumber = primaryPhone.phone_number;
+        } else {
+          fromNumber = process.env.TWILIO_PHONE_NUMBER || '+61348328472';
+        }
+      }
+
+      // 9. Create database call record
+      const { data: callRecord, error: insertError } = await (adminSupabase as any)
+        .from('calls')
+        .insert({
+          organization_id: profile.organization_id,
+          user_id: user.id,
+          direction: 'outbound',
+          from_number: fromNumber,
+          to_number: validation.normalized,
+          status: 'initiated',
+          record_call: recordCall,
+          started_at: new Date().toISOString(),
+        })
+        .select()
+        .single();
+
+      if (insertError || !callRecord) {
+        console.error('Error creating database call record:', insertError);
+        throw new Error('Failed to create database call log.');
+      }
+
+      // 10. Update reservation to link call_id
+      await (adminSupabase as any)
+        .from('agent_call_reservations')
+        .update({ call_id: callRecord.id })
+        .eq('id', reservationId);
+
+      return NextResponse.json({
+        success: true,
+        callId: callRecord.id,
+        call: callRecord,
+      });
+    } catch (opError: any) {
+      // Outbound failure cleanup: Release reservation immediately if any validation or DB step failed
+      await (adminSupabase as any)
+        .from('agent_call_reservations')
+        .delete()
+        .eq('id', reservationId);
+
+      const errorMessage = opError.message || 'Failed to initiate call.';
+      const status = errorMessage.includes('blocked') ? 403 : errorMessage.includes('active call') ? 409 : 400;
+
+      return NextResponse.json({ error: errorMessage }, { status });
+    }
   } catch (error: any) {
     console.error('Error in /api/twilio/calls/create:', error.message || error);
     return NextResponse.json(

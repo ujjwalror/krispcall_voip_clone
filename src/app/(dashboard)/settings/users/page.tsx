@@ -34,6 +34,7 @@ interface Member {
   twilio_identity?: string | null;
   availability_status?: 'available' | 'busy' | 'offline' | null;
   last_seen_at?: string | null;
+  is_occupied?: boolean;
 }
 
 interface CreatedUserResult {
@@ -340,10 +341,17 @@ Please change your password after first login.`;
                           {member.role}
                         </Badge>
                         {member.active ? (
-                          <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-950 border border-slate-800 text-[10px] text-slate-400 font-mono shrink-0">
-                            <Circle className={`w-2 h-2 fill-current ${presence.color}`} />
-                            {presence.label}
-                          </span>
+                          <>
+                            <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-950 border border-slate-800 text-[10px] text-slate-400 font-mono shrink-0">
+                              <Circle className={`w-2 h-2 fill-current ${presence.color}`} />
+                              {presence.label}
+                            </span>
+                            {member.is_occupied && (
+                              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-950/60 border border-amber-500/40 text-[10px] text-amber-300 font-mono font-bold shrink-0">
+                                ☎ On Call
+                              </span>
+                            )}
+                          </>
                         ) : (
                           <Badge variant="rose" size="sm" className="text-[9px] shrink-0">
                             Disabled

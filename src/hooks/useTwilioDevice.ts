@@ -155,6 +155,18 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
       // Register listener for incoming calls from company number
       device.on('incoming', (incomingCall: any) => {
         console.log('[Twilio Device] Incoming browser call detected:', incomingCall.parameters);
+
+        // Auto-reject if agent is already handling an active call
+        if (activeCallRef.current || callState === 'connecting' || callState === 'ringing' || callState === 'connected') {
+          console.log('[Twilio Device] Agent is currently occupied on an active call. Auto-rejecting incoming call.');
+          try {
+            incomingCall.reject();
+          } catch (e) {
+            console.warn('[Twilio Device] Error rejecting incoming call while busy:', e);
+          }
+          return;
+        }
+
         incomingCallRef.current = incomingCall;
         const callerNum = incomingCall.parameters?.From || 'Customer';
         setIncomingCaller(callerNum);
@@ -180,9 +192,24 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
             })
-              .then((res) => res.json())
-              .then((data) => {
-                console.log('[Browser Answer Endpoint Success]', data);
+              .then(async (res) => {
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.error?.includes('already answered')) {
+                  console.warn('[Browser Answer Endpoint Rejection]', data);
+                  // Another agent won ownership or agent was busy
+                  try {
+                    incomingCall.disconnect();
+                  } catch (e) {
+                    // Ignore disconnect error
+                  }
+                  activeCallRef.current = null;
+                  stopTimer();
+                  setCallState('ended');
+                  setErrorMessage(data.error || 'Call already answered by another agent.');
+                  resetCallStateAfterDelay();
+                } else {
+                  console.log('[Browser Answer Endpoint Success]', data);
+                }
               })
               .catch((err) => {
                 console.error('[Browser Answer Endpoint Error]', err);
@@ -288,14 +315,11 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
         const createData = await createRes.json().catch(() => ({}));
 
         if (!createRes.ok) {
-          if (createRes.status === 403 || createData.error?.includes('blocked')) {
-            const err = createData.error || 'This number is blocked. Unblock it before calling.';
-            setErrorMessage(err);
-            setCallState('failed');
-            resetCallStateAfterDelay();
-            return false;
-          }
-          console.warn('Could not create initial call record in database:', createData.error);
+          const err = createData.error || 'Failed to place outbound call.';
+          setErrorMessage(err);
+          setCallState('failed');
+          resetCallStateAfterDelay();
+          return false;
         } else {
           dbCallId = createData.callId || '';
         }

@@ -170,56 +170,7 @@ export async function POST(request: Request) {
       }
     }
 
-    // 3. Find available, active agents in workspace
-    const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
-
-    const { data: availableAgents } = await (adminSupabase as any)
-      .from('profiles')
-      .select('id, full_name, twilio_identity, last_seen_at')
-      .eq('organization_id', organizationId)
-      .eq('active', true)
-      .eq('availability_status', 'available')
-      .gte('last_seen_at', twoMinutesAgo)
-      .order('id', { ascending: true });
-
-    let targetAgents = (availableAgents || []) as { id: string; full_name: string; twilio_identity: string }[];
-
-    // Fallback 1: select active, available profiles without strict 2-min heartbeat
-    if (targetAgents.length === 0) {
-      const { data: fallbackAgents } = await (adminSupabase as any)
-        .from('profiles')
-        .select('id, full_name, twilio_identity')
-        .eq('organization_id', organizationId)
-        .eq('active', true)
-        .eq('availability_status', 'available')
-        .order('id', { ascending: true });
-      targetAgents = (fallbackAgents || []) as any;
-    }
-
-    // Fallback 2: select active profiles in organization regardless of availability_status string
-    if (targetAgents.length === 0) {
-      const { data: orgActiveAgents } = await (adminSupabase as any)
-        .from('profiles')
-        .select('id, full_name, twilio_identity')
-        .eq('organization_id', organizationId)
-        .eq('active', true)
-        .order('id', { ascending: true });
-      targetAgents = (orgActiveAgents || []) as any;
-    }
-
-    // Fallback 3: select any active profiles in entire database
-    if (targetAgents.length === 0) {
-      const { data: allActiveAgents } = await (adminSupabase as any)
-        .from('profiles')
-        .select('id, full_name, twilio_identity')
-        .eq('active', true)
-        .order('id', { ascending: true });
-      targetAgents = (allActiveAgents || []) as any;
-    }
-
-    console.log(`[Twilio Inbound Webhook] Found ${targetAgents.length} target agents for org ${organizationId}`);
-
-    // 4. Insert inbound call record into public.calls (status = 'ringing')
+    // 3. Insert inbound call record into public.calls (status = 'ringing') first to obtain dbCallId
     let dbCallId = '';
     const { data: newCall, error: insertErr } = await (adminSupabase as any)
       .from('calls')
@@ -249,11 +200,124 @@ export async function POST(request: Request) {
       direction: 'inbound',
     });
 
+    // 4. Reserve target agents using atomic database RPC functions
+    let reservedAgents: { id: string; full_name: string; twilio_identity: string }[] = [];
+
+    if (routingStrategy === 'round_robin') {
+      const { data: rpcAgent, error: rpcErr } = await (adminSupabase as any).rpc(
+        'reserve_next_round_robin_agent',
+        {
+          p_organization_id: organizationId,
+          p_call_id: dbCallId || null,
+          p_ttl_seconds: 30,
+        }
+      );
+
+      if (!rpcErr && rpcAgent && rpcAgent.length > 0) {
+        reservedAgents = rpcAgent;
+      }
+    } else {
+      const { data: rpcAgents, error: rpcErr } = await (adminSupabase as any).rpc(
+        'reserve_ring_all_agents',
+        {
+          p_organization_id: organizationId,
+          p_call_id: dbCallId || null,
+          p_ttl_seconds: 30,
+        }
+      );
+
+      if (!rpcErr && rpcAgents) {
+        reservedAgents = rpcAgents;
+      }
+    }
+
+    // Fallback: If RPC function is not yet created in database, perform clean application-level reservation
+    if (reservedAgents.length === 0) {
+      // Clean up expired reservations
+      await (adminSupabase as any)
+        .from('agent_call_reservations')
+        .delete()
+        .lte('expires_at', new Date().toISOString());
+
+      // Active call user_ids
+      const { data: activeCalls } = await (adminSupabase as any)
+        .from('calls')
+        .select('user_id')
+        .eq('organization_id', organizationId)
+        .in('status', ['initiated', 'ringing', 'in-progress', 'queued'])
+        .not('user_id', 'is', null);
+
+      // Active reservations
+      const { data: activeRes } = await (adminSupabase as any)
+        .from('agent_call_reservations')
+        .select('user_id')
+        .eq('organization_id', organizationId)
+        .gt('expires_at', new Date().toISOString());
+
+      const unavailableUserIds = new Set<string>();
+      if (activeCalls) {
+        for (const c of activeCalls) {
+          if (c.user_id) unavailableUserIds.add(c.user_id);
+        }
+      }
+      if (activeRes) {
+        for (const r of activeRes) {
+          if (r.user_id) unavailableUserIds.add(r.user_id);
+        }
+      }
+
+      const { data: availableAgents } = await (adminSupabase as any)
+        .from('profiles')
+        .select('id, full_name, twilio_identity')
+        .eq('organization_id', organizationId)
+        .eq('active', true)
+        .eq('availability_status', 'available')
+        .order('id', { ascending: true });
+
+      const eligible = ((availableAgents || []) as { id: string; full_name: string; twilio_identity: string }[]).filter(
+        (a) => !unavailableUserIds.has(a.id)
+      );
+
+      if (eligible.length > 0) {
+        if (routingStrategy === 'round_robin') {
+          let nextIndex = 0;
+          if (lastRoutedUserId) {
+            const lastIdx = eligible.findIndex((a) => a.id === lastRoutedUserId);
+            if (lastIdx !== -1) {
+              nextIndex = (lastIdx + 1) % eligible.length;
+            }
+          }
+          const chosen = eligible[nextIndex];
+          reservedAgents = [chosen];
+          await (adminSupabase as any)
+            .from('organizations')
+            .update({ last_routed_user_id: chosen.id, updated_at: new Date().toISOString() })
+            .eq('id', organizationId);
+        } else {
+          reservedAgents = eligible;
+        }
+
+        // Insert reservations
+        const expiresAt = new Date(Date.now() + 30 * 1000).toISOString();
+        const reservationRows = reservedAgents.map((a) => ({
+          organization_id: organizationId,
+          user_id: a.id,
+          call_id: dbCallId || null,
+          reservation_type: routingStrategy,
+          expires_at: expiresAt,
+        }));
+
+        await (adminSupabase as any).from('agent_call_reservations').insert(reservationRows);
+      }
+    }
+
+    console.log(`[Twilio Inbound Webhook] Reserved ${reservedAgents.length} agents for org ${organizationId} (Strategy: ${routingStrategy})`);
+
     const voiceResponse = new twilio.twiml.VoiceResponse();
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://krispcall-voip-clone-udlg.vercel.app';
 
-    if (targetAgents.length === 0) {
-      console.log('[Twilio Inbound Webhook] No agents available. Playing busy message.');
+    if (reservedAgents.length === 0) {
+      console.log('[Twilio Inbound Webhook] No free, unreserved agents available in organization. Playing busy message.');
       voiceResponse.say('Thank you for calling. All of our agents are currently busy or unavailable. Please leave a message or call back shortly.');
       voiceResponse.hangup();
       const busyTwiml = voiceResponse.toString();
@@ -267,39 +331,15 @@ export async function POST(request: Request) {
       });
     }
 
-    // Determine target client identities based on routing strategy
-    let targetIdentities: string[] = [];
-
-    if (routingStrategy === 'round_robin') {
-      let nextIndex = 0;
-      if (lastRoutedUserId) {
-        const lastIdx = targetAgents.findIndex((a) => a.id === lastRoutedUserId);
-        if (lastIdx !== -1) {
-          nextIndex = (lastIdx + 1) % targetAgents.length;
-        }
-      }
-      const selectedAgent = targetAgents[nextIndex];
-      targetIdentities = [selectedAgent.twilio_identity || `agent_${selectedAgent.id.replace(/-/g, '')}`];
-
-      await (adminSupabase as any)
-        .from('organizations')
-        .update({ last_routed_user_id: selectedAgent.id })
-        .eq('id', organizationId);
-    } else {
-      targetIdentities = targetAgents.map(
-        (a) => a.twilio_identity || `agent_${a.id.replace(/-/g, '')}`
-      );
-    }
-
-    // Filter out empty client identities
-    targetIdentities = targetIdentities.filter((id) => Boolean(id && id.trim()));
+    let targetIdentities: string[] = reservedAgents
+      .map((a) => a.twilio_identity || `agent_${a.id.replace(/-/g, '')}`)
+      .filter((id) => Boolean(id && id.trim()));
 
     // Log target details with exact requested label [TWILIO CLIENT TARGETS]
-    console.log('[TWILIO CLIENT TARGETS]', targetAgents.map((a) => ({
+    console.log('[TWILIO CLIENT TARGETS]', reservedAgents.map((a) => ({
       identity: a.twilio_identity || `agent_${a.id.replace(/-/g, '')}`,
       'profile id': a.id,
       availability: (a as any).availability_status || 'available',
-      last_seen_at: (a as any).last_seen_at || 'now',
     })));
 
     // Ensure valid callerId for Twilio <Dial>

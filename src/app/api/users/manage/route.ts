@@ -47,10 +47,42 @@ export async function GET() {
       .eq('organization_id', profile.organization_id)
       .order('created_at', { ascending: true });
 
+    // Fetch active calls in organization to determine automatic call occupancy per agent
+    const { data: activeCalls } = await (adminSupabase as any)
+      .from('calls')
+      .select('user_id')
+      .eq('organization_id', profile.organization_id)
+      .in('status', ['initiated', 'ringing', 'in-progress', 'queued'])
+      .not('user_id', 'is', null);
+
+    // Fetch active non-expired reservations in organization
+    const { data: activeRes } = await (adminSupabase as any)
+      .from('agent_call_reservations')
+      .select('user_id')
+      .eq('organization_id', profile.organization_id)
+      .gt('expires_at', new Date().toISOString());
+
+    const occupiedUserIds = new Set<string>();
+    if (activeCalls) {
+      for (const c of activeCalls) {
+        if (c.user_id) occupiedUserIds.add(c.user_id);
+      }
+    }
+    if (activeRes) {
+      for (const r of activeRes) {
+        if (r.user_id) occupiedUserIds.add(r.user_id);
+      }
+    }
+
+    const membersWithOccupancy = (members || []).map((m: any) => ({
+      ...m,
+      is_occupied: occupiedUserIds.has(m.id),
+    }));
+
     return NextResponse.json({
       organization: orgData,
       currentUserRole: profile.role,
-      members: members || [],
+      members: membersWithOccupancy,
     });
   } catch (error: any) {
     console.error('[User Management API] GET exception:', error.message || error);

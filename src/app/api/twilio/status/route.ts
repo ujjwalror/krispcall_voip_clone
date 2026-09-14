@@ -295,6 +295,17 @@ export async function POST(request: Request) {
       `[Twilio Status Callback] Database update complete for CallSid "${callSid}" / dbCallId "${dbCallId}". Matched ${matchedRows} row(s). Updated status to "${dbStatus}".`
     );
 
+    // Release reservations when call reaches terminal status
+    if (['completed', 'no-answer', 'busy', 'canceled', 'failed', 'missed'].includes(dbStatus)) {
+      const targetCallId = dbCallId || existingCall?.id;
+      if (targetCallId) {
+        await (adminSupabase as any)
+          .from('agent_call_reservations')
+          .delete()
+          .eq('call_id', targetCallId);
+      }
+    }
+
     return new NextResponse('<Response/>', {
       status: 200,
       headers: { 'Content-Type': 'text/xml' },
