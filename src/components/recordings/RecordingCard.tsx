@@ -65,17 +65,17 @@ export function RecordingCard({ recording, isPlaying, isAdmin = false, onPlayTog
     .toUpperCase();
 
   return (
-    <Card className="p-5 bg-slate-900/60 border border-slate-800 hover:border-slate-700/80 transition-all rounded-2xl shadow-lg backdrop-blur-sm group">
+    <Card className="p-5 bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700/80 transition-all rounded-2xl shadow-xs dark:shadow-lg backdrop-blur-sm group">
       <div className="flex flex-col gap-4">
         {/* Top Header Row */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/60 pb-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800/60 pb-3">
           <div className="flex items-center gap-3">
             {/* Call Direction Indicator Badge */}
             <div
               className={`p-2.5 rounded-xl border flex items-center justify-center ${
                 direction === 'inbound'
-                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                  : 'bg-blue-500/10 text-blue-400 border-blue-500/20'
+                  ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20'
+                  : 'bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-500/20'
               }`}
             >
               {direction === 'inbound' ? (
@@ -87,7 +87,7 @@ export function RecordingCard({ recording, isPlaying, isAdmin = false, onPlayTog
 
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-sm font-bold text-slate-100 font-mono tracking-tight">{targetNumber}</h3>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 font-mono tracking-tight">{targetNumber}</h3>
                 <Badge
                   variant={direction === 'inbound' ? 'emerald' : 'blue'}
                   size="sm"
@@ -96,8 +96,8 @@ export function RecordingCard({ recording, isPlaying, isAdmin = false, onPlayTog
                   {direction}
                 </Badge>
               </div>
-              <p className="text-[11px] text-slate-400 flex items-center gap-1.5 mt-0.5">
-                <Clock className="w-3 h-3 text-slate-500" />
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1.5 mt-0.5">
+                <Clock className="w-3 h-3 text-slate-400 dark:text-slate-500" />
                 <span>{formatCallTime(recording.created_at, profile?.timezone, profile?.time_format)}</span>
               </p>
             </div>
@@ -106,16 +106,16 @@ export function RecordingCard({ recording, isPlaying, isAdmin = false, onPlayTog
           {/* Right Meta Info & Download */}
           <div className="flex items-center gap-3">
             {/* Agent Info */}
-            <div className="flex items-center gap-2 bg-slate-950/60 px-3 py-1.5 rounded-xl border border-slate-800/60">
-              <div className="w-5 h-5 rounded-full bg-blue-600/30 border border-blue-500/40 text-blue-300 text-[10px] font-bold flex items-center justify-center">
+            <div className="flex items-center gap-2 bg-slate-50 dark:bg-slate-950/60 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800/60">
+              <div className="w-5 h-5 rounded-full bg-blue-100 dark:bg-blue-600/30 border border-blue-300 dark:border-blue-500/40 text-blue-700 dark:text-blue-300 text-[10px] font-bold flex items-center justify-center">
                 {initials}
               </div>
-              <span className="text-xs text-slate-300 font-medium">{agentName}</span>
+              <span className="text-xs text-slate-800 dark:text-slate-300 font-medium">{agentName}</span>
             </div>
 
             {/* Duration Badge */}
-            <div className="flex items-center gap-1 bg-slate-950/60 px-2.5 py-1.5 rounded-xl border border-slate-800/60 text-slate-400 text-xs font-mono">
-              <Mic className="w-3.5 h-3.5 text-blue-400" />
+            <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-950/60 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800/60 text-slate-600 dark:text-slate-400 text-xs font-mono">
+              <Mic className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
               <span>{formatDuration(recording.duration_seconds || 0)}</span>
             </div>
 
@@ -123,11 +123,11 @@ export function RecordingCard({ recording, isPlaying, isAdmin = false, onPlayTog
             <button
               onClick={handleDownload}
               disabled={isDownloading}
-              className="p-2 rounded-xl bg-slate-950/80 border border-slate-800 text-slate-400 hover:text-slate-100 hover:border-slate-700 transition-all flex items-center justify-center"
+              className="p-2 rounded-xl bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:border-slate-300 dark:hover:border-slate-700 transition-all flex items-center justify-center"
               title="Download MP3 Audio"
             >
               {isDownloading ? (
-                <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+                <Loader2 className="w-4 h-4 animate-spin text-blue-600 dark:text-blue-400" />
               ) : (
                 <Download className="w-4 h-4" />
               )}
@@ -137,10 +137,10 @@ export function RecordingCard({ recording, isPlaying, isAdmin = false, onPlayTog
             {isAdmin && onRequestDelete && (
               <button
                 onClick={() => onRequestDelete(recording)}
-                className="p-2 rounded-xl bg-slate-950/80 border border-slate-800 text-slate-400 hover:text-rose-400 hover:border-rose-900/80 hover:bg-rose-950/40 transition-all flex items-center justify-center"
+                className="p-2 rounded-xl bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:border-rose-300 dark:hover:border-rose-900/80 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-all flex items-center justify-center"
                 title="Delete Recording (Admin Only)"
               >
-                <Trash2 className="w-4 h-4 text-rose-400" />
+                <Trash2 className="w-4 h-4 text-rose-600 dark:text-rose-400" />
               </button>
             )}
           </div>

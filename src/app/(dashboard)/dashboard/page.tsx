@@ -150,11 +150,12 @@ export default function DashboardPage() {
             <RefreshCw className={`w-3.5 h-3.5 text-slate-500 dark:text-slate-400 ${isLoading ? 'animate-spin' : ''}`} />
             <span>Refresh</span>
           </button>
-          <Link href="/phone" className="flex-1 md:flex-none">
-            <button className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500 text-white font-semibold text-xs shadow-md shadow-blue-600/20 transition-all active:scale-[0.98]">
-              <PhoneCall className="w-4 h-4" />
-              <span>Open Dialer</span>
-            </button>
+          <Link
+            href="/phone"
+            className="flex-1 md:flex-none inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500 text-white font-semibold text-xs shadow-md shadow-blue-600/20 transition-all active:scale-[0.98]"
+          >
+            <PhoneCall className="w-4 h-4" />
+            <span>Open Dialer</span>
           </Link>
         </div>
       </div>
@@ -227,10 +228,10 @@ export default function DashboardPage() {
                         <div
                           className={`p-2 rounded-lg shrink-0 ${
                             isMissed
-                              ? 'bg-rose-500/10 text-rose-500'
+                              ? 'bg-rose-50 dark:bg-rose-500/10 text-rose-600 dark:text-rose-400'
                               : isOutbound
-                              ? 'bg-blue-500/10 text-blue-500'
-                              : 'bg-emerald-500/10 text-emerald-500'
+                              ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400'
+                              : 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
                           }`}
                         >
                           {isMissed ? (

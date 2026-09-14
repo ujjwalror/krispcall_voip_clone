@@ -214,18 +214,18 @@ Please change your password after first login.`;
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-12">
       {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-5">
         <div>
           <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-purple-600/10 border border-purple-500/20 text-purple-400">
+            <div className="p-2 rounded-xl bg-purple-50 dark:bg-purple-600/10 border border-purple-200 dark:border-purple-500/20 text-purple-600 dark:text-purple-400">
               <Users className="w-5 h-5" />
             </div>
-            <h1 className="text-xl font-bold text-slate-100">Multi-Agent Workspace Management</h1>
+            <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">Multi-Agent Workspace Management</h1>
             <Badge variant="purple" size="md">
               {members.length} MEMBERS
             </Badge>
           </div>
-          <p className="text-xs text-slate-400 mt-1">
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
             Manage agent roles, extensions, availability status, and inbound call routing rules.
           </p>
         </div>
@@ -255,25 +255,25 @@ Please change your password after first login.`;
       </div>
 
       {/* Call Routing Strategy Card */}
-      <Card className="p-5 bg-slate-900/60 border border-slate-800 rounded-2xl backdrop-blur-sm">
+      <Card className="p-5 bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl backdrop-blur-sm">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
-              <Layers className="w-4 h-4 text-blue-400" />
-              <h2 className="text-sm font-bold text-slate-100">Inbound Call Routing Strategy</h2>
+              <Layers className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+              <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">Inbound Call Routing Strategy</h2>
             </div>
-            <p className="text-xs text-slate-400 mt-0.5">
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
               Choose how incoming customer calls on the shared company number are distributed among available agents.
             </p>
           </div>
 
-          <div className="flex items-center gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800">
+          <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-950 p-1 rounded-xl border border-slate-200 dark:border-slate-800">
             <button
               onClick={() => handleUpdateRouting('ring_all')}
               className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
                 routingStrategy === 'ring_all'
                   ? 'bg-blue-600 text-white font-bold shadow-md'
-                  : 'text-slate-400 hover:text-slate-200'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
               }`}
             >
               Ring All (Simultaneous)
@@ -283,7 +283,7 @@ Please change your password after first login.`;
               className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
                 routingStrategy === 'round_robin'
                   ? 'bg-blue-600 text-white font-bold shadow-md'
-                  : 'text-slate-400 hover:text-slate-200'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
               }`}
             >
               Round Robin (Sequential)
@@ -294,13 +294,13 @@ Please change your password after first login.`;
 
       {/* Workspace Users List */}
       <div className="space-y-3">
-        <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider font-mono px-1">
+        <h2 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider font-mono px-1">
           Workspace Team Members ({members.length})
         </h2>
 
         {isLoading ? (
           <Card className="p-8 text-center text-xs text-slate-500">
-            <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-blue-400" />
+            <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-blue-600 dark:text-blue-400" />
             <span>Loading workspace team members...</span>
           </Card>
         ) : (
@@ -311,16 +311,16 @@ Please change your password after first login.`;
             return (
               <Card
                 key={member.id}
-                className={`p-4 bg-slate-900/60 border transition-all rounded-xl w-full min-w-0 ${
+                className={`p-4 bg-white dark:bg-slate-900/60 border transition-all rounded-xl w-full min-w-0 ${
                   !member.active
-                    ? 'border-slate-800/50 opacity-60'
-                    : 'border-slate-800 hover:border-slate-700/80'
+                    ? 'border-slate-200/50 dark:border-slate-800/50 opacity-60'
+                    : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700/80'
                 }`}
               >
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 w-full min-w-0">
                   {/* Member Info */}
                   <div className="flex items-start sm:items-center gap-3 w-full min-w-0">
-                    <div className="w-10 h-10 rounded-full bg-blue-600/20 border border-blue-500/30 text-blue-300 font-bold flex items-center justify-center text-sm font-mono shrink-0">
+                    <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-600/20 border border-blue-200 dark:border-blue-500/30 text-blue-700 dark:text-blue-300 font-bold flex items-center justify-center text-sm font-mono shrink-0">
                       {member.full_name
                         .split(' ')
                         .map((n) => n[0])
@@ -331,7 +331,7 @@ Please change your password after first login.`;
 
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-sm font-bold text-slate-100 truncate">{member.full_name}</h3>
+                        <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">{member.full_name}</h3>
                         <Badge
                           variant={member.role === 'admin' ? 'purple' : member.role === 'manager' ? 'blue' : 'emerald'}
                           size="sm"
@@ -342,12 +342,12 @@ Please change your password after first login.`;
                         </Badge>
                         {member.active ? (
                           <>
-                            <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-950 border border-slate-800 text-[10px] text-slate-400 font-mono shrink-0">
+                            <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-[10px] text-slate-600 dark:text-slate-400 font-mono shrink-0">
                               <Circle className={`w-2 h-2 fill-current ${presence.color}`} />
                               {presence.label}
                             </span>
                             {member.is_occupied && (
-                              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-950/60 border border-amber-500/40 text-[10px] text-amber-300 font-mono font-bold shrink-0">
+                              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-500/40 text-[10px] text-amber-800 dark:text-amber-300 font-mono font-bold shrink-0">
                                 ☎ On Call
                               </span>
                             )}
@@ -360,19 +360,19 @@ Please change your password after first login.`;
                       </div>
 
                       {/* Clean wrapped info line */}
-                      <div className="text-xs text-slate-400 font-mono mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 break-all">
-                        <span className="text-slate-300 font-semibold">{member.email}</span>
-                        <span className="text-slate-600 hidden sm:inline">•</span>
-                        <span>Ext: <strong className="text-blue-400 font-bold">{member.extension || 'Unassigned'}</strong></span>
-                        <span className="text-slate-600 hidden sm:inline">•</span>
-                        <span className="truncate max-w-full">Identity: <strong className="text-slate-300">{member.twilio_identity}</strong></span>
+                      <div className="text-xs text-slate-500 dark:text-slate-400 font-mono mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 break-all">
+                        <span className="text-slate-900 dark:text-slate-300 font-semibold">{member.email}</span>
+                        <span className="text-slate-400 dark:text-slate-600 hidden sm:inline">•</span>
+                        <span>Ext: <strong className="text-blue-600 dark:text-blue-400 font-bold">{member.extension || 'Unassigned'}</strong></span>
+                        <span className="text-slate-400 dark:text-slate-600 hidden sm:inline">•</span>
+                        <span className="truncate max-w-full">Identity: <strong className="text-slate-700 dark:text-slate-300">{member.twilio_identity}</strong></span>
                       </div>
                     </div>
                   </div>
 
                   {/* Actions / Edit Form Grid */}
                   {canManage && (
-                    <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 bg-slate-950/80 p-2.5 sm:p-2 rounded-xl border border-slate-800/80 w-full sm:w-auto shrink-0">
+                    <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 bg-slate-50 dark:bg-slate-950/80 p-2.5 sm:p-2 rounded-xl border border-slate-200 dark:border-slate-800/80 w-full sm:w-auto shrink-0">
                       {/* Full Name Edit */}
                       <div className="col-span-2 sm:col-span-1">
                         <label className="text-[9px] font-mono text-slate-500 block mb-0.5 sm:hidden">FULL NAME</label>
@@ -384,7 +384,7 @@ Please change your password after first login.`;
                               handleUpdateMember(member.id, { full_name: e.target.value });
                             }
                           }}
-                          className="w-full sm:w-32 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 sm:py-1 text-xs text-slate-200 focus:outline-none focus:border-blue-500"
+                          className="w-full sm:w-32 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 sm:py-1 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-blue-600 dark:focus:border-blue-500"
                           title="Edit Full Name"
                         />
                       </div>
@@ -397,7 +397,7 @@ Please change your password after first login.`;
                           onChange={(e) =>
                             handleUpdateMember(member.id, { role: e.target.value as any })
                           }
-                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 sm:py-1 text-xs text-slate-200 focus:outline-none focus:border-blue-500"
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 sm:py-1 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-blue-600 dark:focus:border-blue-500"
                         >
                           <option value="admin">Admin</option>
                           <option value="manager">Manager</option>
@@ -417,7 +417,7 @@ Please change your password after first login.`;
                               handleUpdateMember(member.id, { extension: e.target.value });
                             }
                           }}
-                          className="w-full sm:w-16 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 sm:py-1 text-xs text-slate-200 font-mono text-center focus:outline-none focus:border-blue-500"
+                          className="w-full sm:w-16 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 sm:py-1 text-xs text-slate-900 dark:text-slate-200 font-mono text-center focus:outline-none focus:border-blue-600 dark:focus:border-blue-500"
                           title="Edit Extension"
                         />
                       </div>
@@ -428,8 +428,8 @@ Please change your password after first login.`;
                           onClick={() => handleUpdateMember(member.id, { active: !member.active })}
                           className={`w-full sm:w-auto px-3 py-1.5 sm:py-1 rounded-lg text-xs font-medium transition-colors flex items-center justify-center ${
                             member.active
-                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20'
-                              : 'bg-rose-500/10 text-rose-400 border border-rose-500/30 hover:bg-rose-500/20'
+                              ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/30 hover:bg-emerald-100 dark:hover:bg-emerald-500/20'
+                              : 'bg-rose-50 dark:bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-500/30 hover:bg-rose-100 dark:hover:bg-rose-500/20'
                           }`}
                         >
                           {member.active ? 'Active' : 'Disabled'}
@@ -447,83 +447,83 @@ Please change your password after first login.`;
       {/* Add User Modal */}
       {isAddModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl w-full max-w-md p-6 relative">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl w-full max-w-md p-6 relative">
             <button
               onClick={() => setIsAddModalOpen(false)}
-              className="absolute right-4 top-4 text-slate-400 hover:text-slate-100 transition-colors"
+              className="absolute right-4 top-4 text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 transition-colors"
             >
               <X className="w-5 h-5" />
             </button>
 
             <div className="flex items-center gap-2.5 mb-5">
-              <div className="p-2 rounded-xl bg-blue-600/10 border border-blue-500/20 text-blue-400">
+              <div className="p-2 rounded-xl bg-blue-50 dark:bg-blue-600/10 border border-blue-200 dark:border-blue-500/20 text-blue-600 dark:text-blue-400">
                 <UserPlus className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-slate-100">Add New Team Member</h3>
-                <p className="text-xs text-slate-400">Create workspace user profile & credentials</p>
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Add New Team Member</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Create workspace user profile & credentials</p>
               </div>
             </div>
 
             {formError && (
-              <div className="mb-4 p-3 rounded-xl bg-rose-950/60 border border-rose-800/80 text-xs text-rose-300">
+              <div className="mb-4 p-3 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800/80 text-xs text-rose-800 dark:text-rose-300">
                 {formError}
               </div>
             )}
 
             <form onSubmit={handleCreateUserSubmit} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Full Name *</label>
+                <label className="block text-xs font-semibold text-slate-800 dark:text-slate-300 mb-1">Full Name *</label>
                 <div className="relative">
-                  <User className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <User className="w-4 h-4 text-slate-400 dark:text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
                     required
                     placeholder="Simran Kaur"
                     value={formData.fullName}
                     onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-blue-500"
+                    className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600 dark:focus:border-blue-500"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Email Address *</label>
+                <label className="block text-xs font-semibold text-slate-800 dark:text-slate-300 mb-1">Email Address *</label>
                 <div className="relative">
-                  <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <Mail className="w-4 h-4 text-slate-400 dark:text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="email"
                     required
                     placeholder="simran@company.com"
                     value={formData.email}
                     onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-blue-500"
+                    className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600 dark:focus:border-blue-500"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Temporary Password *</label>
+                <label className="block text-xs font-semibold text-slate-800 dark:text-slate-300 mb-1">Temporary Password *</label>
                 <div className="relative">
-                  <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <Lock className="w-4 h-4 text-slate-400 dark:text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="password"
                     required
                     placeholder="••••••••"
                     value={formData.password}
                     onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-blue-500"
+                    className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600 dark:focus:border-blue-500"
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Role</label>
+                  <label className="block text-xs font-semibold text-slate-800 dark:text-slate-300 mb-1">Role</label>
                   <select
                     value={formData.role}
                     onChange={(e) => setFormData({ ...formData, role: e.target.value as any })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-blue-500"
+                    className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600 dark:focus:border-blue-500"
                   >
                     <option value="agent">Agent</option>
                     <option value="manager">Manager</option>
@@ -532,21 +532,21 @@ Please change your password after first login.`;
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Extension (Optional)</label>
+                  <label className="block text-xs font-semibold text-slate-800 dark:text-slate-300 mb-1">Extension (Optional)</label>
                   <div className="relative">
-                    <Hash className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <Hash className="w-4 h-4 text-slate-400 dark:text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
                     <input
                       type="text"
                       placeholder="Auto (e.g. 101)"
                       value={formData.extension}
                       onChange={(e) => setFormData({ ...formData, extension: e.target.value })}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-100 font-mono focus:outline-none focus:border-blue-500"
+                      className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-900 dark:text-slate-100 font-mono focus:outline-none focus:border-blue-600 dark:focus:border-blue-500"
                     />
                   </div>
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
                 <Button
                   type="button"
                   variant="outline"
@@ -581,37 +581,37 @@ Please change your password after first login.`;
       {/* Success Credentials Modal */}
       {createdUserResult && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl w-full max-w-md p-6 relative">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl w-full max-w-md p-6 relative">
             <div className="flex items-center gap-2.5 mb-4">
-              <div className="p-2 rounded-xl bg-emerald-600/10 border border-emerald-500/20 text-emerald-400">
+              <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-600/10 border border-emerald-200 dark:border-emerald-500/20 text-emerald-600 dark:text-emerald-400">
                 <Check className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-slate-100">User Created Successfully</h3>
-                <p className="text-xs text-slate-400">Share temporary credentials with team member</p>
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">User Created Successfully</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Share temporary credentials with team member</p>
               </div>
             </div>
 
-            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800/80 space-y-2 mb-5 text-xs font-mono">
-              <div className="flex justify-between border-b border-slate-800 pb-1.5">
-                <span className="text-slate-400">Name:</span>
-                <span className="text-slate-200 font-bold">{createdUserResult.fullName}</span>
+            <div className="bg-slate-50 dark:bg-slate-950 p-4 rounded-xl border border-slate-200 dark:border-slate-800/80 space-y-2 mb-5 text-xs font-mono">
+              <div className="flex justify-between border-b border-slate-100 dark:border-slate-800 pb-1.5">
+                <span className="text-slate-500 dark:text-slate-400">Name:</span>
+                <span className="text-slate-900 dark:text-slate-200 font-bold">{createdUserResult.fullName}</span>
               </div>
-              <div className="flex justify-between border-b border-slate-800 pb-1.5">
-                <span className="text-slate-400">Login Email:</span>
-                <span className="text-blue-400 font-bold">{createdUserResult.email}</span>
+              <div className="flex justify-between border-b border-slate-100 dark:border-slate-800 pb-1.5">
+                <span className="text-slate-500 dark:text-slate-400">Login Email:</span>
+                <span className="text-blue-600 dark:text-blue-400 font-bold">{createdUserResult.email}</span>
               </div>
-              <div className="flex justify-between border-b border-slate-800 pb-1.5">
-                <span className="text-slate-400">Temp Password:</span>
-                <span className="text-emerald-400 font-bold">{createdUserResult.password}</span>
+              <div className="flex justify-between border-b border-slate-100 dark:border-slate-800 pb-1.5">
+                <span className="text-slate-500 dark:text-slate-400">Temp Password:</span>
+                <span className="text-emerald-600 dark:text-emerald-400 font-bold">{createdUserResult.password}</span>
               </div>
-              <div className="flex justify-between border-b border-slate-800 pb-1.5">
-                <span className="text-slate-400">Assigned Ext:</span>
-                <span className="text-slate-200">{createdUserResult.extension}</span>
+              <div className="flex justify-between border-b border-slate-100 dark:border-slate-800 pb-1.5">
+                <span className="text-slate-500 dark:text-slate-400">Assigned Ext:</span>
+                <span className="text-slate-900 dark:text-slate-200">{createdUserResult.extension}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Agent Identity:</span>
-                <span className="text-slate-300">{createdUserResult.twilioIdentity}</span>
+                <span className="text-slate-500 dark:text-slate-400">Agent Identity:</span>
+                <span className="text-slate-700 dark:text-slate-300">{createdUserResult.twilioIdentity}</span>
               </div>
             </div>
 

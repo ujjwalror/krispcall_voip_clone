@@ -82,15 +82,15 @@ export default function MissedCallsPage() {
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+      <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4">
         <div>
-          <h1 className="text-xl font-bold text-slate-100 flex items-center gap-2">
+          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
             <span>Missed Calls Queue</span>
             <Badge variant={missedCalls.length > 0 ? 'rose' : 'emerald'} size="md" pulse={missedCalls.length > 0}>
               {missedCalls.length} UNHANDLED
             </Badge>
           </h1>
-          <p className="text-xs text-slate-400">Incoming calls that went unanswered by agents. Instant callback & block control launcher.</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">Incoming calls that went unanswered by agents. Instant callback & block control launcher.</p>
         </div>
         <Button variant="outline" size="sm" onClick={loadMissedCalls} disabled={isLoading}>
           <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
@@ -100,14 +100,14 @@ export default function MissedCallsPage() {
 
       <div className="space-y-3">
         {isLoading ? (
-          <Card className="p-8 text-center text-xs text-slate-400">
-            <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-rose-400" />
+          <Card className="p-8 text-center text-xs text-slate-500 dark:text-slate-400">
+            <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-rose-500 dark:text-rose-400" />
             Loading missed call logs...
           </Card>
         ) : missedCalls.length === 0 ? (
-          <Card className="p-8 text-center text-slate-400 space-y-2">
-            <PhoneMissed className="w-8 h-8 text-slate-600 mx-auto" />
-            <p className="text-sm font-semibold text-slate-300">No Missed Calls</p>
+          <Card className="p-8 text-center text-slate-500 dark:text-slate-400 space-y-2">
+            <PhoneMissed className="w-8 h-8 text-slate-400 dark:text-slate-600 mx-auto" />
+            <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">No Missed Calls</p>
             <p className="text-xs text-slate-500">Great job! All incoming business calls have been handled by agents.</p>
           </Card>
         ) : (
@@ -117,15 +117,15 @@ export default function MissedCallsPage() {
             const isBlocked = Boolean(blockedNumbersMap[normalizedFrom]);
 
             return (
-              <Card key={item.id} hoverable className="border-rose-900/30">
+              <Card key={item.id} hoverable className="border-rose-200/80 dark:border-rose-900/30">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div className="flex items-center gap-3.5">
-                    <div className="p-2.5 rounded-xl bg-rose-500/10 text-rose-400 shrink-0">
+                    <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-500/10 text-rose-600 dark:text-rose-400 shrink-0">
                       <PhoneMissed className="w-5 h-5" />
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-semibold text-slate-100 font-mono">
+                        <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100 font-mono">
                           From: {item.from_number}
                         </h3>
                         {isBlocked && (
@@ -135,7 +135,7 @@ export default function MissedCallsPage() {
                           </Badge>
                         )}
                       </div>
-                      <p className="text-xs text-slate-400 mt-0.5">
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                         {formatCallTime(item.created_at, profile?.timezone, profile?.time_format)}
                         {agentName && ` • Ringing target: ${agentName}`}
                       </p>

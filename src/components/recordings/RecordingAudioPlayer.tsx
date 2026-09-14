@@ -150,7 +150,7 @@ export function RecordingAudioPlayer({
   const progressPercent = totalDuration > 0 ? (currentTime / totalDuration) * 100 : 0;
 
   return (
-    <div className="flex flex-col gap-2 bg-slate-950/80 p-3 rounded-xl border border-slate-800/80 backdrop-blur-md w-full">
+    <div className="flex flex-col gap-2 bg-slate-50 dark:bg-slate-950/80 p-3 rounded-xl border border-slate-200 dark:border-slate-800/80 backdrop-blur-md w-full">
       <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 sm:gap-3">
         {/* Play / Pause / Replay Button */}
         <button
@@ -189,7 +189,7 @@ export function RecordingAudioPlayer({
         <div
           ref={waveformRef}
           onClick={handleSeek}
-          className="flex-1 flex items-center gap-0.5 h-10 px-2 cursor-pointer group rounded-lg hover:bg-slate-900/50 transition-colors relative"
+          className="flex-1 flex items-center gap-0.5 h-10 px-2 cursor-pointer group rounded-lg hover:bg-slate-100 dark:hover:bg-slate-900/50 transition-colors relative"
           title="Click to seek"
         >
           {waveformBars.map((height, idx) => {
@@ -205,8 +205,8 @@ export function RecordingAudioPlayer({
                   style={{ height: `${height}%` }}
                   className={`w-full max-w-[4px] rounded-full transition-all duration-150 ${
                     isPlayed
-                      ? 'bg-gradient-to-t from-blue-600 to-cyan-400 opacity-100 shadow-[0_0_8px_rgba(59,130,246,0.5)]'
-                      : 'bg-slate-700/60 opacity-60 group-hover:bg-slate-600'
+                      ? 'bg-gradient-to-t from-blue-600 to-cyan-500 opacity-100 shadow-[0_0_8px_rgba(59,130,246,0.5)]'
+                      : 'bg-slate-300 dark:bg-slate-700/60 opacity-60 group-hover:bg-slate-400 dark:group-hover:bg-slate-600'
                   } ${isPlaying && isPlayed ? 'animate-pulse' : ''}`}
                 />
               </div>
@@ -215,7 +215,7 @@ export function RecordingAudioPlayer({
         </div>
 
         {/* Speed Controls */}
-        <div className="flex items-center gap-1 bg-slate-900/90 p-1 rounded-lg border border-slate-800">
+        <div className="flex items-center gap-1 bg-white dark:bg-slate-900/90 p-1 rounded-lg border border-slate-200 dark:border-slate-800">
           <Gauge className="w-3 h-3 text-slate-400 ml-1 hidden sm:block" />
           {SPEED_OPTIONS.map((speed) => (
             <button
@@ -224,7 +224,7 @@ export function RecordingAudioPlayer({
               className={`px-1.5 py-0.5 text-[10px] font-mono rounded transition-colors ${
                 playbackRate === speed
                   ? 'bg-blue-600 text-white font-bold'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
               }`}
               title={`Playback Speed ${speed}x`}
             >
@@ -236,20 +236,20 @@ export function RecordingAudioPlayer({
         {/* Volume / Mute Toggle */}
         <button
           onClick={handleMuteToggle}
-          className="p-1.5 text-slate-400 hover:text-slate-200 transition-colors"
+          className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 transition-colors"
           title={isMuted ? 'Unmute Audio' : 'Mute Audio'}
         >
-          {isMuted ? <VolumeX className="w-4 h-4 text-rose-400" /> : <Volume2 className="w-4 h-4" />}
+          {isMuted ? <VolumeX className="w-4 h-4 text-rose-600 dark:text-rose-400" /> : <Volume2 className="w-4 h-4" />}
         </button>
       </div>
 
       {/* Time Indicator Bar */}
-      <div className="flex items-center justify-between px-1 text-[10px] font-mono text-slate-400">
+      <div className="flex items-center justify-between px-1 text-[10px] font-mono text-slate-500 dark:text-slate-400">
         <span className="flex items-center gap-1.5">
-          <span className={`w-1.5 h-1.5 rounded-full ${isPlaying ? 'bg-emerald-400 animate-ping' : 'bg-slate-600'}`} />
+          <span className={`w-1.5 h-1.5 rounded-full ${isPlaying ? 'bg-emerald-500 animate-ping' : 'bg-slate-400 dark:bg-slate-600'}`} />
           <span>{formatDuration(Math.round(currentTime))}</span>
         </span>
-        <span className="text-slate-500">/</span>
+        <span className="text-slate-400 dark:text-slate-500">/</span>
         <span>{formatDuration(totalDuration)}</span>
       </div>
     </div>

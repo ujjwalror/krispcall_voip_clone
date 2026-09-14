@@ -107,11 +107,11 @@ export function PresenceSelector() {
       </button>
 
       {isOpen && (
-        <div className="origin-top-right absolute right-0 mt-2 w-48 rounded-xl shadow-2xl bg-slate-900 border border-slate-800 backdrop-blur-xl z-50 p-1 space-y-0.5">
+        <div className="origin-top-right absolute right-0 mt-2 w-48 rounded-xl shadow-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 z-50 p-1 space-y-0.5">
           <button
             onClick={() => handleStatusChange('available')}
             className={`w-full flex items-center justify-between px-3 py-2 text-xs rounded-lg transition-colors ${
-              status === 'available' ? 'bg-emerald-500/10 text-emerald-400 font-semibold' : 'text-slate-300 hover:bg-slate-800'
+              status === 'available' ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 font-semibold' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
             <span className="flex items-center gap-2">
@@ -124,7 +124,7 @@ export function PresenceSelector() {
           <button
             onClick={() => handleStatusChange('busy')}
             className={`w-full flex items-center justify-between px-3 py-2 text-xs rounded-lg transition-colors ${
-              status === 'busy' ? 'bg-amber-500/10 text-amber-400 font-semibold' : 'text-slate-300 hover:bg-slate-800'
+              status === 'busy' ? 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-semibold' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
             <span className="flex items-center gap-2">
@@ -137,7 +137,7 @@ export function PresenceSelector() {
           <button
             onClick={() => handleStatusChange('offline')}
             className={`w-full flex items-center justify-between px-3 py-2 text-xs rounded-lg transition-colors ${
-              status === 'offline' ? 'bg-slate-500/10 text-slate-400 font-semibold' : 'text-slate-300 hover:bg-slate-800'
+              status === 'offline' ? 'bg-slate-100 dark:bg-slate-500/10 text-slate-700 dark:text-slate-400 font-semibold' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
             <span className="flex items-center gap-2">

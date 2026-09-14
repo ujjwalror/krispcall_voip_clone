@@ -70,15 +70,15 @@ export default function AdminPage() {
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
         <div>
-          <h1 className="text-xl font-bold text-slate-100 flex items-center gap-2">
+          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
             <span>Administration & Team Management</span>
             <Badge variant="purple" size="md">
               ADMIN ACCESS
             </Badge>
           </h1>
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-slate-500 dark:text-slate-400">
             Manage internal team agents, role assignments, and organization business numbers.
           </p>
         </div>
@@ -94,17 +94,17 @@ export default function AdminPage() {
           <Card>
             <CardHeader>
               <CardTitle className="text-sm flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-purple-400" />
+                <ShieldCheck className="w-4 h-4 text-purple-600 dark:text-purple-400" />
                 <span>Authorized Staff Members</span>
               </CardTitle>
             </CardHeader>
-            <div className="divide-y divide-slate-800">
+            <div className="divide-y divide-slate-100 dark:divide-slate-800">
               {users.map((user) => (
                 <div key={user.id} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div className="flex items-center gap-3">
                     <Avatar name={user.name} status={user.status} size="md" />
                     <div>
-                      <p className="text-xs font-bold text-slate-100 flex items-center gap-2 flex-wrap">
+                      <p className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2 flex-wrap">
                         <span>{user.name}</span>
                         {user.role === 'admin' && (
                           <Badge variant="purple" size="sm">
@@ -112,11 +112,11 @@ export default function AdminPage() {
                           </Badge>
                         )}
                       </p>
-                      <p className="text-[10px] text-slate-400">{user.email}</p>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400">{user.email}</p>
                     </div>
                   </div>
                   <div className="flex items-center justify-between sm:justify-end gap-2 pt-1 sm:pt-0">
-                    <span className="text-[10px] font-mono text-slate-500">ID: {user.identity}</span>
+                    <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">ID: {user.identity}</span>
                     <Button variant="ghost" size="sm">
                       Edit Role
                     </Button>
@@ -133,23 +133,23 @@ export default function AdminPage() {
             <CardHeader>
               <div className="flex items-center justify-between w-full">
                 <CardTitle className="text-sm flex items-center gap-2">
-                  <Phone className="w-4 h-4 text-emerald-400" />
+                  <Phone className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                   <span>Business Numbers</span>
                 </CardTitle>
                 <button
                   onClick={fetchBusinessNumbers}
-                  className="text-slate-400 hover:text-slate-200 transition-colors p-1"
+                  className="text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 transition-colors p-1"
                   title="Refresh business numbers"
                 >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isLoadingNumbers ? 'animate-spin text-blue-400' : ''}`} />
+                  <RefreshCw className={`w-3.5 h-3.5 ${isLoadingNumbers ? 'animate-spin text-blue-600 dark:text-blue-400' : ''}`} />
                 </button>
               </div>
             </CardHeader>
 
             <div className="space-y-3">
               {isLoadingNumbers ? (
-                <div className="p-4 text-center text-xs text-slate-400">
-                  <RefreshCw className="w-4 h-4 animate-spin mx-auto mb-1.5 text-emerald-400" />
+                <div className="p-4 text-center text-xs text-slate-500 dark:text-slate-400">
+                  <RefreshCw className="w-4 h-4 animate-spin mx-auto mb-1.5 text-emerald-600 dark:text-emerald-400" />
                   <span>Loading business lines...</span>
                 </div>
               ) : phoneNumbers.length === 0 ? (
@@ -164,10 +164,10 @@ export default function AdminPage() {
                   return (
                     <div
                       key={num.id || num.phone_number}
-                      className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2 hover:border-slate-700 transition-colors"
+                      className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 space-y-2 hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-mono font-bold text-slate-100 tracking-wide">
+                        <span className="text-sm font-mono font-bold text-slate-900 dark:text-slate-100 tracking-wide">
                           {formatted}
                         </span>
                         {isPrimary && (
@@ -177,17 +177,17 @@ export default function AdminPage() {
                         )}
                       </div>
 
-                      <div className="flex items-center justify-between text-[11px] text-slate-400 border-t border-slate-800/60 pt-2">
-                        <span className="flex items-center gap-1 text-slate-300">
-                          <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
+                      <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 border-t border-slate-100 dark:border-slate-800/60 pt-2">
+                        <span className="flex items-center gap-1 text-slate-700 dark:text-slate-300">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
                           <span>Incoming & Outgoing</span>
                         </span>
-                        <span className="text-[10px] text-slate-500">
+                        <span className="text-[10px] text-slate-400 dark:text-slate-500">
                           {num.friendly_name || 'Business Line'}
                         </span>
                       </div>
 
-                      <p className="text-[10px] text-slate-400">
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400">
                         Used for incoming and outgoing calls
                       </p>
                     </div>
@@ -197,9 +197,9 @@ export default function AdminPage() {
             </div>
           </Card>
 
-          <Card className="bg-slate-900/40">
-            <div className="flex items-center gap-2 text-xs text-slate-400">
-              <Lock className="w-4 h-4 text-blue-400 shrink-0" />
+          <Card className="bg-slate-50 dark:bg-slate-900/40">
+            <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+              <Lock className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
               <span>Public signup disabled. Workspace numbers and users are managed by Admin.</span>
             </div>
           </Card>

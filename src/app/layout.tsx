@@ -42,7 +42,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className={`${inter.variable} bg-slate-950 text-slate-100 antialiased`}>
+      <body className={`${inter.variable} bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased transition-colors`}>
         <ThemeProvider>
           <AuthProvider>{children}</AuthProvider>
         </ThemeProvider>

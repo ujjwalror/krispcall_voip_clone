@@ -169,10 +169,10 @@ export default function CallsPage() {
   return (
     <div className="space-y-6 w-full max-w-full min-w-0">
       {/* Header & Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4 w-full min-w-0">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4 w-full min-w-0">
         <div className="min-w-0">
-          <h1 className="text-xl font-bold text-slate-100 truncate">Call History & Logs</h1>
-          <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">
+          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100 truncate">Call History & Logs</h1>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
             Real-time call logs with direct block list controls for inbound and outbound calls.
           </p>
         </div>
@@ -191,7 +191,7 @@ export default function CallsPage() {
       </div>
 
       {/* Filter Toolbar */}
-      <Card className="p-3.5 sm:p-4 bg-slate-900/60 border-slate-800 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4 w-full min-w-0">
+      <Card className="p-3.5 sm:p-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4 w-full min-w-0">
         {/* Search Input */}
         <div className="relative w-full sm:w-72 min-w-0">
           <Input
@@ -206,11 +206,11 @@ export default function CallsPage() {
         {/* Filter Selectors (2-Column Grid on Mobile, Flex on Desktop) */}
         <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 sm:gap-3 w-full sm:w-auto min-w-0">
           <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-1.5 min-w-0">
-            <span className="text-[11px] text-slate-400 font-medium truncate">Direction:</span>
+            <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium truncate">Direction:</span>
             <select
               value={directionFilter}
               onChange={(e: any) => setDirectionFilter(e.target.value)}
-              className="w-full sm:w-auto bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-200 p-2 outline-none focus:border-blue-500 transition-colors"
+              className="w-full sm:w-auto bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-200 p-2 outline-none focus:border-blue-600 dark:focus:border-blue-500 transition-colors"
             >
               <option value="all">All Directions</option>
               <option value="outbound">Outgoing</option>
@@ -219,11 +219,11 @@ export default function CallsPage() {
           </div>
 
           <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-1.5 min-w-0">
-            <span className="text-[11px] text-slate-400 font-medium truncate">Status:</span>
+            <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium truncate">Status:</span>
             <select
               value={statusFilter}
               onChange={(e: any) => setStatusFilter(e.target.value)}
-              className="w-full sm:w-auto bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-200 p-2 outline-none focus:border-blue-500 transition-colors"
+              className="w-full sm:w-auto bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-200 p-2 outline-none focus:border-blue-600 dark:focus:border-blue-500 transition-colors"
             >
               <option value="all">All Statuses</option>
               <option value="completed">Completed</option>
@@ -238,8 +238,8 @@ export default function CallsPage() {
       <Card className="p-0 overflow-hidden w-full min-w-0">
         {/* Desktop Table View */}
         <div className="hidden md:block overflow-x-auto">
-          <table className="w-full text-left text-xs text-slate-300">
-            <thead className="bg-slate-950/80 text-slate-400 uppercase font-semibold text-[10px] tracking-wider border-b border-slate-800">
+          <table className="w-full text-left text-xs text-slate-700 dark:text-slate-300">
+            <thead className="bg-slate-50 dark:bg-slate-950/80 text-slate-600 dark:text-slate-400 uppercase font-semibold text-[10px] tracking-wider border-b border-slate-200 dark:border-slate-800">
               <tr>
                 <th className="px-5 py-3.5">Direction & Number</th>
                 <th className="px-5 py-3.5">Agent / User</th>
@@ -249,11 +249,11 @@ export default function CallsPage() {
                 <th className="px-5 py-3.5 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/80">
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
               {isLoading ? (
                 <tr>
                   <td colSpan={6} className="px-5 py-8 text-center text-slate-500">
-                    <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-blue-400" />
+                    <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-blue-600 dark:text-blue-400" />
                     <span>Loading call history from database...</span>
                   </td>
                 </tr>
@@ -273,18 +273,18 @@ export default function CallsPage() {
                   const agentName = log.profiles?.full_name || 'Agent';
 
                   return (
-                    <tr key={log.id} className="hover:bg-slate-800/40 transition-colors">
+                    <tr key={log.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
                       <td className="px-5 py-4">
                         <div className="flex items-center gap-3">
                           <div
                             className={`p-2 rounded-lg ${
                               log.status === 'blocked' || isBlocked
-                                ? 'bg-rose-950/80 text-rose-400 border border-rose-800/80'
+                                ? 'bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-800/80'
                                 : isMissed
-                                ? 'bg-rose-500/10 text-rose-400'
+                                ? 'bg-rose-50 dark:bg-rose-500/10 text-rose-600 dark:text-rose-400'
                                 : isOutbound
-                                ? 'bg-blue-500/10 text-blue-400'
-                                : 'bg-emerald-500/10 text-emerald-400'
+                                ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400'
+                                : 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
                             }`}
                           >
                             {isMissed ? (
@@ -297,7 +297,7 @@ export default function CallsPage() {
                           </div>
                           <div>
                             <div className="flex items-center gap-2">
-                              <p className="font-semibold text-slate-100 font-mono">
+                              <p className="font-semibold text-slate-900 dark:text-slate-100 font-mono">
                                 {isOutbound ? `To: ${log.to_number}` : `From: ${log.from_number}`}
                               </p>
                               {isBlocked && (
@@ -307,7 +307,7 @@ export default function CallsPage() {
                                 </Badge>
                               )}
                             </div>
-                            <p className="text-[10px] text-slate-400 uppercase font-mono mt-0.5">
+                            <p className="text-[10px] text-slate-500 dark:text-slate-400 uppercase font-mono mt-0.5">
                               {log.direction} Call
                             </p>
                           </div>
@@ -316,18 +316,18 @@ export default function CallsPage() {
                       <td className="px-5 py-4">
                         <div className="flex items-center gap-2">
                           <Avatar name={agentName} size="sm" />
-                          <span className="font-medium text-slate-200">{agentName}</span>
+                          <span className="font-medium text-slate-900 dark:text-slate-200">{agentName}</span>
                         </div>
                       </td>
                       <td className="px-5 py-4">{getStatusBadge(log.status)}</td>
                       <td className="px-5 py-4 font-mono">
                         {log.duration_seconds && log.duration_seconds > 0 ? (
-                          <span className="text-slate-200">{formatDuration(log.duration_seconds)}</span>
+                          <span className="text-slate-900 dark:text-slate-200">{formatDuration(log.duration_seconds)}</span>
                         ) : (
-                          <span className="text-slate-500">00:00</span>
+                          <span className="text-slate-400 dark:text-slate-500">00:00</span>
                         )}
                       </td>
-                      <td className="px-5 py-4 text-slate-400">
+                      <td className="px-5 py-4 text-slate-500 dark:text-slate-400">
                         {formatCallTime(log.created_at, profile?.timezone, profile?.time_format)}
                       </td>
                       <td className="px-5 py-4 text-right">
@@ -336,26 +336,26 @@ export default function CallsPage() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/40"
+                              className="text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
                               onClick={() => handleUnblockPhone(targetNumber)}
                             >
-                              <Ban className="w-3.5 h-3.5 text-emerald-400" />
+                              <Ban className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                               <span>Unblock</span>
                             </Button>
                           ) : (
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="text-amber-400 hover:text-amber-300 hover:bg-amber-950/40"
+                              className="text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/40"
                               onClick={() => setBlockingPhone(targetNumber)}
                             >
-                              <Ban className="w-3.5 h-3.5 text-amber-400" />
+                              <Ban className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
                               <span>Block Number</span>
                             </Button>
                           )}
 
                           <Link href={`/phone?number=${encodeURIComponent(targetNumber)}`}>
-                            <Button variant="ghost" size="sm" className="text-blue-400 hover:text-blue-300">
+                            <Button variant="ghost" size="sm" className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300">
                               <PhoneCall className="w-3.5 h-3.5" />
                               <span>Redial</span>
                             </Button>
@@ -371,10 +371,10 @@ export default function CallsPage() {
         </div>
 
         {/* Mobile Card View */}
-        <div className="block md:hidden divide-y divide-slate-800">
+        <div className="block md:hidden divide-y divide-slate-100 dark:divide-slate-800">
           {isLoading ? (
             <div className="p-8 text-center text-slate-500">
-              <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-blue-400" />
+              <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-blue-600 dark:text-blue-400" />
               <span>Loading call history...</span>
             </div>
           ) : calls.length === 0 ? (
@@ -391,18 +391,18 @@ export default function CallsPage() {
               const agentName = log.profiles?.full_name || 'Agent';
 
               return (
-                <div key={log.id} className="p-3.5 sm:p-4 space-y-3 bg-slate-900/60 w-full min-w-0">
+                <div key={log.id} className="p-3.5 sm:p-4 space-y-3 bg-white dark:bg-slate-900/60 w-full min-w-0">
                   <div className="flex items-start justify-between gap-2.5 w-full min-w-0">
                     <div className="flex items-center gap-2.5 min-w-0 flex-1">
                       <div
                         className={`p-2 rounded-lg shrink-0 ${
                           log.status === 'blocked' || isBlocked
-                            ? 'bg-rose-950/80 text-rose-400 border border-rose-800/80'
+                            ? 'bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-800/80'
                             : isMissed
-                            ? 'bg-rose-500/10 text-rose-400'
+                            ? 'bg-rose-50 dark:bg-rose-500/10 text-rose-600 dark:text-rose-400'
                             : isOutbound
-                            ? 'bg-blue-500/10 text-blue-400'
-                            : 'bg-emerald-500/10 text-emerald-400'
+                            ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400'
+                            : 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
                         }`}
                       >
                         {isMissed ? (
@@ -415,7 +415,7 @@ export default function CallsPage() {
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <p className="font-semibold text-slate-100 font-mono text-xs sm:text-sm truncate max-w-full">
+                          <p className="font-semibold text-slate-900 dark:text-slate-100 font-mono text-xs sm:text-sm truncate max-w-full">
                             {isOutbound ? `To: ${log.to_number}` : `From: ${log.from_number}`}
                           </p>
                           {isBlocked && (
@@ -425,7 +425,7 @@ export default function CallsPage() {
                             </Badge>
                           )}
                         </div>
-                        <p className="text-[10px] text-slate-400 font-mono mt-0.5 truncate">
+                        <p className="text-[10px] text-slate-500 dark:text-slate-400 font-mono mt-0.5 truncate">
                           {formatCallTime(log.created_at, profile?.timezone, profile?.time_format)} • {log.direction.toUpperCase()}
                         </p>
                       </div>
@@ -433,12 +433,12 @@ export default function CallsPage() {
                     <div className="shrink-0">{getStatusBadge(log.status)}</div>
                   </div>
 
-                  <div className="flex items-center justify-between text-xs text-slate-400 pt-2 border-t border-slate-800/60 w-full min-w-0">
+                  <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 pt-2 border-t border-slate-100 dark:border-slate-800/60 w-full min-w-0">
                     <div className="flex items-center gap-1.5 truncate max-w-[60%]">
                       <Avatar name={agentName} size="sm" />
                       <span className="truncate">{agentName}</span>
                     </div>
-                    <span className="font-mono text-slate-300 shrink-0">
+                    <span className="font-mono text-slate-700 dark:text-slate-300 shrink-0">
                       Duration: {log.duration_seconds && log.duration_seconds > 0 ? formatDuration(log.duration_seconds) : '00:00'}
                     </span>
                   </div>
@@ -448,7 +448,7 @@ export default function CallsPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="text-emerald-400 hover:bg-emerald-950/40 text-xs flex-1 sm:flex-none justify-center"
+                        className="text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-xs flex-1 sm:flex-none justify-center"
                         onClick={() => handleUnblockPhone(targetNumber)}
                       >
                         <Ban className="w-3.5 h-3.5" />
@@ -458,7 +458,7 @@ export default function CallsPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="text-amber-400 hover:bg-amber-950/40 text-xs flex-1 sm:flex-none justify-center"
+                        className="text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 text-xs flex-1 sm:flex-none justify-center"
                         onClick={() => setBlockingPhone(targetNumber)}
                       >
                         <Ban className="w-3.5 h-3.5" />
@@ -468,7 +468,7 @@ export default function CallsPage() {
 
                     <Link href={`/phone?number=${encodeURIComponent(targetNumber)}`} className="flex-1 sm:flex-none">
                       <Button variant="outline" size="sm" className="text-xs w-full justify-center">
-                        <PhoneCall className="w-3.5 h-3.5 text-blue-400" />
+                        <PhoneCall className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                         <span>Call Back</span>
                       </Button>
                     </Link>

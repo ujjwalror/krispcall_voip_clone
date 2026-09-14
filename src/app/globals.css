@@ -1,52 +1,30 @@
 @import "tailwindcss";
 
+@variant dark (&:where(.dark, .dark *));
+
 @layer base {
   :root, html.dark {
     color-scheme: dark;
-    --color-slate-950: #090d16;
-    --color-slate-900: #111827;
-    --color-slate-850: #1a2234;
-    --color-slate-800: #1f2937;
-    --color-slate-700: #374151;
-    --color-slate-600: #4b5563;
-    --color-slate-500: #6b7280;
-    --color-slate-400: #9ca3af;
-    --color-slate-300: #d1d5db;
-    --color-slate-200: #e5e7eb;
-    --color-slate-100: #f3f4f6;
-    --color-slate-50: #f9fafb;
 
     --bg-main: #090d16;
-    --bg-surface: #111827;
-    --bg-surface-hover: #1f2937;
-    --border-color: #1f2937;
-    --text-primary: #f3f4f6;
-    --text-secondary: #9ca3af;
-    --text-muted: #6b7280;
+    --bg-surface: #0f172a;
+    --bg-surface-hover: #1e293b;
+    --border-color: #1e293b;
+    --text-primary: #f8fafc;
+    --text-secondary: #94a3b8;
+    --text-muted: #64748b;
   }
 
   html.light {
     color-scheme: light;
-    --color-slate-950: #f8fafc;
-    --color-slate-900: #ffffff;
-    --color-slate-850: #f1f5f9;
-    --color-slate-800: #e2e8f0;
-    --color-slate-700: #cbd5e1;
-    --color-slate-600: #64748b;
-    --color-slate-500: #475569;
-    --color-slate-400: #334155;
-    --color-slate-300: #1e293b;
-    --color-slate-200: #0f172a;
-    --color-slate-100: #020617;
-    --color-slate-50: #000000;
 
     --bg-main: #f8fafc;
     --bg-surface: #ffffff;
     --bg-surface-hover: #f1f5f9;
-    --border-color: #cbd5e1;
-    --text-primary: #020617;
-    --text-secondary: #334155;
-    --text-muted: #475569;
+    --border-color: #e2e8f0;
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --text-muted: #64748b;
   }
 
   body {

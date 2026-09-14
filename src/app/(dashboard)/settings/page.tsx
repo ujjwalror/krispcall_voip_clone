@@ -248,25 +248,25 @@ function SettingsContent() {
   return (
     <div className="space-y-6 max-w-4xl mx-auto pb-12">
       {/* Settings Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
         <div>
-          <h1 className="text-xl font-bold text-slate-100 flex items-center gap-2">
-            <Settings className="w-5 h-5 text-blue-400" />
+          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+            <Settings className="w-5 h-5 text-blue-600 dark:text-blue-400" />
             <span>Settings & Administration</span>
           </h1>
-          <p className="text-xs text-slate-400 mt-0.5">
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
             Manage WebRTC audio devices, workspace preferences, themes, and organization blocklists.
           </p>
         </div>
 
         {/* Settings Navigation Sub-Tabs */}
-        <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-950/80 border border-slate-800 text-xs overflow-x-auto max-w-full shrink-0">
+        <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-100 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 text-xs overflow-x-auto max-w-full shrink-0">
           <button
             onClick={() => handleTabChange('general')}
             className={`px-3.5 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-2 ${
               activeTab === 'general'
                 ? 'bg-blue-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-900'
             }`}
           >
             <Sliders className="w-3.5 h-3.5" />
@@ -277,13 +277,13 @@ function SettingsContent() {
             className={`px-3.5 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-2 ${
               activeTab === 'blocked'
                 ? 'bg-blue-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-900'
             }`}
           >
-            <Ban className="w-3.5 h-3.5 text-rose-400" />
+            <Ban className="w-3.5 h-3.5 text-rose-500 dark:text-rose-400" />
             <span>Blocked Numbers</span>
             {blockedNumbers.length > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full bg-rose-950 text-rose-300 font-mono text-[10px] border border-rose-800">
+              <span className="px-1.5 py-0.2 rounded-full bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 font-mono text-[10px] border border-rose-200 dark:border-rose-800">
                 {blockedNumbers.length}
               </span>
             )}
@@ -297,7 +297,7 @@ function SettingsContent() {
           <Card>
             <CardHeader>
               <CardTitle className="text-sm flex items-center gap-2">
-                <Palette className="w-4 h-4 text-indigo-400" />
+                <Palette className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
                 <span>Appearance & Color Theme</span>
               </CardTitle>
             </CardHeader>
@@ -306,16 +306,16 @@ function SettingsContent() {
                 onClick={() => setTheme('dark')}
                 className={`p-4 rounded-xl border flex items-center gap-3 text-left transition-all ${
                   theme === 'dark'
-                    ? 'bg-slate-900 border-blue-500 ring-1 ring-blue-500'
-                    : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
+                    ? 'bg-white dark:bg-slate-900 border-blue-600 dark:border-blue-500 ring-1 ring-blue-600 dark:ring-blue-500 shadow-sm'
+                    : 'bg-slate-50 dark:bg-slate-950/60 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
                 }`}
               >
-                <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 text-amber-400">
+                <div className="p-2.5 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-amber-500 dark:text-amber-400">
                   <Moon className="w-5 h-5" />
                 </div>
                 <div>
-                  <p className="text-xs font-bold text-slate-100">Dark Interface</p>
-                  <p className="text-[11px] text-slate-400">Classic high-contrast dark theme for low-light environments.</p>
+                  <p className="text-xs font-bold text-slate-900 dark:text-slate-100">Dark Interface</p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">Classic high-contrast dark theme for low-light environments.</p>
                 </div>
               </button>
 
@@ -323,16 +323,16 @@ function SettingsContent() {
                 onClick={() => setTheme('light')}
                 className={`p-4 rounded-xl border flex items-center gap-3 text-left transition-all ${
                   theme === 'light'
-                    ? 'bg-slate-900 border-blue-500 ring-1 ring-blue-500'
-                    : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
+                    ? 'bg-white dark:bg-slate-900 border-blue-600 dark:border-blue-500 ring-1 ring-blue-600 dark:ring-blue-500 shadow-sm'
+                    : 'bg-slate-50 dark:bg-slate-950/60 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
                 }`}
               >
-                <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 text-indigo-500">
+                <div className="p-2.5 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-indigo-600 dark:text-indigo-500">
                   <Sun className="w-5 h-5" />
                 </div>
                 <div>
-                  <p className="text-xs font-bold text-slate-100">Light Interface</p>
-                  <p className="text-[11px] text-slate-400">Clean, crisp light SaaS dashboard theme for daytime productivity.</p>
+                  <p className="text-xs font-bold text-slate-900 dark:text-slate-100">Light Interface</p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">Clean, crisp light SaaS dashboard theme for daytime productivity.</p>
                 </div>
               </button>
             </div>
@@ -342,26 +342,26 @@ function SettingsContent() {
           <Card>
             <CardHeader>
               <CardTitle className="text-sm flex items-center gap-2">
-                <Globe className="w-4 h-4 text-emerald-400" />
+                <Globe className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                 <span>Regional & Time Display Preferences</span>
               </CardTitle>
             </CardHeader>
             <div className="space-y-4">
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-slate-500 dark:text-slate-400">
                 Configure your personal time zone and 12-hour or 24-hour time format. All call logs, recordings, and message timestamps update dynamically for your user profile.
               </p>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {/* Time Zone Selection */}
                 <div>
-                  <label className="text-xs font-semibold text-slate-300 block mb-1.5 flex items-center gap-1.5">
-                    <Clock className="w-3.5 h-3.5 text-blue-400" />
+                  <label className="text-xs font-semibold text-slate-800 dark:text-slate-300 block mb-1.5 flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                     <span>Time Zone</span>
                   </label>
                   <select
                     value={selectedTimezone}
                     onChange={(e) => setSelectedTimezone(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-100 p-2.5 outline-none focus:border-blue-500 transition-colors"
+                    className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-900 dark:text-slate-100 p-2.5 outline-none focus:border-blue-600 dark:focus:border-blue-500 transition-colors"
                   >
                     <option value="AUTO">
                       Automatic — Device Time Zone ({getFormattedTimeZoneLabel(defaultBrowserTz, defaultBrowserTz)})
@@ -377,11 +377,11 @@ function SettingsContent() {
                   <p className="text-[10px] text-slate-500 mt-1">
                     {selectedTimezone === 'AUTO' ? (
                       <span>
-                        Automatically using device timezone: <span className="font-mono text-slate-400">{defaultBrowserTz}</span>
+                        Automatically using device timezone: <span className="font-mono text-slate-700 dark:text-slate-400">{defaultBrowserTz}</span>
                       </span>
                     ) : (
                       <span>
-                        Manual override active: <span className="font-mono text-slate-300">{selectedTimezone}</span> (Device: {defaultBrowserTz})
+                        Manual override active: <span className="font-mono text-slate-900 dark:text-slate-300">{selectedTimezone}</span> (Device: {defaultBrowserTz})
                       </span>
                     )}
                   </p>
@@ -389,17 +389,17 @@ function SettingsContent() {
 
                 {/* 12-Hour vs 24-Hour Time Format Selection */}
                 <div>
-                  <label className="text-xs font-semibold text-slate-300 block mb-1.5">
+                  <label className="text-xs font-semibold text-slate-800 dark:text-slate-300 block mb-1.5">
                     Time Format
                   </label>
-                  <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-slate-950/80 border border-slate-800">
+                  <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-slate-100 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800">
                     <button
                       type="button"
                       onClick={() => setSelectedTimeFormat('12h')}
                       className={`py-2 px-3 rounded-lg text-xs font-semibold transition-all ${
                         selectedTimeFormat === '12h'
                           ? 'bg-blue-600 text-white shadow'
-                          : 'text-slate-400 hover:text-slate-200'
+                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                       }`}
                     >
                       12-hour (3:45 PM)
@@ -410,7 +410,7 @@ function SettingsContent() {
                       className={`py-2 px-3 rounded-lg text-xs font-semibold transition-all ${
                         selectedTimeFormat === '24h'
                           ? 'bg-blue-600 text-white shadow'
-                          : 'text-slate-400 hover:text-slate-200'
+                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                       }`}
                     >
                       24-hour (15:45)
@@ -420,9 +420,9 @@ function SettingsContent() {
               </div>
 
               {/* Save Controls & Feedback */}
-              <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+              <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
                 {regionalMessage ? (
-                  <p className="text-xs text-emerald-400 font-medium flex items-center gap-1.5">
+                  <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5" />
                     <span>{regionalMessage}</span>
                   </p>
@@ -455,7 +455,7 @@ function SettingsContent() {
           <Card>
             <CardHeader>
               <CardTitle className="text-sm flex items-center gap-2">
-                <Radio className="w-4 h-4 text-rose-400" />
+                <Radio className="w-4 h-4 text-rose-500 dark:text-rose-400" />
                 <span>Workspace Automatic Call Recording</span>
               </CardTitle>
               {role === 'admin' ? (
@@ -465,15 +465,15 @@ function SettingsContent() {
               )}
             </CardHeader>
             <div className="space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-slate-950/80 border border-slate-800 w-full">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 w-full">
                 <div className="space-y-1.5 w-full sm:pr-4">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs font-bold text-slate-200">Automatic Recording for All Calls</span>
+                    <span className="text-xs font-bold text-slate-900 dark:text-slate-200">Automatic Recording for All Calls</span>
                     <Badge variant={autoRecording ? 'rose' : 'neutral'} size="sm">
                       {autoRecording ? 'AUTO REC ON' : 'AUTO REC OFF'}
                     </Badge>
                   </div>
-                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
                     When enabled, all outbound calls in the workspace default to recording ON. Individual agents can override this setting per-call in the dialer.
                   </p>
                 </div>
@@ -484,8 +484,8 @@ function SettingsContent() {
                     disabled={isSaving || isLoadingSettings}
                     className={`w-full sm:w-auto px-4 py-2.5 rounded-xl text-xs font-bold transition-all border shrink-0 flex items-center justify-center ${
                       autoRecording
-                        ? 'bg-rose-950/90 border-rose-600 text-rose-200 hover:bg-rose-900/90'
-                        : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                        ? 'bg-rose-100 dark:bg-rose-950/90 border-rose-300 dark:border-rose-600 text-rose-700 dark:text-rose-200 hover:bg-rose-200 dark:hover:bg-rose-900/90'
+                        : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
                     }`}
                   >
                     {isSaving ? (
@@ -502,7 +502,7 @@ function SettingsContent() {
               </div>
 
               {message && (
-                <p className="text-xs text-emerald-400 font-medium flex items-center gap-1.5 pt-1">
+                <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1.5 pt-1">
                   <CheckCircle2 className="w-3.5 h-3.5" />
                   <span>{message}</span>
                 </p>
@@ -514,22 +514,22 @@ function SettingsContent() {
           <Card>
             <CardHeader>
               <CardTitle className="text-sm flex items-center gap-2">
-                <Mic className="w-4 h-4 text-blue-400" />
+                <Mic className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                 <span>WebRTC Audio Devices</span>
               </CardTitle>
             </CardHeader>
             <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-xs font-semibold text-slate-300 block mb-1.5">Microphone Device</label>
-                  <select className="w-full bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-200 p-2.5 outline-none focus:border-blue-500">
+                  <label className="text-xs font-semibold text-slate-800 dark:text-slate-300 block mb-1.5">Microphone Device</label>
+                  <select className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-200 p-2.5 outline-none focus:border-blue-600 dark:focus:border-blue-500">
                     <option>MacBook Pro Microphone (Built-in)</option>
                     <option>External USB Headset Microphone</option>
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs font-semibold text-slate-300 block mb-1.5">Speaker / Headset Output</label>
-                  <select className="w-full bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-200 p-2.5 outline-none focus:border-blue-500">
+                  <label className="text-xs font-semibold text-slate-800 dark:text-slate-300 block mb-1.5">Speaker / Headset Output</label>
+                  <select className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-200 p-2.5 outline-none focus:border-blue-600 dark:focus:border-blue-500">
                     <option>MacBook Pro Speakers (Built-in)</option>
                     <option>External Headphones Output</option>
                   </select>
@@ -542,15 +542,15 @@ function SettingsContent() {
           <Card>
             <CardHeader>
               <CardTitle className="text-sm flex items-center gap-2">
-                <Bell className="w-4 h-4 text-amber-400" />
+                <Bell className="w-4 h-4 text-amber-500 dark:text-amber-400" />
                 <span>Inbound Ringtone & Call Alerts</span>
               </CardTitle>
             </CardHeader>
             <div className="space-y-3">
-              <div className="flex items-center justify-between p-3 rounded-lg bg-slate-950/60 border border-slate-800">
+              <div className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800">
                 <div>
-                  <p className="text-xs font-semibold text-slate-200">Play Ringtone for Incoming Calls</p>
-                  <p className="text-[10px] text-slate-400">Audible alert when an incoming PSTN call is routed to your agent identity.</p>
+                  <p className="text-xs font-semibold text-slate-900 dark:text-slate-200">Play Ringtone for Incoming Calls</p>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">Audible alert when an incoming PSTN call is routed to your agent identity.</p>
                 </div>
                 <input type="checkbox" defaultChecked className="w-4 h-4 accent-blue-600 rounded" />
               </div>
@@ -565,10 +565,10 @@ function SettingsContent() {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 w-full">
                 <div>
                   <CardTitle className="text-sm flex items-center gap-2">
-                    <Ban className="w-4 h-4 text-rose-400" />
+                    <Ban className="w-4 h-4 text-rose-500 dark:text-rose-400" />
                     <span>Blocked Numbers Directory</span>
                   </CardTitle>
-                  <p className="text-xs text-slate-400 mt-1">
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                     Organization-level blocklist of saved contacts and unsaved phone numbers.
                   </p>
                 </div>
@@ -594,14 +594,14 @@ function SettingsContent() {
             </CardHeader>
 
             {blockedSuccessMessage && (
-              <div className="p-3 mb-4 rounded-xl bg-emerald-950/80 border border-emerald-700 text-emerald-200 text-xs flex items-center justify-between">
+              <div className="p-3 mb-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/80 border border-emerald-200 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 text-xs flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
                   <span>{blockedSuccessMessage}</span>
                 </div>
                 <button
                   onClick={() => setBlockedSuccessMessage(null)}
-                  className="text-emerald-400 hover:text-emerald-200 ml-2"
+                  className="text-emerald-600 dark:text-emerald-400 hover:text-emerald-900 dark:hover:text-emerald-200 ml-2"
                 >
                   ✕
                 </button>
@@ -609,16 +609,16 @@ function SettingsContent() {
             )}
 
             {isLoadingBlocked ? (
-              <div className="p-12 text-center text-xs text-slate-400">
-                <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-rose-400" />
+              <div className="p-12 text-center text-xs text-slate-500 dark:text-slate-400">
+                <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-rose-500 dark:text-rose-400" />
                 <span>Loading organization blocklist...</span>
               </div>
             ) : blockedNumbers.length === 0 ? (
               <div className="p-12 text-center text-xs text-slate-500 space-y-2">
-                <div className="w-12 h-12 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-center mx-auto text-slate-600">
+                <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 flex items-center justify-center mx-auto text-slate-500">
                   <Ban className="w-6 h-6" />
                 </div>
-                <p className="text-slate-300 font-bold">No Blocked Numbers</p>
+                <p className="text-slate-800 dark:text-slate-300 font-bold">No Blocked Numbers</p>
                 <p className="text-slate-500 max-w-sm mx-auto">
                   {blockedSearchQuery
                     ? `No blocked numbers match your search "${blockedSearchQuery}".`
@@ -634,7 +634,7 @@ function SettingsContent() {
                   return (
                     <div
                       key={item.id}
-                      className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:border-slate-700 transition-colors"
+                      className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
                     >
                       <div className="flex items-start gap-3">
                         <Avatar name={titleName} size="md" />

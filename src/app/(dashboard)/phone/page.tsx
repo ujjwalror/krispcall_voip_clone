@@ -14,10 +14,10 @@ export default function PhonePage() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
-      <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+      <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4">
         <div>
-          <h1 className="text-xl font-bold text-slate-100">Browser WebRTC Dialer</h1>
-          <p className="text-xs text-slate-400">Make and receive business calls directly from your browser.</p>
+          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">Browser WebRTC Dialer</h1>
+          <p className="text-xs text-slate-500 dark:text-slate-400">Make and receive business calls directly from your browser.</p>
         </div>
         <Badge variant="emerald" pulse size="md">
           <Shield className="w-3 h-3" />
@@ -36,28 +36,28 @@ export default function PhonePage() {
           <Card>
             <CardHeader>
               <CardTitle className="text-sm flex items-center gap-2">
-                <Settings className="w-4 h-4 text-blue-400" />
+                <Settings className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                 <span>Audio Device Settings</span>
               </CardTitle>
             </CardHeader>
             <div className="space-y-4">
               <div>
-                <label className="text-xs text-slate-400 font-medium block mb-1.5">Microphone Device</label>
-                <select className="w-full bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-200 p-2.5 outline-none focus:border-blue-500">
+                <label className="text-xs text-slate-500 dark:text-slate-400 font-medium block mb-1.5">Microphone Device</label>
+                <select className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-200 p-2.5 outline-none focus:border-blue-600 dark:focus:border-blue-500">
                   <option>Default - MacBook Pro Microphone (Built-in)</option>
                   <option>External USB Headset Microphone</option>
                 </select>
               </div>
               <div>
-                <label className="text-xs text-slate-400 font-medium block mb-1.5">Speaker / Headset Output</label>
-                <select className="w-full bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-200 p-2.5 outline-none focus:border-blue-500">
+                <label className="text-xs text-slate-500 dark:text-slate-400 font-medium block mb-1.5">Speaker / Headset Output</label>
+                <select className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-900 dark:text-slate-200 p-2.5 outline-none focus:border-blue-600 dark:focus:border-blue-500">
                   <option>Default - MacBook Pro Speakers (Built-in)</option>
                   <option>External Headphones Output</option>
                 </select>
               </div>
-              <div className="flex items-center justify-between pt-2 border-t border-slate-800">
-                <span className="text-xs text-slate-400">Ringtone Volume</span>
-                <span className="text-xs font-mono text-blue-400 font-semibold">80%</span>
+              <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
+                <span className="text-xs text-slate-500 dark:text-slate-400">Ringtone Volume</span>
+                <span className="text-xs font-mono text-blue-600 dark:text-blue-400 font-semibold">80%</span>
               </div>
             </div>
           </Card>
@@ -66,7 +66,7 @@ export default function PhonePage() {
           <Card>
             <CardHeader>
               <CardTitle className="text-sm flex items-center gap-2">
-                <History className="w-4 h-4 text-indigo-400" />
+                <History className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
                 <span>Quick Redial</span>
               </CardTitle>
             </CardHeader>
@@ -74,13 +74,13 @@ export default function PhonePage() {
               {recentDials.map((contact) => (
                 <div
                   key={contact.number}
-                  className="flex items-center justify-between p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 hover:border-slate-700 transition-colors"
+                  className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800/80 hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
                 >
                   <div>
-                    <p className="text-xs font-semibold text-slate-200">{contact.name}</p>
-                    <p className="text-[10px] text-slate-400">{contact.company} • {contact.number}</p>
+                    <p className="text-xs font-semibold text-slate-900 dark:text-slate-200">{contact.name}</p>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400">{contact.company} • {contact.number}</p>
                   </div>
-                  <Button variant="ghost" size="sm" className="text-blue-400 hover:text-blue-300">
+                  <Button variant="ghost" size="sm" className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300">
                     <PhoneCall className="w-3.5 h-3.5" />
                   </Button>
                 </div>
