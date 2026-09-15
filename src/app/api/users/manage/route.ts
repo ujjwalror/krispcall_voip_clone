@@ -116,17 +116,23 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Verify admin / manager permissions
+    // Verify actor authentication & permissions
     const { data: profileData } = await supabase
       .from('profiles')
-      .select('organization_id, role')
+      .select('id, organization_id, role, active')
       .eq('id', user.id)
       .single();
 
-    const profile = profileData as { organization_id?: string; role?: string } | null;
+    const actorProfile = profileData as { id?: string; organization_id?: string; role?: string; active?: boolean } | null;
 
-    if (!profile || !profile.organization_id || !profile.role || !['admin', 'manager'].includes(profile.role)) {
-      return NextResponse.json({ error: 'Forbidden. Admin or Manager role required.' }, { status: 403 });
+    if (
+      !actorProfile ||
+      !actorProfile.organization_id ||
+      !actorProfile.role ||
+      actorProfile.active === false ||
+      !['admin', 'manager'].includes(actorProfile.role)
+    ) {
+      return NextResponse.json({ error: 'Forbidden. Active Admin or Manager role required.' }, { status: 403 });
     }
 
     const body = await request.json();
@@ -134,7 +140,11 @@ export async function POST(request: Request) {
 
     const adminSupabase = createAdminClient();
 
+    // 1. Action: update_routing (ADMIN ONLY)
     if (action === 'update_routing') {
+      if (actorProfile.role !== 'admin') {
+        return NextResponse.json({ error: 'Forbidden. Routing strategy can only be updated by Admins.' }, { status: 403 });
+      }
       if (!['ring_all', 'round_robin'].includes(routingStrategy)) {
         return NextResponse.json({ error: 'Invalid routing strategy' }, { status: 400 });
       }
@@ -142,16 +152,84 @@ export async function POST(request: Request) {
       await (adminSupabase as any)
         .from('organizations')
         .update({ routing_strategy: routingStrategy, updated_at: new Date().toISOString() })
-        .eq('id', profile.organization_id);
+        .eq('id', actorProfile.organization_id);
 
       return NextResponse.json({ success: true, routingStrategy });
     }
 
+    // 2. Action: update_member
     if (action === 'update_member' && userId) {
+      // Fetch target user profile by userId AND same organization_id
+      const { data: targetData } = await (adminSupabase as any)
+        .from('profiles')
+        .select('id, organization_id, role, active, full_name')
+        .eq('id', userId)
+        .eq('organization_id', actorProfile.organization_id)
+        .maybeSingle();
+
+      if (!targetData) {
+        return NextResponse.json({ error: 'Target user not found in your organization.' }, { status: 404 });
+      }
+
+      const targetProfile = targetData as { id: string; organization_id: string; role: string; active: boolean; full_name: string };
+
+      // --- MANAGER AUTHORIZATION RULES ---
+      if (actorProfile.role === 'manager') {
+        // Manager may NOT modify themselves via this API endpoint
+        if (userId === user.id) {
+          return NextResponse.json({ error: 'Forbidden. Managers cannot modify their own profile or role via team management.' }, { status: 403 });
+        }
+
+        // Target MUST be an agent
+        if (targetProfile.role !== 'agent') {
+          return NextResponse.json({ error: 'Forbidden. Managers can only manage Agent accounts.' }, { status: 403 });
+        }
+
+        // Manager may NOT assign role='admin' or role='manager'
+        if (role && role !== 'agent') {
+          return NextResponse.json({ error: 'Forbidden. Managers cannot assign Manager or Admin roles.' }, { status: 403 });
+        }
+      }
+
+      // --- ADMIN AUTHORIZATION RULES & SAFEGUARDS ---
+      if (actorProfile.role === 'admin') {
+        const isTargetAdmin = targetProfile.role === 'admin';
+        const isDeactivatingAdmin = isTargetAdmin && typeof active === 'boolean' && active === false;
+        const isDemotingAdmin = isTargetAdmin && role && role !== 'admin';
+
+        if (isDeactivatingAdmin || isDemotingAdmin) {
+          // Prevent self-deactivation and self-demotion
+          if (userId === user.id) {
+            return NextResponse.json({ error: 'Forbidden. Admins cannot deactivate or demote their own account.' }, { status: 403 });
+          }
+
+          // Verify at least one OTHER active admin exists in the organization
+          const { data: activeAdmins } = await (adminSupabase as any)
+            .from('profiles')
+            .select('id')
+            .eq('organization_id', actorProfile.organization_id)
+            .eq('role', 'admin')
+            .eq('active', true)
+            .neq('id', userId);
+
+          if (!activeAdmins || activeAdmins.length === 0) {
+            return NextResponse.json(
+              { error: 'Forbidden. Cannot deactivate or demote the last active Admin in the organization.' },
+              { status: 403 }
+            );
+          }
+        }
+      }
+
+      // Construct updates object
       const { fullName } = body;
       const updates: Record<string, any> = { updated_at: new Date().toISOString() };
       if (fullName && typeof fullName === 'string') updates.full_name = fullName.trim();
-      if (role && ['admin', 'manager', 'agent'].includes(role)) updates.role = role;
+      if (role && ['admin', 'manager', 'agent'].includes(role)) {
+        if (actorProfile.role === 'admin') {
+          updates.role = role;
+        }
+      }
       if (typeof active === 'boolean') updates.active = active;
 
       if (extension !== undefined) {
@@ -161,7 +239,7 @@ export async function POST(request: Request) {
           const { data: extConflict } = await (adminSupabase as any)
             .from('profiles')
             .select('id')
-            .eq('organization_id', profile.organization_id)
+            .eq('organization_id', actorProfile.organization_id)
             .eq('extension', trimmedExt)
             .neq('id', userId)
             .maybeSingle();
@@ -180,7 +258,7 @@ export async function POST(request: Request) {
         .from('profiles')
         .update(updates)
         .eq('id', userId)
-        .eq('organization_id', profile.organization_id)
+        .eq('organization_id', actorProfile.organization_id)
         .select()
         .single();
 

@@ -24,6 +24,8 @@ import {
   Hash,
 } from 'lucide-react';
 
+import { useAuth } from '@/components/providers/AuthProvider';
+
 interface Member {
   id: string;
   full_name: string;
@@ -48,6 +50,7 @@ interface CreatedUserResult {
 }
 
 export default function WorkspaceUsersPage() {
+  const { profile } = useAuth();
   const [members, setMembers] = useState<Member[]>([]);
   const [routingStrategy, setRoutingStrategy] = useState<'ring_all' | 'round_robin'>('ring_all');
   const [currentUserRole, setCurrentUserRole] = useState<string>('agent');
@@ -267,28 +270,35 @@ Please change your password after first login.`;
             </p>
           </div>
 
-          <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-950 p-1 rounded-xl border border-slate-200 dark:border-slate-800">
-            <button
-              onClick={() => handleUpdateRouting('ring_all')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                routingStrategy === 'ring_all'
-                  ? 'bg-blue-600 text-white font-bold shadow-md'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-              }`}
-            >
-              Ring All (Simultaneous)
-            </button>
-            <button
-              onClick={() => handleUpdateRouting('round_robin')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                routingStrategy === 'round_robin'
-                  ? 'bg-blue-600 text-white font-bold shadow-md'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-              }`}
-            >
-              Round Robin (Sequential)
-            </button>
-          </div>
+          {currentUserRole === 'admin' ? (
+            <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-950 p-1 rounded-xl border border-slate-200 dark:border-slate-800">
+              <button
+                onClick={() => handleUpdateRouting('ring_all')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                  routingStrategy === 'ring_all'
+                    ? 'bg-blue-600 text-white font-bold shadow-md'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                }`}
+              >
+                Ring All (Simultaneous)
+              </button>
+              <button
+                onClick={() => handleUpdateRouting('round_robin')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                  routingStrategy === 'round_robin'
+                    ? 'bg-blue-600 text-white font-bold shadow-md'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                }`}
+              >
+                Round Robin (Sequential)
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-950 p-1.5 px-3 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-mono font-semibold text-slate-700 dark:text-slate-300">
+              <Layers className="w-3.5 h-3.5 text-blue-500" />
+              <span>Strategy: {routingStrategy === 'ring_all' ? 'Ring All (Simultaneous)' : 'Round Robin (Sequential)'}</span>
+            </div>
+          )}
         </div>
       </Card>
 
@@ -306,7 +316,34 @@ Please change your password after first login.`;
         ) : (
           members.map((member) => {
             const presence = getPresenceIndicator(member);
-            const canManage = ['admin', 'manager'].includes(currentUserRole);
+            const isSelf = profile?.id === member.id;
+            const isTargetAdmin = member.role === 'admin';
+            const isTargetAgent = member.role === 'agent';
+
+            let canManageRow = false;
+            let canToggleActive = false;
+            let canChangeRole = false;
+
+            if (currentUserRole === 'admin') {
+              canManageRow = true;
+              if (isSelf && isTargetAdmin) {
+                canToggleActive = false;
+                canChangeRole = false;
+              } else {
+                canToggleActive = true;
+                canChangeRole = true;
+              }
+            } else if (currentUserRole === 'manager') {
+              if (isTargetAgent) {
+                canManageRow = true;
+                canToggleActive = true;
+                canChangeRole = false;
+              } else {
+                canManageRow = false;
+              }
+            } else {
+              canManageRow = false;
+            }
 
             return (
               <Card
@@ -371,7 +408,7 @@ Please change your password after first login.`;
                   </div>
 
                   {/* Actions / Edit Form Grid */}
-                  {canManage && (
+                  {canManageRow && (
                     <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 bg-slate-50 dark:bg-slate-950/80 p-2.5 sm:p-2 rounded-xl border border-slate-200 dark:border-slate-800/80 w-full sm:w-auto shrink-0">
                       {/* Full Name Edit */}
                       <div className="col-span-2 sm:col-span-1">
@@ -389,20 +426,26 @@ Please change your password after first login.`;
                         />
                       </div>
 
-                      {/* Role Dropdown */}
+                      {/* Role Selector / Display */}
                       <div>
                         <label className="text-[9px] font-mono text-slate-500 block mb-0.5 sm:hidden">ROLE</label>
-                        <select
-                          value={member.role}
-                          onChange={(e) =>
-                            handleUpdateMember(member.id, { role: e.target.value as any })
-                          }
-                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 sm:py-1 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-blue-600 dark:focus:border-blue-500"
-                        >
-                          <option value="admin">Admin</option>
-                          <option value="manager">Manager</option>
-                          <option value="agent">Agent</option>
-                        </select>
+                        {canChangeRole ? (
+                          <select
+                            value={member.role}
+                            onChange={(e) =>
+                              handleUpdateMember(member.id, { role: e.target.value as any })
+                            }
+                            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 sm:py-1 text-xs text-slate-900 dark:text-slate-200 focus:outline-none focus:border-blue-600 dark:focus:border-blue-500"
+                          >
+                            <option value="admin">Admin</option>
+                            <option value="manager">Manager</option>
+                            <option value="agent">Agent</option>
+                          </select>
+                        ) : (
+                          <span className="w-full sm:w-auto inline-block bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1.5 sm:py-1 text-xs font-mono uppercase text-slate-600 dark:text-slate-400 font-semibold text-center">
+                            {member.role}
+                          </span>
+                        )}
                       </div>
 
                       {/* Extension Input */}
@@ -422,19 +465,21 @@ Please change your password after first login.`;
                         />
                       </div>
 
-                      {/* Active Toggle */}
-                      <div className="col-span-2 sm:col-span-1 pt-1 sm:pt-0">
-                        <button
-                          onClick={() => handleUpdateMember(member.id, { active: !member.active })}
-                          className={`w-full sm:w-auto px-3 py-1.5 sm:py-1 rounded-lg text-xs font-medium transition-colors flex items-center justify-center ${
-                            member.active
-                              ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/30 hover:bg-emerald-100 dark:hover:bg-emerald-500/20'
-                              : 'bg-rose-50 dark:bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-500/30 hover:bg-rose-100 dark:hover:bg-rose-500/20'
-                          }`}
-                        >
-                          {member.active ? 'Active' : 'Disabled'}
-                        </button>
-                      </div>
+                      {/* Active Toggle Button */}
+                      {canToggleActive && (
+                        <div className="col-span-2 sm:col-span-1 pt-1 sm:pt-0">
+                          <button
+                            onClick={() => handleUpdateMember(member.id, { active: !member.active })}
+                            className={`w-full sm:w-auto px-3 py-1.5 sm:py-1 rounded-lg text-xs font-medium transition-colors flex items-center justify-center ${
+                              member.active
+                                ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/30 hover:bg-emerald-100 dark:hover:bg-emerald-500/20'
+                                : 'bg-rose-50 dark:bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-500/30 hover:bg-rose-100 dark:hover:bg-rose-500/20'
+                            }`}
+                          >
+                            {member.active ? 'Active' : 'Disabled'}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
