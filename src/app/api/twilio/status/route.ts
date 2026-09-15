@@ -134,6 +134,9 @@ export async function POST(request: Request) {
           if (wasExplicitlyAnswered) {
             // Agent previously answered via browser endpoint -> call completed normally
             dbStatus = 'completed';
+          } else if (searchParams.get('attempt') === 'preferred') {
+            // Preferred agent attempt timed out; preserve ringing status while fallback engine routes call
+            dbStatus = 'ringing';
           } else {
             // Agent never answered -> no-answer outcome
             dbStatus = rawDialCallStatus;

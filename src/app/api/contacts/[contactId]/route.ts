@@ -42,7 +42,7 @@ export async function GET(
     // Fetch contact record
     const { data: contact, error: contactError } = await (supabase as any)
       .from('contacts')
-      .select('*')
+      .select('*, assigned_user:profiles!assigned_user_id(id, full_name, email, role, avatar_url)')
       .eq('id', contactId)
       .eq('organization_id', profile.organization_id)
       .is('archived_at', null)
@@ -116,7 +116,7 @@ export async function PATCH(
 
     const { data: profile, error: profileError } = await (supabase as any)
       .from('profiles')
-      .select('organization_id')
+      .select('organization_id, role')
       .eq('id', user.id)
       .single();
 
@@ -130,7 +130,7 @@ export async function PATCH(
     // Verify existing contact ownership
     const { data: existingContact } = await (supabase as any)
       .from('contacts')
-      .select('id, phone')
+      .select('id, phone, assigned_user_id')
       .eq('id', contactId)
       .eq('organization_id', profile.organization_id)
       .is('archived_at', null)
@@ -147,6 +147,41 @@ export async function PATCH(
     const updates: Record<string, any> = {
       updated_at: new Date().toISOString(),
     };
+
+    // Handle assigned_user_id update validation
+    if (body.assigned_user_id !== undefined || body.assignedUserId !== undefined) {
+      if (!['admin', 'manager'].includes(profile.role)) {
+        return NextResponse.json(
+          { error: 'Forbidden. Agents cannot assign or reassign contacts.' },
+          { status: 403 }
+        );
+      }
+
+      const rawAssigned = body.assigned_user_id !== undefined ? body.assigned_user_id : body.assignedUserId;
+      const targetAssignedUserId = (typeof rawAssigned === 'string' ? rawAssigned.trim() : '') || null;
+
+      if (targetAssignedUserId) {
+        const { data: targetProfile } = await (supabase as any)
+          .from('profiles')
+          .select('id, organization_id, active, role')
+          .eq('id', targetAssignedUserId)
+          .single();
+
+        if (
+          !targetProfile ||
+          targetProfile.organization_id !== profile.organization_id ||
+          !targetProfile.active ||
+          !['manager', 'agent'].includes(targetProfile.role)
+        ) {
+          return NextResponse.json(
+            { error: 'Invalid assigned user. Contacts can only be assigned to active Managers or Agents in your organization.' },
+            { status: 400 }
+          );
+        }
+      }
+
+      updates.assigned_user_id = targetAssignedUserId;
+    }
 
     if (body.firstName !== undefined || body.first_name !== undefined) {
       updates.first_name = (body.firstName ?? body.first_name ?? '').trim() || null;
@@ -222,7 +257,7 @@ export async function PATCH(
       .update(updates)
       .eq('id', contactId)
       .eq('organization_id', profile.organization_id)
-      .select()
+      .select('*, assigned_user:profiles!assigned_user_id(id, full_name, email, role, avatar_url)')
       .single();
 
     if (updateError || !updatedContact) {

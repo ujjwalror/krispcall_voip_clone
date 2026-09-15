@@ -30,6 +30,8 @@ export interface Database {
           id: string;
           name: string;
           slug: string;
+          routing_strategy?: string;
+          prefer_assigned_agent?: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -37,6 +39,8 @@ export interface Database {
           id?: string;
           name: string;
           slug: string;
+          routing_strategy?: string;
+          prefer_assigned_agent?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -44,6 +48,8 @@ export interface Database {
           id?: string;
           name?: string;
           slug?: string;
+          routing_strategy?: string;
+          prefer_assigned_agent?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -105,6 +111,14 @@ export interface Database {
           notes: string | null;
           is_blocked: boolean | null;
           created_by: string | null;
+          assigned_user_id?: string | null;
+          assigned_user?: {
+            id: string;
+            full_name: string;
+            email: string;
+            role: string;
+            avatar_url?: string | null;
+          } | null;
           created_at: string;
           updated_at: string;
           archived_at: string | null;
@@ -121,6 +135,7 @@ export interface Database {
           notes?: string | null;
           is_blocked?: boolean | null;
           created_by?: string | null;
+          assigned_user_id?: string | null;
           created_at?: string;
           updated_at?: string;
           archived_at?: string | null;
@@ -137,6 +152,7 @@ export interface Database {
           notes?: string | null;
           is_blocked?: boolean | null;
           created_by?: string | null;
+          assigned_user_id?: string | null;
           created_at?: string;
           updated_at?: string;
           archived_at?: string | null;

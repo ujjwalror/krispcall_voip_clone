@@ -19,6 +19,7 @@ import {
   History,
   AlertTriangle,
   Loader2,
+  UserCheck,
 } from 'lucide-react';
 import { Contact } from '@/lib/types';
 import { formatCallTime, formatDuration } from '@/lib/utils';
@@ -224,6 +225,14 @@ export function ContactDetailsModal({
                       <p className="font-semibold text-slate-200 flex items-center gap-1.5 truncate">
                         <Mail className="w-3.5 h-3.5 text-slate-400" />
                         <span className="truncate">{contact.email || '—'}</span>
+                      </p>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 space-y-1 sm:col-span-2">
+                      <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Assigned Agent (Preferred Routing)</p>
+                      <p className="font-semibold text-slate-200 flex items-center gap-1.5">
+                        <UserCheck className="w-3.5 h-3.5 text-blue-400" />
+                        <span>{(contact as any).assigned_user?.full_name ? `${(contact as any).assigned_user.full_name} (${(contact as any).assigned_user.role})` : 'Unassigned (No Preferred Agent)'}</span>
                       </p>
                     </div>
                   </div>

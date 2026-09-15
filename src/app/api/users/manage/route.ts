@@ -36,7 +36,7 @@ export async function GET() {
     // Fetch workspace details & routing strategy
     const { data: orgData } = await (adminSupabase as any)
       .from('organizations')
-      .select('id, name, slug, routing_strategy')
+      .select('id, name, slug, routing_strategy, prefer_assigned_agent')
       .eq('id', profile.organization_id)
       .single();
 
@@ -136,7 +136,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { action, userId, role, extension, active, routingStrategy } = body;
+    const { action, userId, role, extension, active, routingStrategy, preferAssignedAgent } = body;
 
     const adminSupabase = createAdminClient();
 
@@ -145,16 +145,35 @@ export async function POST(request: Request) {
       if (actorProfile.role !== 'admin') {
         return NextResponse.json({ error: 'Forbidden. Routing strategy can only be updated by Admins.' }, { status: 403 });
       }
-      if (!['ring_all', 'round_robin'].includes(routingStrategy)) {
-        return NextResponse.json({ error: 'Invalid routing strategy' }, { status: 400 });
+
+      const updateData: Record<string, any> = {
+        updated_at: new Date().toISOString(),
+      };
+
+      if (routingStrategy !== undefined) {
+        if (!['ring_all', 'round_robin'].includes(routingStrategy)) {
+          return NextResponse.json({ error: 'Invalid routing strategy' }, { status: 400 });
+        }
+        updateData.routing_strategy = routingStrategy;
+      }
+
+      if (preferAssignedAgent !== undefined) {
+        if (typeof preferAssignedAgent !== 'boolean') {
+          return NextResponse.json({ error: 'preferAssignedAgent must be a boolean' }, { status: 400 });
+        }
+        updateData.prefer_assigned_agent = preferAssignedAgent;
       }
 
       await (adminSupabase as any)
         .from('organizations')
-        .update({ routing_strategy: routingStrategy, updated_at: new Date().toISOString() })
+        .update(updateData)
         .eq('id', actorProfile.organization_id);
 
-      return NextResponse.json({ success: true, routingStrategy });
+      return NextResponse.json({
+        success: true,
+        routingStrategy: updateData.routing_strategy || routingStrategy,
+        preferAssignedAgent: updateData.prefer_assigned_agent !== undefined ? updateData.prefer_assigned_agent : preferAssignedAgent,
+      });
     }
 
     // 2. Action: update_member

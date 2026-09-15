@@ -40,7 +40,7 @@ export async function GET(request: Request) {
 
     let query = (supabase as any)
       .from('contacts')
-      .select('*')
+      .select('*, assigned_user:profiles!assigned_user_id(id, full_name, email, role, avatar_url)')
       .eq('organization_id', profile.organization_id)
       .is('archived_at', null)
       .order('full_name', { ascending: true });
@@ -96,7 +96,7 @@ export async function POST(request: Request) {
 
     const { data: profile, error: profileError } = await (supabase as any)
       .from('profiles')
-      .select('organization_id')
+      .select('organization_id, role')
       .eq('id', user.id)
       .single();
 
@@ -114,12 +114,42 @@ export async function POST(request: Request) {
     const company = (body.company || '').trim();
     const email = (body.email || '').trim();
     const notes = (body.notes || '').trim();
+    const assignedUserIdRaw = (body.assigned_user_id || body.assignedUserId || '').trim();
+    const assignedUserId = assignedUserIdRaw || null;
 
     if (!rawPhone) {
       return NextResponse.json(
         { error: 'Phone number is required to create a contact.' },
         { status: 400 }
       );
+    }
+
+    // Validate assigned_user_id assignment permissions
+    if (assignedUserId) {
+      if (!['admin', 'manager'].includes(profile.role)) {
+        return NextResponse.json(
+          { error: 'Forbidden. Agents cannot assign contacts to team members.' },
+          { status: 403 }
+        );
+      }
+
+      const { data: targetProfile } = await (supabase as any)
+        .from('profiles')
+        .select('id, organization_id, active, role')
+        .eq('id', assignedUserId)
+        .single();
+
+      if (
+        !targetProfile ||
+        targetProfile.organization_id !== profile.organization_id ||
+        !targetProfile.active ||
+        !['manager', 'agent'].includes(targetProfile.role)
+      ) {
+        return NextResponse.json(
+          { error: 'Invalid assigned user. Contacts can only be assigned to active Managers or Agents in your organization.' },
+          { status: 400 }
+        );
+      }
     }
 
     // Validate and normalize phone number
@@ -189,8 +219,9 @@ export async function POST(request: Request) {
         notes: notes || null,
         is_blocked: isBlocked,
         created_by: user.id,
+        assigned_user_id: assignedUserId,
       })
-      .select()
+      .select('*, assigned_user:profiles!assigned_user_id(id, full_name, email, role, avatar_url)')
       .single();
 
     if (insertError || !newContact) {

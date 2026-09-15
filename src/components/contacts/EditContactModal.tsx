@@ -12,19 +12,28 @@ interface EditContactModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: () => void;
+  members?: { id: string; full_name: string; role: string; active?: boolean }[];
+  currentUserRole?: string;
 }
 
-export function EditContactModal({ contact, isOpen, onClose, onSuccess }: EditContactModalProps) {
+export function EditContactModal({ contact, isOpen, onClose, onSuccess, members = [], currentUserRole = 'agent' }: EditContactModalProps) {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [company, setCompany] = useState('');
   const [notes, setNotes] = useState('');
+  const [assignedUserId, setAssignedUserId] = useState('');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const eligibleMembers = members.filter(
+    (m) => m.active !== false && ['manager', 'agent'].includes(m.role)
+  );
+
+  const canAssign = ['admin', 'manager'].includes(currentUserRole);
 
   useEffect(() => {
     if (contact) {
@@ -34,6 +43,7 @@ export function EditContactModal({ contact, isOpen, onClose, onSuccess }: EditCo
       setEmail(contact.email || '');
       setCompany(contact.company || '');
       setNotes(contact.notes || '');
+      setAssignedUserId((contact as any).assigned_user_id || (contact as any).assigned_user?.id || '');
       setErrorMessage(null);
       setSuccessMessage(null);
     }
@@ -81,6 +91,7 @@ export function EditContactModal({ contact, isOpen, onClose, onSuccess }: EditCo
           email: email.trim(),
           company: company.trim(),
           notes: notes.trim(),
+          assigned_user_id: assignedUserId || null,
         }),
       });
 
@@ -199,6 +210,26 @@ export function EditContactModal({ contact, isOpen, onClose, onSuccess }: EditCo
                 onChange={(e) => setCompany(e.target.value)}
               />
             </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-slate-300 block mb-1">Assigned Agent</label>
+            <select
+              value={assignedUserId}
+              onChange={(e) => setAssignedUserId(e.target.value)}
+              disabled={!canAssign || isSubmitting}
+              className="w-full bg-slate-950/80 text-slate-100 text-xs rounded-lg border border-slate-800 p-2.5 outline-none focus:border-blue-500 transition-colors disabled:opacity-50"
+            >
+              <option value="">Unassigned (No Preferred Agent)</option>
+              {eligibleMembers.map((member) => (
+                <option key={member.id} value={member.id}>
+                  {member.full_name} ({member.role})
+                </option>
+              ))}
+            </select>
+            {!canAssign && (
+              <p className="text-[10px] text-slate-500 mt-1">Only Admins and Managers can assign contacts to team members.</p>
+            )}
           </div>
 
           <div>

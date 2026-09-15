@@ -38,6 +38,8 @@ export default function ContactsPage() {
   const router = useRouter();
   const { makeCall } = useTwilioDeviceContext();
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [members, setMembers] = useState<any[]>([]);
+  const [currentUserRole, setCurrentUserRole] = useState<string>('agent');
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -54,6 +56,22 @@ export default function ContactsPage() {
   const [blockedAlertMessage, setBlockedAlertMessage] = useState<string | null>(null);
 
   const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    async function loadMembers() {
+      try {
+        const res = await fetch('/api/users/manage');
+        if (res.ok) {
+          const data = await res.json();
+          setMembers(data.members || []);
+          setCurrentUserRole(data.currentUserRole || 'agent');
+        }
+      } catch (err) {
+        console.error('Error fetching workspace members:', err);
+      }
+    }
+    loadMembers();
+  }, []);
 
   const fetchContacts = useCallback(async () => {
     setIsLoading(true);
@@ -254,6 +272,14 @@ export default function ContactsPage() {
                           <span>Direct Client</span>
                         </p>
                       )}
+                      {(contact as any).assigned_user?.full_name && (
+                        <div className="mt-1">
+                          <span className="text-[10px] font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-1.5 py-0.5 rounded border border-blue-200 dark:border-blue-800/40 inline-flex items-center gap-1">
+                            <UserCheck className="w-2.5 h-2.5" />
+                            Assigned: {(contact as any).assigned_user.full_name}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -411,6 +437,8 @@ export default function ContactsPage() {
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
         onSuccess={fetchContacts}
+        members={members}
+        currentUserRole={currentUserRole}
       />
 
       <ImportContactsModal
@@ -441,6 +469,8 @@ export default function ContactsPage() {
         isOpen={Boolean(editingContact)}
         onClose={() => setEditingContact(null)}
         onSuccess={fetchContacts}
+        members={members}
+        currentUserRole={currentUserRole}
       />
 
       <DeleteContactConfirmationModal

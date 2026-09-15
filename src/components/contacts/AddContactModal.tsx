@@ -10,21 +10,30 @@ interface AddContactModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: () => void;
+  members?: { id: string; full_name: string; role: string; active?: boolean }[];
+  currentUserRole?: string;
 }
 
-export function AddContactModal({ isOpen, onClose, onSuccess }: AddContactModalProps) {
+export function AddContactModal({ isOpen, onClose, onSuccess, members = [], currentUserRole = 'agent' }: AddContactModalProps) {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [company, setCompany] = useState('');
   const [notes, setNotes] = useState('');
+  const [assignedUserId, setAssignedUserId] = useState('');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   if (!isOpen) return null;
+
+  const eligibleMembers = members.filter(
+    (m) => m.active !== false && ['manager', 'agent'].includes(m.role)
+  );
+
+  const canAssign = ['admin', 'manager'].includes(currentUserRole);
 
   const resetForm = () => {
     setFirstName('');
@@ -33,6 +42,7 @@ export function AddContactModal({ isOpen, onClose, onSuccess }: AddContactModalP
     setEmail('');
     setCompany('');
     setNotes('');
+    setAssignedUserId('');
     setErrorMessage(null);
     setSuccessMessage(null);
   };
@@ -78,6 +88,7 @@ export function AddContactModal({ isOpen, onClose, onSuccess }: AddContactModalP
           email: email.trim(),
           company: company.trim(),
           notes: notes.trim(),
+          assigned_user_id: assignedUserId || null,
         }),
       });
 
@@ -197,6 +208,26 @@ export function AddContactModal({ isOpen, onClose, onSuccess }: AddContactModalP
                 onChange={(e) => setCompany(e.target.value)}
               />
             </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-slate-300 block mb-1">Assigned Agent</label>
+            <select
+              value={assignedUserId}
+              onChange={(e) => setAssignedUserId(e.target.value)}
+              disabled={!canAssign || isSubmitting}
+              className="w-full bg-slate-950/80 text-slate-100 text-xs rounded-lg border border-slate-800 p-2.5 outline-none focus:border-blue-500 transition-colors disabled:opacity-50"
+            >
+              <option value="">Unassigned (No Preferred Agent)</option>
+              {eligibleMembers.map((member) => (
+                <option key={member.id} value={member.id}>
+                  {member.full_name} ({member.role})
+                </option>
+              ))}
+            </select>
+            {!canAssign && (
+              <p className="text-[10px] text-slate-500 mt-1">Only Admins and Managers can assign contacts to team members.</p>
+            )}
           </div>
 
           <div>

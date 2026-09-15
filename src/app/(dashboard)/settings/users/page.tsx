@@ -53,14 +53,14 @@ export default function WorkspaceUsersPage() {
   const { profile } = useAuth();
   const [members, setMembers] = useState<Member[]>([]);
   const [routingStrategy, setRoutingStrategy] = useState<'ring_all' | 'round_robin'>('ring_all');
-  const [currentUserRole, setCurrentUserRole] = useState<string>('agent');
+  const [preferAssignedAgent, setPreferAssignedAgent] = useState<boolean>(false);
+  const [currentUserRole, setCurrentUserRole] = useState<'admin' | 'manager' | 'agent'>('agent');
   const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
 
-  // Add User Modal State
+  // Modal States
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [isCreating, setIsCreating] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
+
+  // Form State
   const [formData, setFormData] = useState({
     fullName: '',
     email: '',
@@ -68,6 +68,9 @@ export default function WorkspaceUsersPage() {
     role: 'agent' as 'admin' | 'manager' | 'agent',
     extension: '',
   });
+  const [formError, setFormError] = useState<string | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   // Created User Success Screen State
   const [createdUserResult, setCreatedUserResult] = useState<CreatedUserResult | null>(null);
@@ -83,6 +86,9 @@ export default function WorkspaceUsersPage() {
         setCurrentUserRole(data.currentUserRole || 'agent');
         if (data.organization?.routing_strategy) {
           setRoutingStrategy(data.organization.routing_strategy);
+        }
+        if (data.organization?.prefer_assigned_agent !== undefined) {
+          setPreferAssignedAgent(Boolean(data.organization.prefer_assigned_agent));
         }
       }
     } catch (err) {
@@ -122,15 +128,17 @@ export default function WorkspaceUsersPage() {
     }
   };
 
-  const handleUpdateRouting = async (strategy: 'ring_all' | 'round_robin') => {
+  const handleUpdateRouting = async (strategy?: 'ring_all' | 'round_robin', preferAssigned?: boolean) => {
     try {
-      setRoutingStrategy(strategy);
+      if (strategy !== undefined) setRoutingStrategy(strategy);
+      if (preferAssigned !== undefined) setPreferAssignedAgent(preferAssigned);
       await fetch('/api/users/manage', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'update_routing',
-          routingStrategy: strategy,
+          ...(strategy ? { routingStrategy: strategy } : {}),
+          ...(preferAssigned !== undefined ? { preferAssignedAgent: preferAssigned } : {}),
         }),
       });
     } catch (err) {
@@ -258,7 +266,7 @@ Please change your password after first login.`;
       </div>
 
       {/* Call Routing Strategy Card */}
-      <Card className="p-5 bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl backdrop-blur-sm">
+      <Card className="p-5 bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl backdrop-blur-sm space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
@@ -273,7 +281,7 @@ Please change your password after first login.`;
           {currentUserRole === 'admin' ? (
             <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-950 p-1 rounded-xl border border-slate-200 dark:border-slate-800">
               <button
-                onClick={() => handleUpdateRouting('ring_all')}
+                onClick={() => handleUpdateRouting('ring_all', undefined)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
                   routingStrategy === 'ring_all'
                     ? 'bg-blue-600 text-white font-bold shadow-md'
@@ -283,7 +291,7 @@ Please change your password after first login.`;
                 Ring All (Simultaneous)
               </button>
               <button
-                onClick={() => handleUpdateRouting('round_robin')}
+                onClick={() => handleUpdateRouting('round_robin', undefined)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
                   routingStrategy === 'round_robin'
                     ? 'bg-blue-600 text-white font-bold shadow-md'
@@ -297,6 +305,48 @@ Please change your password after first login.`;
             <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-950 p-1.5 px-3 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-mono font-semibold text-slate-700 dark:text-slate-300">
               <Layers className="w-3.5 h-3.5 text-blue-500" />
               <span>Strategy: {routingStrategy === 'ring_all' ? 'Ring All (Simultaneous)' : 'Round Robin (Sequential)'}</span>
+            </div>
+          )}
+        </div>
+
+        <div className="border-t border-slate-200 dark:border-slate-800 pt-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <UserCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Existing Customer Routing</h3>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 max-w-2xl">
+              When a known contact calls, route to their assigned team member first. If unavailable or unanswered, use the default inbound routing strategy.
+            </p>
+          </div>
+
+          {currentUserRole === 'admin' ? (
+            <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-950 p-1 rounded-xl border border-slate-200 dark:border-slate-800 shrink-0">
+              <button
+                onClick={() => handleUpdateRouting(undefined, true)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                  preferAssignedAgent
+                    ? 'bg-emerald-600 text-white font-bold shadow-md'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                }`}
+              >
+                Prefer Assigned Agent: ON
+              </button>
+              <button
+                onClick={() => handleUpdateRouting(undefined, false)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                  !preferAssignedAgent
+                    ? 'bg-slate-700 text-white font-bold shadow-md'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                }`}
+              >
+                OFF
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-950 p-1.5 px-3 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-mono font-semibold text-slate-700 dark:text-slate-300 shrink-0">
+              <UserCheck className="w-3.5 h-3.5 text-emerald-500" />
+              <span>Prefer Assigned Agent: {preferAssignedAgent ? 'ON' : 'OFF'}</span>
             </div>
           )}
         </div>
