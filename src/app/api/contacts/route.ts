@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { normalizeE164PhoneNumber } from '@/lib/utils';
 
 /**
@@ -205,29 +206,46 @@ export async function POST(request: Request) {
 
     const isBlocked = Boolean(blockedEntry);
 
-    // Insert new contact securely attaching organization_id from server
-    const { data: newContact, error: insertError } = await (supabase as any)
+    // Use atomic SECURITY DEFINER RPC to convert lead to contact and cleanup caller_assignments
+    const adminSupabase = createAdminClient();
+    const { data: rpcRes, error: rpcError } = await (adminSupabase as any).rpc(
+      'convert_lead_to_contact',
+      {
+        p_organization_id: profile.organization_id,
+        p_first_name: firstName || null,
+        p_last_name: lastName || null,
+        p_full_name: fullName,
+        p_phone: normalizedPhone,
+        p_email: email || null,
+        p_company: company || null,
+        p_notes: notes || null,
+        p_is_blocked: isBlocked,
+        p_created_by: user.id,
+        p_explicit_assigned_user_id: assignedUserId,
+      }
+    );
+
+    if (rpcError || !rpcRes || rpcRes.length === 0) {
+      console.error('Error in convert_lead_to_contact RPC:', rpcError);
+      return NextResponse.json(
+        { error: rpcError?.message || 'Database error creating contact record.' },
+        { status: 500 }
+      );
+    }
+
+    const createdContactId = rpcRes[0].id;
+
+    // Fetch full contact with joined assigned_user profile
+    const { data: newContact, error: fetchError } = await (adminSupabase as any)
       .from('contacts')
-      .insert({
-        organization_id: profile.organization_id,
-        first_name: firstName || null,
-        last_name: lastName || null,
-        full_name: fullName,
-        phone: normalizedPhone,
-        email: email || null,
-        company: company || null,
-        notes: notes || null,
-        is_blocked: isBlocked,
-        created_by: user.id,
-        assigned_user_id: assignedUserId,
-      })
       .select('*, assigned_user:profiles!assigned_user_id(id, full_name, email, role, avatar_url)')
+      .eq('id', createdContactId)
       .single();
 
-    if (insertError || !newContact) {
-      console.error('Error inserting contact:', insertError);
+    if (fetchError || !newContact) {
+      console.error('Error fetching created contact:', fetchError);
       return NextResponse.json(
-        { error: 'Database error creating contact record.' },
+        { error: 'Database error retrieving created contact record.' },
         { status: 500 }
       );
     }

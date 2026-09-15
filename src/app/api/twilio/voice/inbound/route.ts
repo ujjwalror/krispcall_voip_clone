@@ -222,20 +222,41 @@ export async function POST(request: Request) {
         .limit(1)
         .maybeSingle();
 
-      if (matchedContact && matchedContact.assigned_user_id) {
+      let preferredUserId: string | null = null;
+
+      if (matchedContact) {
         if (dbCallId) {
           await (adminSupabase as any)
             .from('calls')
             .update({ contact_id: matchedContact.id })
             .eq('id', dbCallId);
         }
+        if (matchedContact.assigned_user_id) {
+          preferredUserId = matchedContact.assigned_user_id;
+        }
+      }
 
+      // If no saved contact or contact has no assigned_user_id, check caller_assignments
+      if (!preferredUserId) {
+        const { data: callerAssignment } = await (adminSupabase as any)
+          .from('caller_assignments')
+          .select('assigned_user_id')
+          .eq('organization_id', organizationId)
+          .eq('phone_number', normalizedFrom)
+          .maybeSingle();
+
+        if (callerAssignment && callerAssignment.assigned_user_id) {
+          preferredUserId = callerAssignment.assigned_user_id;
+        }
+      }
+
+      if (preferredUserId) {
         const { data: rpcPrefAgent, error: prefErr } = await (adminSupabase as any).rpc(
           'reserve_preferred_agent',
           {
             p_organization_id: organizationId,
             p_call_id: dbCallId || null,
-            p_preferred_user_id: matchedContact.assigned_user_id,
+            p_preferred_user_id: preferredUserId,
             p_ttl_seconds: 45,
           }
         );
@@ -244,8 +265,8 @@ export async function POST(request: Request) {
           reservedAgents = rpcPrefAgent;
           isPreferredAttempt = true;
           console.log('[Twilio Inbound Webhook] PREFERRED AGENT RESERVED:', {
-            contact_id: matchedContact.id,
-            assigned_user_id: matchedContact.assigned_user_id,
+            matchedContactId: matchedContact?.id || null,
+            preferredUserId,
             agent_name: rpcPrefAgent[0].full_name,
           });
         } else {

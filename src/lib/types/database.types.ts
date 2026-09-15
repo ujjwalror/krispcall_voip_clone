@@ -25,6 +25,38 @@ export type MessageDirection = 'inbound' | 'outbound';
 export interface Database {
   public: {
     Tables: {
+      caller_assignments: {
+        Row: {
+          id: string;
+          organization_id: string;
+          phone_number: string;
+          assigned_user_id: string | null;
+          assignment_source: 'auto_answered' | 'manual';
+          assigned_by_user_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          organization_id: string;
+          phone_number: string;
+          assigned_user_id?: string | null;
+          assignment_source?: 'auto_answered' | 'manual';
+          assigned_by_user_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          organization_id?: string;
+          phone_number?: string;
+          assigned_user_id?: string | null;
+          assignment_source?: 'auto_answered' | 'manual';
+          assigned_by_user_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
       organizations: {
         Row: {
           id: string;
@@ -382,6 +414,45 @@ export interface Database {
           created_by?: string | null;
           created_at?: string;
         };
+      };
+    };
+    Functions: {
+      convert_lead_to_contact: {
+        Args: {
+          p_organization_id: string;
+          p_first_name?: string | null;
+          p_last_name?: string | null;
+          p_full_name: string;
+          p_phone: string;
+          p_email?: string | null;
+          p_company?: string | null;
+          p_notes?: string | null;
+          p_is_blocked?: boolean;
+          p_created_by?: string | null;
+          p_explicit_assigned_user_id?: string | null;
+        };
+        Returns: Database['public']['Tables']['contacts']['Row'][];
+      };
+      try_auto_assign_caller: {
+        Args: {
+          p_organization_id: string;
+          p_phone: string;
+          p_assigned_user_id: string;
+        };
+        Returns: boolean;
+      };
+      manually_assign_caller: {
+        Args: {
+          p_organization_id: string;
+          p_phone: string;
+          p_assigned_user_id?: string | null;
+          p_assigned_by_user_id: string;
+        };
+        Returns: {
+          is_contact: boolean;
+          contact_id: string | null;
+          assigned_user_id: string | null;
+        }[];
       };
     };
   };

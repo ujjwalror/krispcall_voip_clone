@@ -19,11 +19,13 @@ import {
   XCircle,
   AlertTriangle,
   Ban,
+  Info,
 } from 'lucide-react';
 import { formatDuration, formatCallTime, normalizeE164PhoneNumber } from '@/lib/utils';
 import { CallRepository, CallWithProfile } from '@/lib/repositories/call.repository';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { BlockNumberConfirmationModal } from '@/components/call/BlockNumberConfirmationModal';
+import { CallDetailsModal } from '@/components/call/CallDetailsModal';
 import Link from 'next/link';
 
 export default function CallsPage() {
@@ -34,8 +36,9 @@ export default function CallsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
 
-  // Modal state for direct call history blocking
+  // Modal state for direct call history blocking & call details drawer
   const [blockingPhone, setBlockingPhone] = useState<string | null>(null);
+  const [selectedDetailsCall, setSelectedDetailsCall] = useState<CallWithProfile | null>(null);
 
   const { profile } = useAuth();
   const callRepo = new CallRepository();
@@ -354,6 +357,16 @@ export default function CallsPage() {
                             </Button>
                           )}
 
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
+                            onClick={() => setSelectedDetailsCall(log)}
+                          >
+                            <Info className="w-3.5 h-3.5" />
+                            <span>Details</span>
+                          </Button>
+
                           <Link href={`/phone?number=${encodeURIComponent(targetNumber)}`}>
                             <Button variant="ghost" size="sm" className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300">
                               <PhoneCall className="w-3.5 h-3.5" />
@@ -444,6 +457,16 @@ export default function CallsPage() {
                   </div>
 
                   <div className="flex items-center justify-end gap-2 pt-1 w-full">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-slate-600 dark:text-slate-400 text-xs flex-1 sm:flex-none justify-center"
+                      onClick={() => setSelectedDetailsCall(log)}
+                    >
+                      <Info className="w-3.5 h-3.5" />
+                      <span>Details</span>
+                    </Button>
+
                     {isBlocked ? (
                       <Button
                         variant="ghost"
@@ -485,6 +508,13 @@ export default function CallsPage() {
         isOpen={Boolean(blockingPhone)}
         onClose={() => setBlockingPhone(null)}
         onSuccess={loadCalls}
+      />
+
+      <CallDetailsModal
+        call={selectedDetailsCall}
+        isOpen={Boolean(selectedDetailsCall)}
+        onClose={() => setSelectedDetailsCall(null)}
+        onAssignmentUpdated={loadCalls}
       />
     </div>
   );

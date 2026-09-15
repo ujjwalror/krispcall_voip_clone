@@ -1,6 +1,40 @@
 import { NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { normalizeE164PhoneNumber } from '@/lib/utils';
+
+async function tryAutoAssignUnsavedCaller(
+  adminSupabase: any,
+  organizationId: string,
+  callId: string,
+  answeringAgentId: string
+) {
+  try {
+    const { data: call } = await adminSupabase
+      .from('calls')
+      .select('from_number, direction')
+      .eq('id', callId)
+      .maybeSingle();
+
+    if (!call || call.direction !== 'inbound' || !call.from_number) {
+      return;
+    }
+
+    const { normalized } = normalizeE164PhoneNumber(call.from_number);
+    const phoneNumber = normalized || call.from_number.trim();
+
+    if (!phoneNumber) return;
+
+    // Invoke race-safe SECURITY DEFINER RPC with advisory transaction locking
+    await adminSupabase.rpc('try_auto_assign_caller', {
+      p_organization_id: organizationId,
+      p_phone: phoneNumber,
+      p_assigned_user_id: answeringAgentId,
+    });
+  } catch (err) {
+    console.error('[Auto Assign Warning] Non-blocking auto caller assignment failed:', err);
+  }
+}
 
 /**
  * Authenticated Browser Agent Answer Endpoint.
@@ -80,6 +114,9 @@ export async function POST(
         answered_at: claimResult.answered_at,
         status: 'in-progress',
       });
+
+      // Auto first-answer caller assignment (ON CONFLICT DO NOTHING)
+      await tryAutoAssignUnsavedCaller(adminSupabase, profile.organization_id, callId, user.id);
 
       return NextResponse.json({
         success: true,
@@ -186,6 +223,9 @@ export async function POST(
       answered_at: nowIso,
       status: 'in-progress',
     });
+
+    // Auto first-answer caller assignment (ON CONFLICT DO NOTHING)
+    await tryAutoAssignUnsavedCaller(adminSupabase, profile.organization_id, callId, user.id);
 
     return NextResponse.json({
       success: true,
