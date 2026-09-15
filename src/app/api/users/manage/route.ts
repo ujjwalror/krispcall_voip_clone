@@ -47,11 +47,13 @@ export async function GET() {
       .eq('organization_id', profile.organization_id)
       .order('created_at', { ascending: true });
 
-    // Fetch active calls in organization to determine automatic call occupancy per agent
+    // Fetch active calls in organization to determine automatic call occupancy per user
+    // A call is occupied ONLY if ended_at IS NULL AND (status === 'in-progress' OR (transient status IN ('initiated', 'ringing', 'queued') AND created_at within 15 mins))
     const { data: activeCalls } = await (adminSupabase as any)
       .from('calls')
-      .select('user_id')
+      .select('user_id, status, created_at')
       .eq('organization_id', profile.organization_id)
+      .is('ended_at', null)
       .in('status', ['initiated', 'ringing', 'in-progress', 'queued'])
       .not('user_id', 'is', null);
 
@@ -62,10 +64,21 @@ export async function GET() {
       .eq('organization_id', profile.organization_id)
       .gt('expires_at', new Date().toISOString());
 
+    const cutoffMs = Date.now() - 15 * 60 * 1000;
     const occupiedUserIds = new Set<string>();
+
     if (activeCalls) {
       for (const c of activeCalls) {
-        if (c.user_id) occupiedUserIds.add(c.user_id);
+        if (!c.user_id) continue;
+        const isConnected = c.status === 'in-progress';
+        const isRecentSetup =
+          ['initiated', 'ringing', 'queued'].includes(c.status) &&
+          c.created_at &&
+          new Date(c.created_at).getTime() > cutoffMs;
+
+        if (isConnected || isRecentSetup) {
+          occupiedUserIds.add(c.user_id);
+        }
       }
     }
     if (activeRes) {

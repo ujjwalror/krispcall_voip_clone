@@ -239,11 +239,12 @@ export async function POST(request: Request) {
         .delete()
         .lte('expires_at', new Date().toISOString());
 
-      // Active call user_ids
+      // Active call user_ids (ended_at MUST be null, and transient setup status must be within 15 minutes)
       const { data: activeCalls } = await (adminSupabase as any)
         .from('calls')
-        .select('user_id')
+        .select('user_id, status, created_at')
         .eq('organization_id', organizationId)
+        .is('ended_at', null)
         .in('status', ['initiated', 'ringing', 'in-progress', 'queued'])
         .not('user_id', 'is', null);
 
@@ -254,10 +255,19 @@ export async function POST(request: Request) {
         .eq('organization_id', organizationId)
         .gt('expires_at', new Date().toISOString());
 
+      const cutoffMs = Date.now() - 15 * 60 * 1000;
       const unavailableUserIds = new Set<string>();
+
       if (activeCalls) {
         for (const c of activeCalls) {
-          if (c.user_id) unavailableUserIds.add(c.user_id);
+          if (!c.user_id) continue;
+          const isConnected = c.status === 'in-progress';
+          const isRecentSetup = ['initiated', 'ringing', 'queued'].includes(c.status) &&
+            c.created_at && new Date(c.created_at).getTime() > cutoffMs;
+
+          if (isConnected || isRecentSetup) {
+            unavailableUserIds.add(c.user_id);
+          }
         }
       }
       if (activeRes) {
@@ -266,12 +276,14 @@ export async function POST(request: Request) {
         }
       }
 
+      // Candidate agents: EXCLUDES ADMIN (role IN ['agent', 'manager'])
       const { data: availableAgents } = await (adminSupabase as any)
         .from('profiles')
         .select('id, full_name, twilio_identity')
         .eq('organization_id', organizationId)
         .eq('active', true)
         .eq('availability_status', 'available')
+        .in('role', ['agent', 'manager'])
         .order('id', { ascending: true });
 
       const eligible = ((availableAgents || []) as { id: string; full_name: string; twilio_identity: string }[]).filter(

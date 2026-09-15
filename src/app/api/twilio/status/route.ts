@@ -171,13 +171,17 @@ export async function POST(request: Request) {
       }
     } else {
       // Outbound call lifecycle
-      if (['no-answer', 'busy', 'canceled', 'failed'].includes(rawDialCallStatus || rawCallStatus)) {
-        dbStatus = rawDialCallStatus || rawCallStatus;
-      } else if (['in-progress', 'answered'].includes(rawCallStatus) || rawDialCallStatus === 'completed') {
-        dbStatus = (rawCallStatus === 'completed' || rawDialCallStatus === 'completed') ? 'completed' : 'in-progress';
+      const effectiveStatus = rawDialCallStatus || rawCallStatus;
+      if (['no-answer', 'busy', 'canceled', 'failed'].includes(effectiveStatus)) {
+        dbStatus = effectiveStatus;
+      } else if (rawCallStatus === 'completed' || rawDialCallStatus === 'completed') {
+        dbStatus = 'completed';
+        shouldSetAnsweredAt = true;
+      } else if (['in-progress', 'answered'].includes(rawCallStatus)) {
+        dbStatus = 'in-progress';
         shouldSetAnsweredAt = true;
       } else {
-        dbStatus = rawCallStatus;
+        dbStatus = rawCallStatus || 'completed';
       }
     }
 
