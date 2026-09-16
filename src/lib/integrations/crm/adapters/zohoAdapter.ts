@@ -39,18 +39,13 @@ export class ZohoCRMAdapter implements CRMAdapter {
   }
 
   /**
-   * Returns requested scopes for Zoho CRM.
-   * Uses least privilege required for connection validation, org info,
-   * plus future leads/contacts/calls/notes operations.
+   * DIAGNOSTIC ONLY:
+   * Temporarily requesting single known-valid scope ZohoCRM.users.READ
+   * to isolate OAuth consent screen behavior.
    */
   public getScopes(): string[] {
     return [
       'ZohoCRM.users.READ',
-      'ZohoCRM.org.READ',
-      'ZohoCRM.modules.leads.ALL',
-      'ZohoCRM.modules.contacts.ALL',
-      'ZohoCRM.modules.calls.ALL',
-      'ZohoCRM.modules.notes.ALL',
     ];
   }
 
