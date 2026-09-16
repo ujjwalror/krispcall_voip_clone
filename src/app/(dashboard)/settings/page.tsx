@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { PersonalRingtoneSettings } from '@/components/settings/PersonalRingtoneSettings';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -538,24 +539,8 @@ function SettingsContent() {
             </div>
           </Card>
 
-          {/* Ringtone & Notification Alert Settings */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Bell className="w-4 h-4 text-amber-500 dark:text-amber-400" />
-                <span>Inbound Ringtone & Call Alerts</span>
-              </CardTitle>
-            </CardHeader>
-            <div className="space-y-3">
-              <div className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800">
-                <div>
-                  <p className="text-xs font-semibold text-slate-900 dark:text-slate-200">Play Ringtone for Incoming Calls</p>
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400">Audible alert when an incoming PSTN call is routed to your agent identity.</p>
-                </div>
-                <input type="checkbox" defaultChecked className="w-4 h-4 accent-blue-600 rounded" />
-              </div>
-            </div>
-          </Card>
+          {/* Personal Ringtone & Audio Volume Settings */}
+          <PersonalRingtoneSettings />
         </div>
       ) : (
         /* Blocked Numbers Management Section */

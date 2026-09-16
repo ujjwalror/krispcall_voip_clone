@@ -3,6 +3,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { fetchVoiceAccessToken } from '@/services/voice/client';
 import { normalizeE164PhoneNumber } from '@/lib/utils';
+import { useAuth } from '@/components/providers/AuthProvider';
+import { ringtoneEngine } from '@/lib/audio/ringtoneEngine';
 
 export type DeviceStatus = 'uninitialized' | 'initializing' | 'ready' | 'error';
 export type CallState =
@@ -37,6 +39,12 @@ export interface UseTwilioDeviceReturn {
 }
 
 export function useTwilioDevice(): UseTwilioDeviceReturn {
+  const { profile } = useAuth();
+  const profileRef = useRef(profile);
+  useEffect(() => {
+    profileRef.current = profile;
+  }, [profile]);
+
   const [deviceStatus, setDeviceStatus] = useState<DeviceStatus>('uninitialized');
   const [callState, setCallState] = useState<CallState>('idle');
   const [callDuration, setCallDuration] = useState<number>(0);
@@ -172,8 +180,14 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
         setIncomingCaller(callerNum);
         setCallState('ringing');
 
+        // Play personal ringtone audio at user's saved volume preference
+        const currentRingtoneKey = (profileRef.current as any)?.ringtone_name || 'classic';
+        const currentRingtoneVol = (profileRef.current as any)?.ringtone_volume ?? 80;
+        ringtoneEngine.startIncomingRingtone(currentRingtoneKey, currentRingtoneVol);
+
         incomingCall.on('accept', () => {
           console.log('[Twilio Device] Incoming call accepted by agent.');
+          ringtoneEngine.stopIncomingRingtone();
           setCallState('connected');
           setIncomingCaller(null);
           startTimer();
@@ -221,6 +235,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
 
         incomingCall.on('disconnect', () => {
           console.log('[Twilio Device] Incoming call disconnected.');
+          ringtoneEngine.stopIncomingRingtone();
           stopTimer();
           setCallState('ended');
           setIncomingCaller(null);
@@ -229,6 +244,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
 
         incomingCall.on('cancel', () => {
           console.log('[Twilio Device] Incoming call canceled.');
+          ringtoneEngine.stopIncomingRingtone();
           stopTimer();
           setCallState('idle');
           setIncomingCaller(null);
@@ -389,6 +405,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
 
   // Accept Incoming Call
   const acceptIncomingCall = useCallback(() => {
+    ringtoneEngine.stopIncomingRingtone();
     if (incomingCallRef.current) {
       incomingCallRef.current.accept();
     }
@@ -396,6 +413,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
 
   // Reject Incoming Call
   const rejectIncomingCall = useCallback(() => {
+    ringtoneEngine.stopIncomingRingtone();
     if (incomingCallRef.current) {
       incomingCallRef.current.reject();
       incomingCallRef.current = null;
@@ -406,6 +424,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
 
   // End Call
   const endCall = useCallback(() => {
+    ringtoneEngine.stopIncomingRingtone();
     if (incomingCallRef.current) {
       incomingCallRef.current.reject();
       incomingCallRef.current = null;

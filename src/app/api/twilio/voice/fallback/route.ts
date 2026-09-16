@@ -45,6 +45,7 @@ export async function POST(request: Request) {
 
     const callSid = params.CallSid || params.callSid || '';
     const dbCallId = params.dbCallId || params.db_call_id || searchParams.get('dbCallId') || '';
+    const preferredUserId = params.preferredUserId || params.preferred_user_id || searchParams.get('preferredUserId') || '';
     const dialCallStatus = (params.DialCallStatus || params.dialCallStatus || '').toLowerCase();
     const customerFrom = params.From || params.from || 'Unknown Caller';
     const companyTo = params.To || params.to || process.env.TWILIO_PHONE_NUMBER || '';
@@ -135,6 +136,7 @@ export async function POST(request: Request) {
           p_organization_id: organizationId,
           p_call_id: callRecord.id,
           p_ttl_seconds: 45,
+          p_exclude_user_id: preferredUserId || null,
         }
       );
 

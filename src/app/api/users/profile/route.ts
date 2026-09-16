@@ -24,41 +24,75 @@ export async function PATCH(request: Request) {
 
     const body = await request.json().catch(() => ({}));
     const rawTimezone = body.timezone;
-    const timeFormat = (body.time_format || body.timeFormat || '12h').trim();
+    const rawTimeFormat = body.time_format || body.timeFormat;
+    const rawRingtoneVol = body.ringtone_volume ?? body.ringtoneVolume;
+    const rawRingtoneName = body.ringtone_name ?? body.ringtoneName;
 
-    // Validate timeFormat
-    if (timeFormat !== '12h' && timeFormat !== '24h') {
-      return NextResponse.json(
-        { error: 'Invalid time format. Must be "12h" or "24h".' },
-        { status: 400 }
-      );
-    }
+    const updatePayload: Record<string, any> = {
+      updated_at: new Date().toISOString(),
+    };
 
-    let dbTimezone: string | null = null;
-    if (rawTimezone && typeof rawTimezone === 'string' && rawTimezone.trim() !== '' && rawTimezone.trim() !== 'AUTO') {
-      let tz = rawTimezone.trim();
-      if (tz === 'Asia/Calcutta') {
-        tz = 'Asia/Kolkata';
-      }
-      try {
-        Intl.DateTimeFormat(undefined, { timeZone: tz });
-        dbTimezone = tz;
-      } catch {
+    // Validate timeFormat if provided
+    if (rawTimeFormat !== undefined && rawTimeFormat !== null) {
+      const timeFormat = String(rawTimeFormat).trim();
+      if (timeFormat !== '12h' && timeFormat !== '24h') {
         return NextResponse.json(
-          { error: 'Invalid IANA time zone identifier.' },
+          { error: 'Invalid time format. Must be "12h" or "24h".' },
           { status: 400 }
         );
       }
+      updatePayload.time_format = timeFormat;
+    }
+
+    if (rawTimezone !== undefined) {
+      if (rawTimezone && typeof rawTimezone === 'string' && rawTimezone.trim() !== '' && rawTimezone.trim() !== 'AUTO') {
+        let tz = rawTimezone.trim();
+        if (tz === 'Asia/Calcutta') {
+          tz = 'Asia/Kolkata';
+        }
+        try {
+          Intl.DateTimeFormat(undefined, { timeZone: tz });
+          updatePayload.timezone = tz;
+        } catch {
+          return NextResponse.json(
+            { error: 'Invalid IANA time zone identifier.' },
+            { status: 400 }
+          );
+        }
+      } else {
+        updatePayload.timezone = null;
+      }
+    }
+
+    // Validate ringtone_volume if provided
+    if (rawRingtoneVol !== undefined && rawRingtoneVol !== null) {
+      const volNum = parseInt(String(rawRingtoneVol), 10);
+      if (isNaN(volNum) || volNum < 0 || volNum > 100) {
+        return NextResponse.json(
+          { error: 'Invalid ringtone volume. Must be an integer between 0 and 100.' },
+          { status: 400 }
+        );
+      }
+      updatePayload.ringtone_volume = volNum;
+    }
+
+    // Validate ringtone_name if provided
+    if (rawRingtoneName !== undefined && rawRingtoneName !== null) {
+      const validKeys = ['classic', 'soft', 'digital', 'pulse', 'minimal'];
+      const keyStr = String(rawRingtoneName).trim().toLowerCase();
+      if (!validKeys.includes(keyStr)) {
+        return NextResponse.json(
+          { error: 'Invalid ringtone key.' },
+          { status: 400 }
+        );
+      }
+      updatePayload.ringtone_name = keyStr;
     }
 
     // Update public.profiles strictly scoped to auth.uid()
     const { data: updatedProfile, error: updateError } = await (supabase as any)
       .from('profiles')
-      .update({
-        timezone: dbTimezone,
-        time_format: timeFormat,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq('id', user.id)
       .select()
       .single();

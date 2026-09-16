@@ -1,11 +1,19 @@
+'use client';
+
 import React from 'react';
 import { DialerWidget } from '@/components/dialer/DialerWidget';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { PhoneCall, Mic, Volume2, Settings, History, Shield, Globe } from 'lucide-react';
+import { useAuth } from '@/components/providers/AuthProvider';
+import Link from 'next/link';
 
 export default function PhonePage() {
+  const { profile } = useAuth();
+  const ringtoneVol = (profile as any)?.ringtone_volume ?? 80;
+  const ringtoneTone = (profile as any)?.ringtone_name || 'classic';
+
   const recentDials = [
     { name: 'John Doe', company: 'Acme Corp', number: '+1 (555) 014-4321', time: '10 mins ago' },
     { name: 'Sarah Connor', company: 'Cyberdyne', number: '+1 (555) 019-8821', time: '1 hour ago' },
@@ -19,25 +27,33 @@ export default function PhonePage() {
           <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">Browser WebRTC Dialer</h1>
           <p className="text-xs text-slate-500 dark:text-slate-400">Make and receive business calls directly from your browser.</p>
         </div>
-        <Badge variant="emerald" pulse size="md">
-          <Shield className="w-3 h-3" />
-          Voice Line Connected
-        </Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant="blue" size="md">
+            Direct PSTN Gateway Active
+          </Badge>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
-        {/* Dialer Panel */}
-        <div>
-          <DialerWidget />
-        </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Main Dialer Widget */}
+        <DialerWidget />
 
-        {/* Call Configuration & Quick Contacts */}
+        {/* Call Info & Preferences */}
         <div className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Settings className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                <span>Audio Device Settings</span>
+              <CardTitle className="text-sm flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Volume2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                  <span>Audio Device & Ringtone</span>
+                </div>
+                <Link
+                  href="/settings"
+                  className="text-[11px] font-medium text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+                >
+                  <Settings className="w-3 h-3" />
+                  <span>Configure</span>
+                </Link>
               </CardTitle>
             </CardHeader>
             <div className="space-y-4">
@@ -56,8 +72,8 @@ export default function PhonePage() {
                 </select>
               </div>
               <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
-                <span className="text-xs text-slate-500 dark:text-slate-400">Ringtone Volume</span>
-                <span className="text-xs font-mono text-blue-600 dark:text-blue-400 font-semibold">80%</span>
+                <span className="text-xs text-slate-500 dark:text-slate-400">Ringtone ({ringtoneTone})</span>
+                <span className="text-xs font-mono text-blue-600 dark:text-blue-400 font-semibold">{ringtoneVol}%</span>
               </div>
             </div>
           </Card>

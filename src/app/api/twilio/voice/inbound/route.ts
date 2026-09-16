@@ -206,6 +206,7 @@ export async function POST(request: Request) {
     // 4. Reserve target agents using atomic database RPC functions
     let reservedAgents: { id: string; full_name: string; twilio_identity: string }[] = [];
     let isPreferredAttempt = false;
+    let preferredUserId: string | null = null;
 
     // A. Check Preferred Agent Routing Layer FIRST if enabled
     if (preferAssignedAgentEnabled && customerFrom && customerFrom !== 'Unknown Caller') {
@@ -221,8 +222,6 @@ export async function POST(request: Request) {
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
-
-      let preferredUserId: string | null = null;
 
       if (matchedContact) {
         if (dbCallId) {
@@ -427,16 +426,16 @@ export async function POST(request: Request) {
     const isValidE164 = (num: string) => /^\+[1-9]\d{1,14}$/.test(num);
     const dialCallerId = isValidE164(customerFrom) ? customerFrom : (isValidE164(companyTo) ? companyTo : process.env.TWILIO_PHONE_NUMBER || companyTo);
 
-    // If preferred attempt, set action to preferred fallback route with 18s timeout; else status route with 30s timeout
+    // If preferred attempt, set action to preferred fallback route with 40s timeout; else status route with 30s timeout
     const dialStatusActionUrl = isPreferredAttempt
-      ? `${baseUrl}/api/twilio/voice/fallback?dbCallId=${encodeURIComponent(dbCallId)}&attempt=preferred`
+      ? `${baseUrl}/api/twilio/voice/fallback?dbCallId=${encodeURIComponent(dbCallId)}&attempt=preferred${preferredUserId ? `&preferredUserId=${encodeURIComponent(preferredUserId)}` : ''}`
       : (dbCallId
           ? `${baseUrl}/api/twilio/status?source=dial-action&dbCallId=${encodeURIComponent(dbCallId)}`
           : `${baseUrl}/api/twilio/status?source=dial-action`);
 
     const dialOptions: Record<string, any> = {
       callerId: dialCallerId,
-      timeout: isPreferredAttempt ? 18 : 30,
+      timeout: isPreferredAttempt ? 40 : 30,
       action: dialStatusActionUrl,
       method: 'POST',
     };

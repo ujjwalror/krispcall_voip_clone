@@ -115,3 +115,68 @@ html.light ::-webkit-scrollbar-thumb {
 html.light ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
+
+/* Custom Range Slider Styling for Personal Ringtone Volume */
+.custom-ringtone-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2px solid #2563eb;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(37, 99, 235, 0.1);
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+html.dark .custom-ringtone-slider::-webkit-slider-thumb {
+  background: #0f172a;
+  border: 2px solid #3b82f6;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(59, 130, 246, 0.2);
+}
+
+.custom-ringtone-slider::-webkit-slider-thumb:hover,
+.custom-ringtone-slider:active::-webkit-slider-thumb {
+  transform: scale(1.2);
+  box-shadow: 0 0 0 5px rgba(37, 99, 235, 0.2);
+}
+
+html.dark .custom-ringtone-slider::-webkit-slider-thumb:hover,
+html.dark .custom-ringtone-slider:active::-webkit-slider-thumb {
+  box-shadow: 0 0 0 5px rgba(59, 130, 246, 0.25);
+}
+
+.custom-ringtone-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2px solid #2563eb;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+html.dark .custom-ringtone-slider::-moz-range-thumb {
+  background: #0f172a;
+  border: 2px solid #3b82f6;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+}
+
+@keyframes volume-bar-pulse {
+  0%, 100% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scaleY(1.3);
+    opacity: 0.8;
+  }
+}
+
+.animate-volume-pulse {
+  animation: volume-bar-pulse 0.7s ease-in-out infinite;
+  transform-origin: bottom;
+}
+
