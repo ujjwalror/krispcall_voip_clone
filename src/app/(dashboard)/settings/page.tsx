@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { PersonalRingtoneSettings } from '@/components/settings/PersonalRingtoneSettings';
+import { CRMIntegrationsSettings } from '@/components/settings/CRMIntegrationsSettings';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -31,6 +32,7 @@ import {
   UserX,
   Globe,
   Clock,
+  Zap,
 } from 'lucide-react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useTheme } from '@/components/providers/ThemeProvider';
@@ -61,22 +63,25 @@ interface BlockedNumberItem {
 function SettingsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const initialTab = searchParams.get('tab') === 'blocked' ? 'blocked' : 'general';
+  const rawTab = searchParams.get('tab');
+  const initialTab = rawTab === 'blocked' ? 'blocked' : rawTab === 'integrations' ? 'integrations' : 'general';
 
   const { theme, setTheme } = useTheme();
   const { profile, refreshProfile } = useAuth();
-  const [activeTab, setActiveTab] = useState<'general' | 'blocked'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'general' | 'blocked' | 'integrations'>(initialTab);
 
   useEffect(() => {
     const tabParam = searchParams.get('tab');
     if (tabParam === 'blocked') {
       setActiveTab('blocked');
+    } else if (tabParam === 'integrations') {
+      setActiveTab('integrations');
     } else if (tabParam === 'general') {
       setActiveTab('general');
     }
   }, [searchParams]);
 
-  const handleTabChange = (tab: 'general' | 'blocked') => {
+  const handleTabChange = (tab: 'general' | 'blocked' | 'integrations') => {
     setActiveTab(tab);
     router.replace(`/settings?tab=${tab}`);
   };
@@ -288,6 +293,17 @@ function SettingsContent() {
                 {blockedNumbers.length}
               </span>
             )}
+          </button>
+          <button
+            onClick={() => handleTabChange('integrations')}
+            className={`px-3.5 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-2 ${
+              activeTab === 'integrations'
+                ? 'bg-blue-600 text-white shadow-md'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-900'
+            }`}
+          >
+            <Zap className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400" />
+            <span>CRM Integrations</span>
           </button>
         </div>
       </div>
@@ -542,7 +558,7 @@ function SettingsContent() {
           {/* Personal Ringtone & Audio Volume Settings */}
           <PersonalRingtoneSettings />
         </div>
-      ) : (
+      ) : activeTab === 'blocked' ? (
         /* Blocked Numbers Management Section */
         <div className="space-y-6">
           <Card>
@@ -690,6 +706,8 @@ function SettingsContent() {
             )}
           </Card>
         </div>
+      ) : (
+        <CRMIntegrationsSettings />
       )}
     </div>
   );
