@@ -29,6 +29,16 @@ export class ZohoCRMAdapter implements CRMAdapter {
   }
 
   /**
+   * Returns the registered OAuth application's home accounts domain.
+   * Specified via ZOHO_ACCOUNTS_DOMAIN (e.g., https://accounts.zoho.com.au for AU console,
+   * or https://accounts.zoho.com for US console).
+   */
+  private getAccountsDomain(): string {
+    const domain = process.env.ZOHO_ACCOUNTS_DOMAIN || 'https://accounts.zoho.com';
+    return domain.replace(/\/$/, '');
+  }
+
+  /**
    * Returns requested scopes for Zoho CRM.
    * Uses least privilege required for connection validation, org info,
    * plus future leads/contacts/calls/notes operations.
@@ -48,7 +58,9 @@ export class ZohoCRMAdapter implements CRMAdapter {
     const clientId = this.getClientId();
     const scopes = this.getScopes().join(',');
 
-    const baseUrl = 'https://accounts.zoho.com/oauth/v2/auth';
+    const accountsDomain = this.getAccountsDomain();
+    const baseUrl = `${accountsDomain}/oauth/v2/auth`;
+
     const query = new URLSearchParams({
       response_type: 'code',
       client_id: clientId,
@@ -79,9 +91,9 @@ export class ZohoCRMAdapter implements CRMAdapter {
   }> {
     const clientId = this.getClientId();
     const clientSecret = this.getClientSecret();
-    const accountsDomain = params.accountsServer || 'https://accounts.zoho.com';
+    const accountsDomain = (params.accountsServer || this.getAccountsDomain()).replace(/\/$/, '');
 
-    const tokenEndpoint = `${accountsDomain.replace(/\/$/, '')}/oauth/v2/token`;
+    const tokenEndpoint = `${accountsDomain}/oauth/v2/token`;
 
     const bodyParams = new URLSearchParams({
       grant_type: 'authorization_code',
@@ -107,7 +119,7 @@ export class ZohoCRMAdapter implements CRMAdapter {
     const accessToken = data.access_token;
     const refreshToken = data.refresh_token;
     const expiresIn = Number(data.expires_in) || 3600;
-    const apiDomain = data.api_domain || 'https://www.zohoapis.com';
+    const apiDomain = (data.api_domain || 'https://www.zohoapis.com').replace(/\/$/, '');
 
     if (!accessToken || !refreshToken) {
       throw new Error('Zoho OAuth Error: Missing access_token or refresh_token in response.');
@@ -165,9 +177,9 @@ export class ZohoCRMAdapter implements CRMAdapter {
   }): Promise<{ accessToken: string; expiresIn: number }> {
     const clientId = this.getClientId();
     const clientSecret = this.getClientSecret();
-    const accountsDomain = params.accountsDomain || 'https://accounts.zoho.com';
+    const accountsDomain = (params.accountsDomain || this.getAccountsDomain()).replace(/\/$/, '');
 
-    const tokenEndpoint = `${accountsDomain.replace(/\/$/, '')}/oauth/v2/token`;
+    const tokenEndpoint = `${accountsDomain}/oauth/v2/token`;
 
     const bodyParams = new URLSearchParams({
       grant_type: 'refresh_token',
@@ -201,7 +213,8 @@ export class ZohoCRMAdapter implements CRMAdapter {
     userEmail?: string;
   }> {
     try {
-      const res = await fetch(`${credentials.apiDomain}/crm/v8/users?type=CurrentUser`, {
+      const apiDomain = credentials.apiDomain.replace(/\/$/, '');
+      const res = await fetch(`${apiDomain}/crm/v8/users?type=CurrentUser`, {
         headers: { Authorization: `Zoho-oauthtoken ${credentials.accessToken}` },
       });
 
@@ -231,8 +244,8 @@ export class ZohoCRMAdapter implements CRMAdapter {
 
   async revokeToken(params: { refreshToken: string; accountsDomain: string }): Promise<void> {
     try {
-      const accountsDomain = params.accountsDomain || 'https://accounts.zoho.com';
-      const revokeEndpoint = `${accountsDomain.replace(/\/$/, '')}/oauth/v2/token/revoke`;
+      const accountsDomain = (params.accountsDomain || this.getAccountsDomain()).replace(/\/$/, '');
+      const revokeEndpoint = `${accountsDomain}/oauth/v2/token/revoke`;
       const bodyParams = new URLSearchParams({
         token: params.refreshToken,
       });
