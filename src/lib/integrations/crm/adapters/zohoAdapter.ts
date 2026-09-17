@@ -259,4 +259,269 @@ export class ZohoCRMAdapter implements CRMAdapter {
       console.warn('[ZohoAdapter] Token revocation failed (may already be revoked):', err);
     }
   }
+
+  /**
+   * Generates direct navigation URL for a linked Zoho record based on regional data-center.
+   * Zero API requests required. Zero access tokens in URL.
+   */
+  getRecordUrl(apiDomain: string, module: 'Leads' | 'Contacts', recordId: string): string {
+    const domain = (apiDomain || '').toLowerCase();
+    let baseCrmDomain = 'https://crm.zoho.com';
+
+    if (domain.includes('.zoho.com.au') || domain.includes('.zohoapis.com.au')) {
+      baseCrmDomain = 'https://crm.zoho.com.au';
+    } else if (domain.includes('.zoho.eu') || domain.includes('.zohoapis.eu')) {
+      baseCrmDomain = 'https://crm.zoho.eu';
+    } else if (domain.includes('.zoho.in') || domain.includes('.zohoapis.in')) {
+      baseCrmDomain = 'https://crm.zoho.in';
+    } else if (domain.includes('.zoho.com.cn') || domain.includes('.zohoapis.com.cn')) {
+      baseCrmDomain = 'https://crm.zoho.com.cn';
+    }
+
+    return `${baseCrmDomain}/crm/tab/${module}/${encodeURIComponent(recordId)}`;
+  }
+
+  /**
+   * Safe phone search variant helper.
+   * Generates safe phone search strings (e.g. E.164 "+61412345678" and local "0412345678").
+   */
+  private getPhoneVariants(phoneRaw: string): string[] {
+    const cleaned = phoneRaw.trim();
+    if (!cleaned) return [];
+    const variants = new Set<string>();
+    variants.add(cleaned);
+
+    // E.164 Australian variant
+    if (cleaned.startsWith('+614') && cleaned.length === 12) {
+      variants.add('04' + cleaned.slice(4));
+    } else if (cleaned.startsWith('04') && cleaned.length === 10) {
+      variants.add('+614' + cleaned.slice(2));
+    }
+    return Array.from(variants);
+  }
+
+  /**
+   * Normalizes phone numbers for complete-number comparison.
+   * Handles Australian international (+61 4...) and local (04...) equivalence.
+   */
+  private normalizePhoneForComparison(phoneRaw: string): string {
+    const digitsOnly = phoneRaw.replace(/\D/g, '');
+    if (digitsOnly.startsWith('614') && digitsOnly.length === 11) {
+      return '04' + digitsOnly.slice(3);
+    }
+    return digitsOnly;
+  }
+
+  /**
+   * Verifies if candidate phone/mobile represents the exact same complete phone number.
+   * Zero last-4 or partial/fuzzy matching.
+   */
+  private isPhoneMatch(requestedPhone: string, candidatePhone?: string): boolean {
+    if (!candidatePhone) return false;
+    const normReq = this.normalizePhoneForComparison(requestedPhone);
+    const normCand = this.normalizePhoneForComparison(candidatePhone);
+    return normReq.length > 0 && normReq === normCand;
+  }
+
+  /**
+   * Verifies exact case-insensitive email match.
+   */
+  private isEmailMatch(requestedEmail: string, candidateEmail?: string): boolean {
+    if (!candidateEmail || !requestedEmail) return false;
+    return requestedEmail.trim().toLowerCase() === candidateEmail.trim().toLowerCase();
+  }
+
+  /**
+   * Searches Zoho CRM Contacts and Leads modules using verified v8 search endpoint.
+   * Performs post-search normalization & verification on returned candidates.
+   * Conservative matching only. Handles HTTP 204 (No Content) normally.
+   */
+  async searchPerson(
+    credentials: CRMStoredCredentials,
+    query: { phone?: string; email?: string }
+  ): Promise<import('../types').CRMSearchResult[]> {
+    const apiDomain = credentials.apiDomain.replace(/\/$/, '');
+    const results: import('../types').CRMSearchResult[] = [];
+    const seenIds = new Set<string>();
+
+    const modules: Array<'Contacts' | 'Leads'> = ['Contacts', 'Leads'];
+
+    // Helper to query a single endpoint and verify candidate matches
+    const queryEndpoint = async (
+      moduleName: 'Contacts' | 'Leads',
+      searchParamKey: 'phone' | 'email',
+      searchVal: string,
+      targetRequestedVal: string
+    ) => {
+      try {
+        const url = `${apiDomain}/crm/v8/${moduleName}/search?${searchParamKey}=${encodeURIComponent(searchVal)}`;
+        const res = await fetch(url, {
+          headers: { Authorization: `Zoho-oauthtoken ${credentials.accessToken}` },
+        });
+
+        // 204 No Content means 0 records matched
+        if (res.status === 204 || !res.ok) {
+          return;
+        }
+
+        const data = await res.json();
+        if (data && Array.isArray(data.data)) {
+          for (const item of data.data) {
+            const id = String(item.id || '');
+            if (!id || seenIds.has(`${moduleName}:${id}`)) continue;
+
+            const phoneVal = item.Phone || item.Mobile || undefined;
+            const emailVal = item.Email || undefined;
+
+            // Post-search Verification
+            if (searchParamKey === 'phone') {
+              const matchesPhone =
+                (item.Phone && this.isPhoneMatch(targetRequestedVal, item.Phone)) ||
+                (item.Mobile && this.isPhoneMatch(targetRequestedVal, item.Mobile));
+              if (!matchesPhone) {
+                // Reject candidate returned by broad/imprecise Zoho search
+                continue;
+              }
+            } else if (searchParamKey === 'email') {
+              const matchesEmail = this.isEmailMatch(targetRequestedVal, emailVal);
+              if (!matchesEmail) {
+                continue;
+              }
+            }
+
+            seenIds.add(`${moduleName}:${id}`);
+
+            const firstName = item.First_Name || '';
+            const lastName = item.Last_Name || item.Full_Name || '';
+            const displayName = item.Full_Name || `${firstName} ${lastName}`.trim() || 'Zoho Record';
+            const company = item.Company || (item.Account_Name && item.Account_Name.name) || undefined;
+            const ownerName = item.Owner && item.Owner.name ? String(item.Owner.name) : undefined;
+
+            results.push({
+              externalRecordId: id,
+              externalModule: moduleName,
+              displayName,
+              firstName,
+              lastName,
+              company,
+              phone: phoneVal,
+              email: emailVal,
+              ownerName,
+            });
+          }
+        }
+      } catch (err) {
+        console.warn(`[ZohoAdapter] Error searching ${moduleName} with ${searchParamKey}=${searchVal}:`, err);
+      }
+    };
+
+    // 1. Phone search with safe variants and post-verification
+    if (query.phone && query.phone.trim()) {
+      const phoneVariants = this.getPhoneVariants(query.phone);
+      for (const mod of modules) {
+        for (const phoneVar of phoneVariants) {
+          await queryEndpoint(mod, 'phone', phoneVar, query.phone.trim());
+        }
+      }
+    }
+
+    // 2. Email search (if phone returned no matches or phone is empty)
+    if (results.length === 0 && query.email && query.email.trim()) {
+      const cleanEmail = query.email.trim();
+      for (const mod of modules) {
+        await queryEndpoint(mod, 'email', cleanEmail, cleanEmail);
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Creates a Zoho Lead using POST /crm/v8/Leads with standard Zoho field API names.
+   * Last Name is strictly validated without fabricated fallbacks.
+   * Handles customer-specific layout validation errors cleanly.
+   */
+  async createLead(
+    credentials: CRMStoredCredentials,
+    lead: import('../types').CRMLeadInput
+  ): Promise<{ externalRecordId: string; externalModule: 'Leads' }> {
+    const apiDomain = credentials.apiDomain.replace(/\/$/, '');
+    const url = `${apiDomain}/crm/v8/Leads`;
+
+    const lastNameClean = lead.lastName ? lead.lastName.trim() : '';
+    if (!lastNameClean) {
+      throw new Error('Last Name is required to create a Zoho Lead.');
+    }
+
+    const payloadItem: Record<string, any> = {
+      Last_Name: lastNameClean,
+    };
+
+    if (lead.firstName && lead.firstName.trim()) {
+      payloadItem.First_Name = lead.firstName.trim();
+    }
+    if (lead.phone && lead.phone.trim()) {
+      payloadItem.Phone = lead.phone.trim();
+    }
+    if (lead.email && lead.email.trim()) {
+      payloadItem.Email = lead.email.trim();
+    }
+    if (lead.company && lead.company.trim()) {
+      payloadItem.Company = lead.company.trim();
+    }
+    if (lead.description && lead.description.trim()) {
+      payloadItem.Description = lead.description.trim();
+    }
+
+    const body = { data: [payloadItem] };
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Zoho-oauthtoken ${credentials.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok || !data.data || !Array.isArray(data.data) || data.data.length === 0) {
+      const mainError = data.message || `HTTP ${res.status} from Zoho CRM API`;
+      throw new Error(`Failed to create Lead in Zoho CRM: ${mainError}`);
+    }
+
+    const firstResult = data.data[0];
+
+    if (firstResult.status === 'error') {
+      const code = firstResult.code || 'CREATION_FAILED';
+      const details = firstResult.details || {};
+      const fieldName = details.api_name || details.field_label || '';
+
+      if (code === 'MANDATORY_NOT_FOUND') {
+        throw new Error(
+          `Unable to create Lead in Zoho CRM: Your Zoho layout requires mandatory field '${fieldName || 'unknown'}'. Please complete this field in Zoho CRM or update layout requirements.`
+        );
+      } else if (code === 'INVALID_DATA') {
+        throw new Error(
+          `Unable to create Lead in Zoho CRM: Invalid data for field '${fieldName || 'unknown'}'. Message: ${firstResult.message}`
+        );
+      } else {
+        throw new Error(`Zoho CRM Error (${code}): ${firstResult.message || 'Lead creation rejected by Zoho.'}`);
+      }
+    }
+
+    const recordId = String(firstResult.details?.id || firstResult.details?.ID || '');
+
+    if (!recordId) {
+      throw new Error('Zoho CRM returned success status but omitted record ID.');
+    }
+
+    return {
+      externalRecordId: recordId,
+      externalModule: 'Leads',
+    };
+  }
 }
+
+

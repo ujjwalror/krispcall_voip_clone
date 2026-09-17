@@ -25,6 +25,43 @@ export interface CRMStoredCredentials {
   scopes: string[];
 }
 
+export interface CRMSearchResult {
+  externalRecordId: string;
+  externalModule: 'Leads' | 'Contacts';
+  displayName: string;
+  firstName?: string;
+  lastName?: string;
+  company?: string;
+  phone?: string;
+  email?: string;
+  ownerName?: string;
+}
+
+export interface CRMLeadInput {
+  firstName?: string;
+  lastName: string;
+  phone?: string;
+  email?: string;
+  company?: string;
+  description?: string;
+}
+
+export interface CRMRecordLink {
+  id: string;
+  organizationId: string;
+  provider: CRMProviderId;
+  contactId: string;
+  externalModule: 'Leads' | 'Contacts';
+  externalRecordId: string;
+  externalDisplayName?: string;
+  externalEmail?: string;
+  externalPhone?: string;
+  createdByUserId?: string;
+  createdAt: string;
+  updatedAt: string;
+  recordUrl?: string;
+}
+
 export interface CRMAdapter {
   providerId: CRMProviderId;
   displayName: string;
@@ -54,4 +91,9 @@ export interface CRMAdapter {
     userEmail?: string;
   }>;
   revokeToken?(params: { refreshToken: string; accountsDomain: string }): Promise<void>;
+
+  searchPerson(credentials: CRMStoredCredentials, query: { phone?: string; email?: string }): Promise<CRMSearchResult[]>;
+  createLead(credentials: CRMStoredCredentials, lead: CRMLeadInput): Promise<{ externalRecordId: string; externalModule: 'Leads' }>;
+  getRecordUrl(apiDomain: string, module: 'Leads' | 'Contacts', recordId: string): string;
 }
+
