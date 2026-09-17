@@ -489,7 +489,9 @@ export class ZohoCRMAdapter implements CRMAdapter {
       let dataType: import('../types').CRMFieldDataType = 'text';
       const rawType = String(f.data_type || '').toLowerCase();
 
-      if (['phone', 'mobile'].includes(rawType)) {
+      if (['text', 'string', 'varchar'].includes(rawType)) {
+        dataType = 'text';
+      } else if (['phone', 'mobile'].includes(rawType)) {
         dataType = 'phone';
       } else if (rawType === 'email') {
         dataType = 'email';
