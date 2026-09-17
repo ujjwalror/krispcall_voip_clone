@@ -23,12 +23,13 @@ export async function POST(request: Request) {
       email,
       company,
       description,
+      customFields = {},
       skipDuplicateCheck = false,
     } = body;
 
-    if (!contactId || !lastName) {
+    if (!contactId || (!lastName && !customFields.Last_Name)) {
       return NextResponse.json(
-        { error: 'Missing required payload parameters: contactId and lastName are required.' },
+        { error: 'Missing required payload parameter: Last Name is required.' },
         { status: 400 }
       );
     }
@@ -89,15 +90,65 @@ export async function POST(request: Request) {
       }
     }
 
-    // 2. Create Lead in Zoho CRM
+    // 2. Resolve single authoritative effective mapping (Saved mappings OR In-memory adapter defaults)
+    let effectiveMappings: Array<{ localFieldKey: string; externalFieldKey: string }> = [];
+
+    const { data: savedMappings } = await (adminSupabase as any)
+      .from('crm_field_mappings')
+      .select('*')
+      .eq('organization_id', profile.organization_id)
+      .eq('provider', provider)
+      .eq('external_module', 'Leads')
+      .eq('is_enabled', true);
+
+    if (savedMappings && Array.isArray(savedMappings) && savedMappings.length > 0) {
+      // A. Use saved org field mappings
+      effectiveMappings = savedMappings.map((m: any) => ({
+        localFieldKey: m.local_field_key,
+        externalFieldKey: m.external_field_key,
+      }));
+    } else {
+      // B. If NO saved mappings exist, use in-memory adapter recommended defaults for this request
+      effectiveMappings = adapter.getDefaultFieldMappings('Leads');
+    }
+
+    const dynamicFieldsPayload: Record<string, any> = {};
+
+    // Apply effective mappings
+    for (const map of effectiveMappings) {
+      const localKey = map.localFieldKey;
+      const extKey = map.externalFieldKey;
+      if (!localKey || !extKey) continue;
+
+      let val: any = undefined;
+      if (localKey === 'first_name') val = firstName;
+      else if (localKey === 'last_name') val = lastName;
+      else if (localKey === 'full_name') val = `${firstName || ''} ${lastName}`.trim();
+      else if (localKey === 'phone') val = phone || contact.phone;
+      else if (localKey === 'email') val = email || contact.email;
+      else if (localKey === 'company') val = company;
+      else if (localKey === 'notes') val = description;
+
+      if (val !== undefined && val !== null && String(val).trim() !== '') {
+        dynamicFieldsPayload[extKey] = typeof val === 'string' ? val.trim() : val;
+      }
+    }
+
+    // C. Merge explicitly entered customer-specific required values
+    if (customFields && typeof customFields === 'object') {
+      for (const [key, val] of Object.entries(customFields)) {
+        if (val !== undefined && val !== null && val !== '') {
+          dynamicFieldsPayload[key] = val;
+        }
+      }
+    }
+
+    // 3. Create Lead in Zoho CRM using single authoritative effective payload
     const created = await adapter.createLead(credentials, {
-      firstName: firstName || undefined,
-      lastName: lastName.trim(),
-      phone: phone || contact.phone || undefined,
-      email: email || contact.email || undefined,
-      company: company || undefined,
-      description: description || undefined,
+      lastName: lastName?.trim() || dynamicFieldsPayload.Last_Name || '',
+      dynamicFields: dynamicFieldsPayload,
     });
+
 
     // 3. Save link mapping in crm_record_links
     const displayName = `${firstName || ''} ${lastName}`.trim();

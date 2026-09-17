@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { CRMConnectionSummary } from '@/lib/integrations/crm/types';
 import { useSearchParams } from 'next/navigation';
+import { CRMFieldMappingSettings } from '@/components/settings/CRMFieldMappingSettings';
 
 /**
  * Default fallback catalogue to ensure provider cards render IMMEDIATELY,
@@ -91,6 +92,7 @@ export function CRMIntegrationsSettings() {
     }
   };
 
+
   useEffect(() => {
     fetchStatus();
 
@@ -159,6 +161,8 @@ export function CRMIntegrationsSettings() {
   };
 
   const isAdmin = userRole === 'admin';
+  const zohoIntegration = integrations.find((i) => i.provider === 'zoho');
+  const isZohoConnected = zohoIntegration?.status === 'connected';
 
   return (
     <div className="space-y-6">
@@ -401,6 +405,13 @@ export function CRMIntegrationsSettings() {
           );
         })}
       </div>
+
+      {/* Field Mapping Settings Section (Renders when Zoho CRM is connected) */}
+      {isZohoConnected && (
+        <div className="pt-4">
+          <CRMFieldMappingSettings provider="zoho" userRole={userRole} />
+        </div>
+      )}
     </div>
   );
 }

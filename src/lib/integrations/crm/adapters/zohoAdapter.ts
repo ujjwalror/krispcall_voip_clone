@@ -47,12 +47,14 @@ export class ZohoCRMAdapter implements CRMAdapter {
     return [
       'ZohoCRM.users.READ',
       'ZohoCRM.org.READ',
+      'ZohoCRM.settings.fields.READ',
       'ZohoCRM.modules.leads.ALL',
       'ZohoCRM.modules.contacts.ALL',
       'ZohoCRM.modules.calls.ALL',
       'ZohoCRM.modules.notes.ALL',
     ];
   }
+
 
   getAuthorizationUrl(params: { state: string; redirectUri: string }): string {
     const clientId = this.getClientId();
@@ -437,41 +439,134 @@ export class ZohoCRMAdapter implements CRMAdapter {
   }
 
   /**
-   * Creates a Zoho Lead using POST /crm/v8/Leads with standard Zoho field API names.
+   * Returns recommended default field mappings for Zoho CRM.
+   * Suggested only — Admin must explicitly save configuration.
+   */
+  getDefaultFieldMappings(module: 'Leads' | 'Contacts'): Array<{ localFieldKey: string; externalFieldKey: string }> {
+    return [
+      { localFieldKey: 'first_name', externalFieldKey: 'First_Name' },
+      { localFieldKey: 'last_name', externalFieldKey: 'Last_Name' },
+      { localFieldKey: 'phone', externalFieldKey: 'Phone' },
+      { localFieldKey: 'email', externalFieldKey: 'Email' },
+      { localFieldKey: 'company', externalFieldKey: 'Company' },
+      { localFieldKey: 'notes', externalFieldKey: 'Description' },
+    ];
+  }
+
+  /**
+   * Fetches normalized field metadata for a Zoho module using GET /crm/v8/settings/fields.
+   * Discovers standard and custom fields dynamically.
+   */
+  async getModuleFields(
+    credentials: CRMStoredCredentials,
+    module: 'Leads' | 'Contacts'
+  ): Promise<import('../types').CRMFieldMetadata[]> {
+    const apiDomain = credentials.apiDomain.replace(/\/$/, '');
+    const url = `${apiDomain}/crm/v8/settings/fields?module=${encodeURIComponent(module)}&type=all`;
+
+    const res = await fetch(url, {
+      headers: { Authorization: `Zoho-oauthtoken ${credentials.accessToken}` },
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(`Failed to fetch Zoho CRM field metadata: ${errData.message || `HTTP ${res.status}`}`);
+    }
+
+    const data = await res.json();
+    const fieldsRaw = data.fields || [];
+    const results: import('../types').CRMFieldMetadata[] = [];
+
+    for (const f of fieldsRaw) {
+      const fieldKey = String(f.api_name || '');
+      if (!fieldKey) continue;
+
+      const label = String(f.field_label || f.display_label || fieldKey);
+      const isRequired = Boolean(f.system_mandatory || f.mandatory);
+      const isWritable = !f.read_only;
+      const isCustom = Boolean(f.custom_field);
+
+      let dataType: import('../types').CRMFieldDataType = 'text';
+      const rawType = String(f.data_type || '').toLowerCase();
+
+      if (['phone', 'mobile'].includes(rawType)) {
+        dataType = 'phone';
+      } else if (rawType === 'email') {
+        dataType = 'email';
+      } else if (['textarea', 'multiline'].includes(rawType)) {
+        dataType = 'textarea';
+      } else if (['picklist', 'multiselect'].includes(rawType)) {
+        dataType = 'picklist';
+      } else if (['integer', 'double', 'currency', 'bigint', 'percent'].includes(rawType)) {
+        dataType = 'number';
+      } else if (rawType === 'boolean') {
+        dataType = 'boolean';
+      } else if (rawType === 'date') {
+        dataType = 'date';
+      } else if (rawType === 'datetime') {
+        dataType = 'datetime';
+      } else {
+        dataType = 'other';
+      }
+
+      let options: import('../types').CRMFieldOption[] | undefined;
+
+      if (dataType === 'picklist' && Array.isArray(f.pick_list_values)) {
+        options = f.pick_list_values
+          .filter((opt: any) => opt && opt.actual_value !== undefined)
+          .map((opt: any) => ({
+            label: String(opt.display_value || opt.actual_value),
+            value: String(opt.actual_value),
+          }));
+      }
+
+      results.push({
+        fieldKey,
+        label,
+        dataType,
+        isRequired,
+        isWritable,
+        isCustom,
+        options,
+      });
+    }
+
+    return results;
+  }
+
+  /**
+   * Creates a Zoho Lead using POST /crm/v8/Leads with standard and mapped custom fields.
    * Last Name is strictly validated without fabricated fallbacks.
    * Handles customer-specific layout validation errors cleanly.
    */
   async createLead(
     credentials: CRMStoredCredentials,
-    lead: import('../types').CRMLeadInput
+    lead: import('../types').CRMLeadInput & { dynamicFields?: Record<string, any> }
   ): Promise<{ externalRecordId: string; externalModule: 'Leads' }> {
     const apiDomain = credentials.apiDomain.replace(/\/$/, '');
     const url = `${apiDomain}/crm/v8/Leads`;
 
-    const lastNameClean = lead.lastName ? lead.lastName.trim() : '';
+    const payloadItem: Record<string, any> = {};
+
+    // Populate payload strictly from effective dynamicFields mapping
+    if (lead.dynamicFields && typeof lead.dynamicFields === 'object') {
+      for (const [key, val] of Object.entries(lead.dynamicFields)) {
+        if (val !== undefined && val !== null && val !== '') {
+          payloadItem[key] = val;
+        }
+      }
+    }
+
+    // Ensure Zoho Lead Last_Name requirement is satisfied without fabricating dummy values
+    if (!payloadItem.Last_Name && lead.lastName && lead.lastName.trim()) {
+      payloadItem.Last_Name = lead.lastName.trim();
+    }
+
+    const lastNameClean = payloadItem.Last_Name ? String(payloadItem.Last_Name).trim() : '';
     if (!lastNameClean) {
       throw new Error('Last Name is required to create a Zoho Lead.');
     }
-
-    const payloadItem: Record<string, any> = {
-      Last_Name: lastNameClean,
-    };
-
-    if (lead.firstName && lead.firstName.trim()) {
-      payloadItem.First_Name = lead.firstName.trim();
-    }
-    if (lead.phone && lead.phone.trim()) {
-      payloadItem.Phone = lead.phone.trim();
-    }
-    if (lead.email && lead.email.trim()) {
-      payloadItem.Email = lead.email.trim();
-    }
-    if (lead.company && lead.company.trim()) {
-      payloadItem.Company = lead.company.trim();
-    }
-    if (lead.description && lead.description.trim()) {
-      payloadItem.Description = lead.description.trim();
-    }
+    payloadItem.Last_Name = lastNameClean;
 
     const body = { data: [payloadItem] };
 
@@ -523,5 +618,6 @@ export class ZohoCRMAdapter implements CRMAdapter {
     };
   }
 }
+
 
 

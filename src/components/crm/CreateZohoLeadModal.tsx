@@ -16,7 +16,7 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { Contact } from '@/lib/types';
-import { CRMSearchResult } from '@/lib/integrations/crm/types';
+import { CRMSearchResult, CRMFieldMetadata } from '@/lib/integrations/crm/types';
 
 interface CreateZohoLeadModalProps {
   contact: Contact | null;
@@ -40,7 +40,13 @@ export function CreateZohoLeadModal({
   const [company, setCompany] = useState('');
   const [description, setDescription] = useState('Created from VoIP Hub saved contact');
 
+  // Dynamic CRM Required Fields State
+  const [dynamicFields, setDynamicFields] = useState<CRMFieldMetadata[]>([]);
+  const [customFieldValues, setCustomFieldValues] = useState<Record<string, any>>({});
+  const [unsupportedRequiredField, setUnsupportedRequiredField] = useState<CRMFieldMetadata | null>(null);
+
   const [isLoading, setIsLoading] = useState(false);
+  const [isInitializing, setIsInitializing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [duplicateCandidates, setDuplicateCandidates] = useState<CRMSearchResult[]>([]);
 
@@ -54,15 +60,87 @@ export function CreateZohoLeadModal({
       setDescription('Created from VoIP Hub saved contact');
       setError(null);
       setDuplicateCandidates([]);
+      setCustomFieldValues({});
+      setUnsupportedRequiredField(null);
+
+      // Load CRM metadata to detect customer-specific required fields
+      loadCrmRequirements();
     }
   }, [isOpen, contact]);
+
+  const loadCrmRequirements = async () => {
+    setIsInitializing(true);
+    try {
+      // 1. Fetch metadata snapshot
+      const fieldsRes = await fetch('/api/integrations/crm/fields?provider=zoho&module=Leads&refresh=false');
+      const fieldsData = await fieldsRes.json();
+
+      // 2. Fetch saved organization mappings
+      const mapRes = await fetch('/api/integrations/crm/mapping?provider=zoho&module=Leads');
+      const mapData = await mapRes.json();
+
+      if (fieldsRes.ok && Array.isArray(fieldsData.fields)) {
+        const allFields: CRMFieldMetadata[] = fieldsData.fields;
+        const mappedKeys = new Set<string>();
+
+        if (mapRes.ok && Array.isArray(mapData.mappings)) {
+          for (const m of mapData.mappings) {
+            if (m.externalFieldKey) mappedKeys.add(m.externalFieldKey);
+          }
+        } else {
+          // Fallback to standard default keys if no saved mapping yet
+          mappedKeys.add('First_Name');
+          mappedKeys.add('Last_Name');
+          mappedKeys.add('Phone');
+          mappedKeys.add('Email');
+          mappedKeys.add('Company');
+          mappedKeys.add('Description');
+        }
+
+        // Identify required writable fields that are NOT mapped to local fields
+        const unmappedRequired = allFields.filter(
+          (f) => f.isRequired && f.isWritable && !mappedKeys.has(f.fieldKey)
+        );
+
+        // Check for unsupported complex required field
+        const unsupported = unmappedRequired.find((f) => f.dataType === 'other');
+        if (unsupported) {
+          setUnsupportedRequiredField(unsupported);
+        } else {
+          setDynamicFields(unmappedRequired);
+        }
+      }
+    } catch (err) {
+      console.warn('[CreateZohoLeadModal] Error fetching CRM requirements:', err);
+    } finally {
+      setIsInitializing(false);
+    }
+  };
+
+  const handleCustomFieldChange = (key: string, value: any) => {
+    setCustomFieldValues((prev) => ({ ...prev, [key]: value }));
+  };
 
   const handleSubmit = async (skipDuplicateCheck = false) => {
     if (!contact) return;
 
-    if (!lastName.trim()) {
+    if (unsupportedRequiredField) {
+      setError(`Your CRM requires '${unsupportedRequiredField.label}', which uses a field type not currently supported by VoIP Hub.`);
+      return;
+    }
+
+    if (!lastName.trim() && !customFieldValues.Last_Name) {
       setError('Last Name is required to create a Zoho Lead.');
       return;
+    }
+
+    // Validate dynamic required inputs
+    for (const reqField of dynamicFields) {
+      const val = customFieldValues[reqField.fieldKey];
+      if (val === undefined || val === null || String(val).trim() === '') {
+        setError(`CRM required field '${reqField.label}' must be provided.`);
+        return;
+      }
     }
 
     setIsLoading(true);
@@ -81,6 +159,7 @@ export function CreateZohoLeadModal({
           email: email.trim() || undefined,
           company: company.trim() || undefined,
           description: description.trim() || undefined,
+          customFields: customFieldValues,
           skipDuplicateCheck,
         }),
       });
@@ -142,6 +221,22 @@ export function CreateZohoLeadModal({
             </div>
           )}
 
+          {/* Unsupported Required Field Error Banner */}
+          {unsupportedRequiredField && (
+            <div className="p-4 rounded-xl bg-rose-950/80 border border-rose-800 text-rose-200 space-y-2">
+              <div className="flex items-center gap-2 font-bold text-xs">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>Unsupported CRM Required Field</span>
+              </div>
+              <p className="text-xs text-rose-300/90 leading-relaxed">
+                Your Zoho CRM layout requires field <span className="font-bold underline">{unsupportedRequiredField.label}</span> ({unsupportedRequiredField.fieldKey}), which uses a complex field type not currently supported by VoIP Hub.
+              </p>
+              <p className="text-[11px] text-slate-400">
+                Please update your Zoho CRM page layout settings or complete this lead directly inside Zoho CRM.
+              </p>
+            </div>
+          )}
+
           {/* Duplicate Candidates Warning Banner */}
           {duplicateCandidates.length > 0 && (
             <div className="p-4 rounded-xl bg-amber-950/60 border border-amber-800 space-y-3">
@@ -184,7 +279,7 @@ export function CreateZohoLeadModal({
                   variant="outline"
                   size="sm"
                   onClick={() => handleSubmit(true)}
-                  disabled={isLoading}
+                  disabled={isLoading || Boolean(unsupportedRequiredField)}
                   className="w-full text-xs border-amber-700/60 text-amber-300 hover:bg-amber-950/60"
                 >
                   Force Create New Lead Anyway
@@ -193,90 +288,157 @@ export function CreateZohoLeadModal({
             </div>
           )}
 
-          {/* Form */}
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
+          {/* Initializing Spinner */}
+          {isInitializing ? (
+            <div className="py-8 text-center text-xs text-slate-400 flex flex-col items-center justify-center gap-2">
+              <Loader2 className="w-5 h-5 animate-spin text-blue-400" />
+              <span>Checking CRM layout requirements...</span>
+            </div>
+          ) : (
+            /* Form Inputs */
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                    First Name
+                  </label>
+                  <input
+                    type="text"
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                    placeholder="First name"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                    Last Name <span className="text-rose-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
+                    placeholder="Last name (required)"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                    Phone Number
+                  </label>
+                  <input
+                    type="text"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="+14155552671"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs font-mono focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                    Email Address
+                  </label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="user@example.com"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
               <div className="space-y-1">
                 <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                  First Name
+                  Company / Organization
                 </label>
                 <input
                   type="text"
-                  value={firstName}
-                  onChange={(e) => setFirstName(e.target.value)}
-                  placeholder="First name"
+                  value={company}
+                  onChange={(e) => setCompany(e.target.value)}
+                  placeholder="Company Name (optional)"
                   className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500"
                 />
               </div>
 
               <div className="space-y-1">
                 <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                  Last Name <span className="text-rose-400">*</span>
+                  Description / Context Notes
                 </label>
-                <input
-                  type="text"
-                  value={lastName}
-                  onChange={(e) => setLastName(e.target.value)}
-                  placeholder="Last name (required)"
+                <textarea
+                  rows={2}
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Created from VoIP Hub saved contact"
                   className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500"
                 />
               </div>
-            </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                  Phone Number
-                </label>
-                <input
-                  type="text"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="+14155552671"
-                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs font-mono focus:outline-none focus:border-blue-500"
-                />
-              </div>
+              {/* Dynamic Customer-Specific Required CRM Fields */}
+              {dynamicFields.length > 0 && (
+                <div className="pt-2 border-t border-slate-800 space-y-3">
+                  <p className="text-[11px] font-semibold text-amber-400 flex items-center gap-1.5">
+                    <Badge variant="amber" size="sm">Required by your CRM</Badge>
+                    <span>Additional CRM Required Fields</span>
+                  </p>
 
-              <div className="space-y-1">
-                <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                  Email Address
-                </label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="user@example.com"
-                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500"
-                />
-              </div>
-            </div>
+                  {dynamicFields.map((field) => (
+                    <div key={field.fieldKey} className="space-y-1">
+                      <label className="text-[10px] font-semibold text-slate-300 uppercase tracking-wider flex items-center justify-between">
+                        <span>{field.label} <span className="text-rose-400">*</span></span>
+                        <span className="text-[9px] text-slate-500 font-mono">({field.dataType})</span>
+                      </label>
 
-            <div className="space-y-1">
-              <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                Company / Organization
-              </label>
-              <input
-                type="text"
-                value={company}
-                onChange={(e) => setCompany(e.target.value)}
-                placeholder="Company Name (optional)"
-                className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500"
-              />
+                      {field.dataType === 'picklist' && field.options ? (
+                        <select
+                          value={customFieldValues[field.fieldKey] || ''}
+                          onChange={(e) => handleCustomFieldChange(field.fieldKey, e.target.value)}
+                          className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500"
+                        >
+                          <option value="">-- Select {field.label} --</option>
+                          {field.options.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : field.dataType === 'boolean' ? (
+                        <select
+                          value={customFieldValues[field.fieldKey] ?? ''}
+                          onChange={(e) => handleCustomFieldChange(field.fieldKey, e.target.value === 'true')}
+                          className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500"
+                        >
+                          <option value="">-- Select --</option>
+                          <option value="true">Yes / True</option>
+                          <option value="false">No / False</option>
+                        </select>
+                      ) : field.dataType === 'date' ? (
+                        <input
+                          type="date"
+                          value={customFieldValues[field.fieldKey] || ''}
+                          onChange={(e) => handleCustomFieldChange(field.fieldKey, e.target.value)}
+                          className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500"
+                        />
+                      ) : (
+                        <input
+                          type={field.dataType === 'number' ? 'number' : 'text'}
+                          value={customFieldValues[field.fieldKey] || ''}
+                          onChange={(e) => handleCustomFieldChange(field.fieldKey, e.target.value)}
+                          placeholder={`Enter ${field.label}`}
+                          className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500"
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-
-            <div className="space-y-1">
-              <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                Description / Context Notes
-              </label>
-              <textarea
-                rows={2}
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Created from VoIP Hub saved contact"
-                className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500"
-              />
-            </div>
-          </div>
+          )}
         </div>
 
         {/* Footer */}
@@ -287,7 +449,7 @@ export function CreateZohoLeadModal({
           <Button
             variant="success"
             size="sm"
-            disabled={isLoading || !lastName.trim()}
+            disabled={isLoading || isInitializing || !lastName.trim() || Boolean(unsupportedRequiredField)}
             onClick={() => handleSubmit(false)}
           >
             {isLoading ? (
@@ -302,3 +464,4 @@ export function CreateZohoLeadModal({
     </div>
   );
 }
+
