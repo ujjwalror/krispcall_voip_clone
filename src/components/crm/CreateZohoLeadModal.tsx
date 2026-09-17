@@ -40,8 +40,10 @@ export function CreateZohoLeadModal({
   const [company, setCompany] = useState('');
   const [description, setDescription] = useState('Created from VoIP Hub saved contact');
 
-  // Dynamic CRM Required Fields State
+  // Dynamic CRM Required Fields & Effective Mappings State
   const [dynamicFields, setDynamicFields] = useState<CRMFieldMetadata[]>([]);
+  const [effectiveMappings, setEffectiveMappings] = useState<Record<string, string>>({});
+  const [fieldMetadataMap, setFieldMetadataMap] = useState<Map<string, CRMFieldMetadata>>(new Map());
   const [customFieldValues, setCustomFieldValues] = useState<Record<string, any>>({});
   const [unsupportedRequiredField, setUnsupportedRequiredField] = useState<CRMFieldMetadata | null>(null);
 
@@ -63,7 +65,7 @@ export function CreateZohoLeadModal({
       setCustomFieldValues({});
       setUnsupportedRequiredField(null);
 
-      // Load CRM metadata to detect customer-specific required fields
+      // Load CRM metadata & effective mappings
       loadCrmRequirements();
     }
   }, [isOpen, contact]);
@@ -81,21 +83,32 @@ export function CreateZohoLeadModal({
 
       if (fieldsRes.ok && Array.isArray(fieldsData.fields)) {
         const allFields: CRMFieldMetadata[] = fieldsData.fields;
-        const mappedKeys = new Set<string>();
+        const metaMap = new Map<string, CRMFieldMetadata>();
+        allFields.forEach((f) => metaMap.set(f.fieldKey, f));
+        setFieldMetadataMap(metaMap);
 
-        if (mapRes.ok && Array.isArray(mapData.mappings)) {
+        const currentMappings: Record<string, string> = {};
+
+        if (mapRes.ok && Array.isArray(mapData.mappings) && mapData.mappings.length > 0) {
+          // A. Use saved org mappings
           for (const m of mapData.mappings) {
-            if (m.externalFieldKey) mappedKeys.add(m.externalFieldKey);
+            if (m.localFieldKey && m.externalFieldKey) {
+              currentMappings[m.localFieldKey] = m.externalFieldKey;
+            }
           }
         } else {
-          // Fallback to standard default keys if no saved mapping yet
-          mappedKeys.add('First_Name');
-          mappedKeys.add('Last_Name');
-          mappedKeys.add('Phone');
-          mappedKeys.add('Email');
-          mappedKeys.add('Company');
-          mappedKeys.add('Description');
+          // B. If NO saved mappings, use in-memory adapter recommended defaults for display
+          currentMappings.first_name = 'First_Name';
+          currentMappings.last_name = 'Last_Name';
+          currentMappings.phone = 'Phone';
+          currentMappings.email = 'Email';
+          currentMappings.company = 'Company';
+          currentMappings.notes = 'Description';
         }
+
+        setEffectiveMappings(currentMappings);
+
+        const mappedKeys = new Set<string>(Object.values(currentMappings));
 
         // Identify required writable fields that are NOT mapped to local fields
         const unmappedRequired = allFields.filter(
@@ -115,6 +128,25 @@ export function CreateZohoLeadModal({
     } finally {
       setIsInitializing(false);
     }
+  };
+
+  const getMappingIndicator = (localKey: string) => {
+    const extKey = effectiveMappings[localKey];
+    if (!extKey) {
+      return (
+        <span className="text-[10px] text-slate-500 italic block mt-0.5">
+          Not mapped — will not be sent to Zoho
+        </span>
+      );
+    }
+    const metadata = fieldMetadataMap.get(extKey);
+    const label = metadata?.label || extKey;
+    return (
+      <span className="text-[10px] text-emerald-400/90 font-medium block mt-0.5 flex items-center gap-1">
+        <span className="w-1 h-1 rounded-full bg-emerald-400"></span>
+        Mapped to Zoho: <span className="font-semibold text-emerald-300">{label}</span>
+      </span>
+    );
   };
 
   const handleCustomFieldChange = (key: string, value: any) => {
@@ -309,6 +341,7 @@ export function CreateZohoLeadModal({
                     placeholder="First name"
                     className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500"
                   />
+                  {getMappingIndicator('first_name')}
                 </div>
 
                 <div className="space-y-1">
@@ -322,6 +355,7 @@ export function CreateZohoLeadModal({
                     placeholder="Last name (required)"
                     className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500"
                   />
+                  {getMappingIndicator('last_name')}
                 </div>
               </div>
 
@@ -337,6 +371,7 @@ export function CreateZohoLeadModal({
                     placeholder="+14155552671"
                     className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs font-mono focus:outline-none focus:border-blue-500"
                   />
+                  {getMappingIndicator('phone')}
                 </div>
 
                 <div className="space-y-1">
@@ -350,6 +385,7 @@ export function CreateZohoLeadModal({
                     placeholder="user@example.com"
                     className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500"
                   />
+                  {getMappingIndicator('email')}
                 </div>
               </div>
 
@@ -364,11 +400,12 @@ export function CreateZohoLeadModal({
                   placeholder="Company Name (optional)"
                   className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500"
                 />
+                {getMappingIndicator('company')}
               </div>
 
               <div className="space-y-1">
                 <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                  Description / Context Notes
+                  Notes & Remarks
                 </label>
                 <textarea
                   rows={2}
@@ -377,6 +414,7 @@ export function CreateZohoLeadModal({
                   placeholder="Created from VoIP Hub saved contact"
                   className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500"
                 />
+                {getMappingIndicator('notes')}
               </div>
 
               {/* Dynamic Customer-Specific Required CRM Fields */}
