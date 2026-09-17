@@ -39,17 +39,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Forbidden. Admin role required to reset field mappings.' }, { status: 403 });
     }
 
-    const adminSupabase = createAdminClient();
-
-    // Clear saved mappings for this module
-    await (adminSupabase as any)
-      .from('crm_field_mappings')
-      .delete()
-      .eq('organization_id', profile.organization_id)
-      .eq('provider', provider)
-      .eq('external_module', externalModule);
-
-    // Get adapter defaults
+    // Get adapter recommended default suggestions without mutating saved DB mappings
     const adapter = getCRMAdapter(provider as any);
     const defaults = adapter.getDefaultFieldMappings(externalModule);
 

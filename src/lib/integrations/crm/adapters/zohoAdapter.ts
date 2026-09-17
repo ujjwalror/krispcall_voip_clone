@@ -489,9 +489,9 @@ export class ZohoCRMAdapter implements CRMAdapter {
       let dataType: import('../types').CRMFieldDataType = 'text';
       const rawType = String(f.data_type || '').toLowerCase();
 
-      if (['text', 'string', 'varchar', 'name'].includes(rawType)) {
+      if (['text', 'string', 'varchar', 'name', 'company', 'company_name', 'website', 'url', 'domain'].includes(rawType)) {
         dataType = 'text';
-      } else if (['phone', 'mobile'].includes(rawType)) {
+      } else if (['phone', 'mobile', 'fax'].includes(rawType)) {
         dataType = 'phone';
       } else if (rawType === 'email') {
         dataType = 'email';
@@ -499,7 +499,7 @@ export class ZohoCRMAdapter implements CRMAdapter {
         dataType = 'textarea';
       } else if (['picklist', 'multiselect'].includes(rawType)) {
         dataType = 'picklist';
-      } else if (['integer', 'double', 'currency', 'bigint', 'percent'].includes(rawType)) {
+      } else if (['integer', 'double', 'currency', 'bigint', 'percent', 'autonumber', 'auto number'].includes(rawType)) {
         dataType = 'number';
       } else if (rawType === 'boolean') {
         dataType = 'boolean';
