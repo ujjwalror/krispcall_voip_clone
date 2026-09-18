@@ -136,9 +136,42 @@ export async function POST(request: Request) {
       ? rawCache.fields
       : [];
 
-    // Server-side compatibility check for each submitted mapping
+    // Fetch active attribution rules to prevent field collisions BEFORE deleting existing mappings
+    let activeAttributionRules: any[] = [];
+    try {
+      const { data: attrRows } = await (adminSupabase as any)
+        .from('crm_record_attribution_rules')
+        .select('external_field_key')
+        .eq('organization_id', profile.organization_id)
+        .eq('provider', provider)
+        .eq('external_module', externalModule)
+        .eq('is_enabled', true);
+
+      if (attrRows && Array.isArray(attrRows)) {
+        activeAttributionRules = attrRows;
+      }
+    } catch (err) {
+      // Table may not exist yet
+    }
+
+    const activeAttrKeys = new Set<string>(
+      activeAttributionRules.map((r: any) => r.external_field_key).filter(Boolean)
+    );
+
+    // Server-side compatibility & attribution collision check BEFORE deleting existing mappings
     for (const m of mappings) {
       if (!m.localFieldKey || !m.externalFieldKey) continue;
+
+      if (activeAttrKeys.has(m.externalFieldKey)) {
+        const targetMetadata = fieldsMetadata.find((f) => f.fieldKey === m.externalFieldKey);
+        const label = targetMetadata?.label || m.externalFieldKey;
+        return NextResponse.json(
+          {
+            error: `CRM field '${label}' is currently configured as a CRM Record Attribution field. Remove attribution or select another field.`,
+          },
+          { status: 400 }
+        );
+      }
 
       const localDef = LOCAL_VOIP_HUB_FIELDS.find((f) => f.key === m.localFieldKey);
       if (!localDef) {

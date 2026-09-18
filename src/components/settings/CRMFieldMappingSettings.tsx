@@ -40,6 +40,11 @@ export function CRMFieldMappingSettings({
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [cachedAt, setCachedAt] = useState<string | null>(null);
 
+  // CRM Record Attribution State
+  const [attrTargetKey, setAttrTargetKey] = useState<string>('');
+  const [attrValue, setAttrValue] = useState<string>('');
+  const [isSavingAttr, setIsSavingAttr] = useState(false);
+
   const isAdmin = userRole === 'admin';
 
   useEffect(() => {
@@ -80,6 +85,20 @@ export function CRMFieldMappingSettings({
           }
         }
         setMappings(mapObj);
+      }
+
+      // 3. Fetch CRM Record Attribution rule
+      const attrRes = await fetch(
+        `/api/integrations/crm/attribution?provider=${provider}&module=${activeModule}`
+      );
+      const attrData = await attrRes.json();
+      if (attrRes.ok && Array.isArray(attrData.rules) && attrData.rules.length > 0) {
+        const rule = attrData.rules[0];
+        setAttrTargetKey(rule.externalFieldKey || '');
+        setAttrValue(rule.configuredValue || '');
+      } else {
+        setAttrTargetKey('');
+        setAttrValue('');
       }
     } catch (err: any) {
       setError(err.message || 'Error loading field mappings');
@@ -134,6 +153,39 @@ export function CRMFieldMappingSettings({
     }
   };
 
+  const handleSaveAttribution = async () => {
+    if (!isAdmin) return;
+    setIsSavingAttr(true);
+    setError(null);
+    setSuccessMsg(null);
+
+    try {
+      const res = await fetch('/api/integrations/crm/attribution', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider,
+          externalModule: activeModule,
+          attributeKey: 'lead_source',
+          externalFieldKey: attrTargetKey,
+          configuredValue: attrValue,
+          isEnabled: Boolean(attrTargetKey && attrValue),
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to save record attribution rule');
+      }
+
+      setSuccessMsg('CRM Record Attribution rule saved successfully.');
+    } catch (err: any) {
+      setError(err.message || 'Error saving record attribution rule');
+    } finally {
+      setIsSavingAttr(false);
+    }
+  };
+
   const handleReset = async () => {
     if (!isAdmin) return;
     setIsResetting(true);
@@ -169,6 +221,13 @@ export function CRMFieldMappingSettings({
       setIsResetting(false);
     }
   };
+
+  const selectedAttrMetadata = fields.find((f) => f.fieldKey === attrTargetKey);
+  const isAttrPicklist = selectedAttrMetadata?.dataType === 'picklist';
+  const hasVoipHubOption =
+    isAttrPicklist &&
+    Array.isArray(selectedAttrMetadata?.options) &&
+    selectedAttrMetadata.options.some((opt) => opt.value === 'VoIP Hub' || opt.label === 'VoIP Hub');
 
   return (
     <div className="space-y-5">
@@ -324,6 +383,113 @@ export function CRMFieldMappingSettings({
                 );
               })}
             </div>
+          </div>
+
+          {/* CRM Record Attribution Section */}
+          <div className="rounded-xl border border-slate-800 overflow-hidden bg-slate-900/60 p-4 space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+              <div>
+                <h4 className="text-xs font-bold text-slate-200 flex items-center gap-2">
+                  <span>CRM Record Attribution</span>
+                  <Badge variant="purple" size="sm">Optional Metadata</Badge>
+                </h4>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Attribute exported CRM records to VoIP Hub by assigning a record source field (e.g. Lead Source → "VoIP Hub").
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              {/* Destination Field */}
+              <div className="space-y-1">
+                <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                  Target CRM Record Source Field
+                </label>
+                <select
+                  value={attrTargetKey}
+                  disabled={!isAdmin}
+                  onChange={(e) => {
+                    const key = e.target.value;
+                    setAttrTargetKey(key);
+                    const meta = fields.find((f) => f.fieldKey === key);
+                    if (meta?.dataType === 'picklist' && Array.isArray(meta.options) && meta.options.length > 0) {
+                      const v = meta.options.find((o) => o.value === 'VoIP Hub')?.value || meta.options[0].value;
+                      setAttrValue(v);
+                    } else if (!attrValue) {
+                      setAttrValue('VoIP Hub');
+                    }
+                  }}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500 disabled:opacity-60"
+                >
+                  <option value="">-- No Record Attribution --</option>
+                  {fields
+                    .filter((f) => f.isWritable && (f.dataType === 'text' || f.dataType === 'picklist'))
+                    .map((field) => (
+                      <option key={field.fieldKey} value={field.fieldKey}>
+                        {field.label} ({field.fieldKey}) [{field.dataType}]
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              {/* Attribution Value */}
+              <div className="space-y-1">
+                <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                  Attribution Value
+                </label>
+                {isAttrPicklist && Array.isArray(selectedAttrMetadata?.options) ? (
+                  <select
+                    value={attrValue}
+                    disabled={!isAdmin || !attrTargetKey}
+                    onChange={(e) => setAttrValue(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500 disabled:opacity-60"
+                  >
+                    {selectedAttrMetadata.options.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label} ({opt.value})
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={attrValue}
+                    disabled={!isAdmin || !attrTargetKey}
+                    onChange={(e) => setAttrValue(e.target.value)}
+                    placeholder="e.g. VoIP Hub"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500 disabled:opacity-60"
+                  />
+                )}
+              </div>
+            </div>
+
+            {/* Warning if "VoIP Hub" is not an allowed picklist value */}
+            {isAttrPicklist && !hasVoipHubOption && attrTargetKey && (
+              <div className="p-3 rounded-lg bg-amber-950/60 border border-amber-800 text-amber-200 text-[11px] flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-semibold">"VoIP Hub" is not currently an available value in field '{selectedAttrMetadata?.label}'.</span>
+                  <p className="text-[10px] text-amber-300/80 mt-0.5">
+                    Add "VoIP Hub" to your {provider.toUpperCase()} {activeModule} picklist options in CRM settings, then click <span className="font-semibold text-amber-200">Refresh CRM Fields</span> above to select it.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {isAdmin && (
+              <div className="flex justify-end pt-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleSaveAttribution}
+                  disabled={isSavingAttr}
+                  className="text-xs border-slate-700 text-slate-300 hover:bg-slate-800"
+                >
+                  {isSavingAttr ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                  <span>Save Record Attribution</span>
+                </Button>
+              </div>
+            )}
           </div>
 
           {/* Action Footer */}

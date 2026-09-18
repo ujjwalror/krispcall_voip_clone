@@ -60,7 +60,7 @@ export async function POST(request: Request) {
     // Verify contact belongs to same organization
     const { data: contact, error: contactError } = await (adminSupabase as any)
       .from('contacts')
-      .select('id, organization_id, phone, email')
+      .select('id, organization_id, phone, email, notes, company, first_name, last_name')
       .eq('id', contactId)
       .eq('organization_id', profile.organization_id)
       .single();
@@ -114,33 +114,57 @@ export async function POST(request: Request) {
 
     const dynamicFieldsPayload: Record<string, any> = {};
 
-    // Apply effective mappings
+    // Step 1 & 2: Map actual Contact values using effective mappings
     for (const map of effectiveMappings) {
       const localKey = map.localFieldKey;
       const extKey = map.externalFieldKey;
       if (!localKey || !extKey) continue;
 
       let val: any = undefined;
-      if (localKey === 'first_name') val = firstName;
-      else if (localKey === 'last_name') val = lastName;
-      else if (localKey === 'full_name') val = `${firstName || ''} ${lastName}`.trim();
+      if (localKey === 'first_name') val = firstName || contact.first_name;
+      else if (localKey === 'last_name') val = lastName || contact.last_name;
+      else if (localKey === 'full_name') val = `${firstName || contact.first_name || ''} ${lastName || contact.last_name || ''}`.trim();
       else if (localKey === 'phone') val = phone || contact.phone;
       else if (localKey === 'email') val = email || contact.email;
-      else if (localKey === 'company') val = company;
-      else if (localKey === 'notes') val = description;
+      else if (localKey === 'company') val = company || contact.company;
+      else if (localKey === 'notes') val = description || contact.notes;
 
       if (val !== undefined && val !== null && String(val).trim() !== '') {
         dynamicFieldsPayload[extKey] = typeof val === 'string' ? val.trim() : val;
       }
     }
 
-    // C. Merge explicitly entered customer-specific required values
+    // Step 3: Merge explicitly entered customer-specific required values
     if (customFields && typeof customFields === 'object') {
       for (const [key, val] of Object.entries(customFields)) {
         if (val !== undefined && val !== null && val !== '') {
           dynamicFieldsPayload[key] = val;
         }
       }
+    }
+
+    // Step 4: Merge configured CRM record attribution if valid, enabled, and field is not already populated
+    try {
+      const { data: attributionRows } = await (adminSupabase as any)
+        .from('crm_record_attribution_rules')
+        .select('*')
+        .eq('organization_id', profile.organization_id)
+        .eq('provider', provider)
+        .eq('external_module', 'Leads')
+        .eq('is_enabled', true);
+
+      if (attributionRows && Array.isArray(attributionRows) && attributionRows.length > 0) {
+        for (const attr of attributionRows) {
+          if (attr.external_field_key && attr.configured_value) {
+            // Guard: Attribution MUST NEVER overwrite a field already populated by Contact Mapping or Required Fields
+            if (!Object.prototype.hasOwnProperty.call(dynamicFieldsPayload, attr.external_field_key)) {
+              dynamicFieldsPayload[attr.external_field_key] = String(attr.configured_value).trim();
+            }
+          }
+        }
+      }
+    } catch (err) {
+      // Non-fatal if attribution table not yet created
     }
 
     // 3. Create Lead in Zoho CRM using single authoritative effective payload

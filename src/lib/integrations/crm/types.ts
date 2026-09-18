@@ -99,6 +99,17 @@ export interface CRMFieldMapping {
   isEnabled?: boolean;
 }
 
+export interface CRMAttributionRule {
+  id?: string;
+  organizationId?: string;
+  provider: CRMProviderId;
+  externalModule: 'Leads' | 'Contacts';
+  attributeKey: string;
+  externalFieldKey: string;
+  configuredValue: string;
+  isEnabled?: boolean;
+}
+
 /**
  * Application-level metadata cache schema version.
  * Increment when provider adapter field normalization logic or data type classifications update.

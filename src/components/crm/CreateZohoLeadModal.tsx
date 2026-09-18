@@ -38,7 +38,7 @@ export function CreateZohoLeadModal({
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [company, setCompany] = useState('');
-  const [description, setDescription] = useState('Created from VoIP Hub saved contact');
+  const [description, setDescription] = useState('');
 
   // Dynamic CRM Required Fields & Effective Mappings State
   const [dynamicFields, setDynamicFields] = useState<CRMFieldMetadata[]>([]);
@@ -59,7 +59,7 @@ export function CreateZohoLeadModal({
       setPhone(contact.phone || '');
       setEmail(contact.email || '');
       setCompany(contact.company || '');
-      setDescription('Created from VoIP Hub saved contact');
+      setDescription(contact.notes || '');
       setError(null);
       setDuplicateCandidates([]);
       setCustomFieldValues({});
@@ -411,7 +411,7 @@ export function CreateZohoLeadModal({
                   rows={2}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Created from VoIP Hub saved contact"
+                  placeholder="Optional notes & remarks"
                   className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500"
                 />
                 {getMappingIndicator('notes')}
