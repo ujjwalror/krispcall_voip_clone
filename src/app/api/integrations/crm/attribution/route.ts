@@ -211,34 +211,27 @@ export async function POST(request: Request) {
       }
     }
 
-    // Delete existing rule for this attribute
-    try {
-      await (adminSupabase as any)
-        .from('crm_record_attribution_rules')
-        .delete()
-        .eq('organization_id', profile.organization_id)
-        .eq('provider', provider)
-        .eq('external_module', externalModule)
-        .eq('attribute_key', attributeKey);
-    } catch (err) {
-      // Ignore if table pending migration
-    }
-
-    // Insert new rule
-    const { error: insertError } = await (adminSupabase as any)
+    // Atomic upsert rule using unique constraint (organization_id, provider, external_module, attribute_key)
+    const { error: upsertError } = await (adminSupabase as any)
       .from('crm_record_attribution_rules')
-      .insert({
-        organization_id: profile.organization_id,
-        provider,
-        external_module: externalModule,
-        attribute_key: attributeKey,
-        external_field_key: externalFieldKey,
-        configured_value: configuredValue,
-        is_enabled: true,
-      });
+      .upsert(
+        {
+          organization_id: profile.organization_id,
+          provider,
+          external_module: externalModule,
+          attribute_key: attributeKey,
+          external_field_key: externalFieldKey,
+          configured_value: configuredValue,
+          is_enabled: true,
+          updated_at: new Date().toISOString(),
+        },
+        {
+          onConflict: 'organization_id,provider,external_module,attribute_key',
+        }
+      );
 
-    if (insertError) {
-      throw insertError;
+    if (upsertError) {
+      throw upsertError;
     }
 
     return NextResponse.json({

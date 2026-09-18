@@ -522,6 +522,11 @@ export class ZohoCRMAdapter implements CRMAdapter {
           }));
       }
 
+      const isSourceField =
+        fieldKey === 'Lead_Source' ||
+        fieldKey.toLowerCase() === 'lead_source' ||
+        label.toLowerCase() === 'lead source';
+
       results.push({
         fieldKey,
         label,
@@ -529,6 +534,7 @@ export class ZohoCRMAdapter implements CRMAdapter {
         isRequired,
         isWritable,
         isCustom,
+        isSourceField,
         options,
       });
     }

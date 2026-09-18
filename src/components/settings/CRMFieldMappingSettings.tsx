@@ -155,6 +155,12 @@ export function CRMFieldMappingSettings({
 
   const handleSaveAttribution = async () => {
     if (!isAdmin) return;
+    const targetKeyToSave = effectiveTargetKey;
+    if (!targetKeyToSave) {
+      setError('No target Lead Source field is configured.');
+      return;
+    }
+
     setIsSavingAttr(true);
     setError(null);
     setSuccessMsg(null);
@@ -167,20 +173,21 @@ export function CRMFieldMappingSettings({
           provider,
           externalModule: activeModule,
           attributeKey: 'lead_source',
-          externalFieldKey: attrTargetKey,
+          externalFieldKey: targetKeyToSave,
           configuredValue: attrValue,
-          isEnabled: Boolean(attrTargetKey && attrValue),
+          isEnabled: Boolean(targetKeyToSave && attrValue),
         }),
       });
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to save record attribution rule');
+        throw new Error(data.error || 'Failed to save Lead Creation Settings');
       }
 
-      setSuccessMsg('CRM Record Attribution rule saved successfully.');
+      setAttrTargetKey(targetKeyToSave);
+      setSuccessMsg(`${activeModule === 'Leads' ? 'Lead' : 'Contact'} Creation Settings saved successfully.`);
     } catch (err: any) {
-      setError(err.message || 'Error saving record attribution rule');
+      setError(err.message || 'Error saving Lead Creation Settings');
     } finally {
       setIsSavingAttr(false);
     }
@@ -222,8 +229,24 @@ export function CRMFieldMappingSettings({
     }
   };
 
-  const selectedAttrMetadata = fields.find((f) => f.fieldKey === attrTargetKey);
+  const discoveredSourceField =
+    fields.find((f) => f.isSourceField && f.isWritable) ||
+    fields.find(
+      (f) =>
+        f.isWritable &&
+        (f.fieldKey === 'Lead_Source' ||
+          f.fieldKey.toLowerCase() === 'lead_source' ||
+          f.label.toLowerCase() === 'lead source')
+    );
+
+  const effectiveTargetKey = attrTargetKey || discoveredSourceField?.fieldKey || '';
+  const selectedAttrMetadata = fields.find((f) => f.fieldKey === effectiveTargetKey);
   const isAttrPicklist = selectedAttrMetadata?.dataType === 'picklist';
+  const hasVoipHubOption =
+    isAttrPicklist &&
+    Array.isArray(selectedAttrMetadata?.options) &&
+    selectedAttrMetadata.options.some((opt) => opt.value === 'VoIP Hub' || opt.label === 'VoIP Hub');
+
   const isSavedValueMissing =
     isAttrPicklist &&
     Boolean(attrValue) &&
@@ -395,59 +418,25 @@ export function CRMFieldMappingSettings({
                   <span>{activeModule === 'Leads' ? 'Lead Creation Settings' : 'Contact Creation Settings'}</span>
                 </h4>
                 <p className="text-[11px] text-slate-400 mt-0.5">
-                  Choose CRM values automatically applied when VoIP Hub creates a new {activeModule === 'Leads' ? 'Lead' : 'Contact'}.
+                  Choose the source assigned to Leads created by VoIP Hub.
                 </p>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-              {/* Lead Source Field */}
-              <div className="space-y-1">
+            {/* Standard Discovered Source Field View */}
+            {discoveredSourceField ? (
+              <div className="max-w-md space-y-1.5 text-xs">
                 <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                  {activeModule === 'Leads' ? 'Lead Source Field' : 'Contact Source Field'}
-                </label>
-                <select
-                  value={attrTargetKey}
-                  disabled={!isAdmin}
-                  onChange={(e) => {
-                    const key = e.target.value;
-                    setAttrTargetKey(key);
-                    const meta = fields.find((f) => f.fieldKey === key);
-                    if (meta?.dataType === 'picklist' && Array.isArray(meta.options)) {
-                      const isValid = meta.options.some((o) => o.value === attrValue || o.label === attrValue);
-                      if (!isValid) {
-                        setAttrValue('');
-                      }
-                    } else if (!meta) {
-                      setAttrValue('');
-                    }
-                  }}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500 disabled:opacity-60"
-                >
-                  <option value="">-- No Source Field Selected --</option>
-                  {fields
-                    .filter((f) => f.isWritable && (f.dataType === 'text' || f.dataType === 'picklist'))
-                    .map((field) => (
-                      <option key={field.fieldKey} value={field.fieldKey}>
-                        {field.label} ({field.fieldKey}) [{field.dataType}]
-                      </option>
-                    ))}
-                </select>
-              </div>
-
-              {/* Lead Source Value */}
-              <div className="space-y-1">
-                <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                  {activeModule === 'Leads' ? 'Lead Source Value' : 'Contact Source Value'}
+                  Lead Source
                 </label>
                 {isAttrPicklist && Array.isArray(selectedAttrMetadata?.options) ? (
                   <select
                     value={attrValue}
-                    disabled={!isAdmin || !attrTargetKey}
+                    disabled={!isAdmin}
                     onChange={(e) => setAttrValue(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500 disabled:opacity-60"
                   >
-                    <option value="">Select a value</option>
+                    <option value="">Select a Lead Source</option>
                     {selectedAttrMetadata.options.map((opt) => (
                       <option key={opt.value} value={opt.value}>
                         {opt.label} ({opt.value})
@@ -458,21 +447,100 @@ export function CRMFieldMappingSettings({
                   <input
                     type="text"
                     value={attrValue}
-                    disabled={!isAdmin || !attrTargetKey}
+                    disabled={!isAdmin}
                     onChange={(e) => setAttrValue(e.target.value)}
                     placeholder="e.g. VoIP Hub"
                     className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500 disabled:opacity-60"
                   />
                 )}
               </div>
-            </div>
+            ) : (
+              /* Fallback Advanced Field Selector for CRM providers without a discoverable source field */
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                    {activeModule === 'Leads' ? 'Lead Source Field' : 'Contact Source Field'}
+                  </label>
+                  <select
+                    value={attrTargetKey}
+                    disabled={!isAdmin}
+                    onChange={(e) => {
+                      const key = e.target.value;
+                      setAttrTargetKey(key);
+                      const meta = fields.find((f) => f.fieldKey === key);
+                      if (meta?.dataType === 'picklist' && Array.isArray(meta.options)) {
+                        const isValid = meta.options.some((o) => o.value === attrValue || o.label === attrValue);
+                        if (!isValid) setAttrValue('');
+                      } else if (!meta) {
+                        setAttrValue('');
+                      }
+                    }}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500 disabled:opacity-60"
+                  >
+                    <option value="">-- No Source Field Selected --</option>
+                    {fields
+                      .filter((f) => f.isWritable && (f.dataType === 'text' || f.dataType === 'picklist'))
+                      .map((field) => (
+                        <option key={field.fieldKey} value={field.fieldKey}>
+                          {field.label} ({field.fieldKey}) [{field.dataType}]
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                    {activeModule === 'Leads' ? 'Lead Source Value' : 'Contact Source Value'}
+                  </label>
+                  {isAttrPicklist && Array.isArray(selectedAttrMetadata?.options) ? (
+                    <select
+                      value={attrValue}
+                      disabled={!isAdmin || !effectiveTargetKey}
+                      onChange={(e) => setAttrValue(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500 disabled:opacity-60"
+                    >
+                      <option value="">Select a value</option>
+                      {selectedAttrMetadata.options.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label} ({opt.value})
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      value={attrValue}
+                      disabled={!isAdmin || !effectiveTargetKey}
+                      onChange={(e) => setAttrValue(e.target.value)}
+                      placeholder="e.g. VoIP Hub"
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500 disabled:opacity-60"
+                    />
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Informational Banner if "VoIP Hub" is not present in CRM picklist options */}
+            {isAttrPicklist && !hasVoipHubOption && (
+              <div className="p-3 rounded-lg bg-slate-950 border border-slate-800 text-slate-300 text-[11px] flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-semibold text-slate-200">
+                    "VoIP Hub" is not currently available as a Lead Source in your CRM.
+                  </span>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    Add "VoIP Hub" to your {provider.toUpperCase()} {activeModule} picklist options in CRM settings, then click <span className="font-semibold text-slate-300">Refresh CRM Fields</span> above to select it.
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* Warning if a previously saved picklist value no longer exists in CRM metadata */}
             {isSavedValueMissing && (
               <div className="p-3 rounded-lg bg-amber-950/60 border border-amber-800 text-amber-200 text-[11px] flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                 <div>
-                  <span className="font-semibold">This saved value is no longer available in your CRM. Select another value.</span>
+                  <span className="font-semibold">This saved Lead Source is no longer available in your CRM. Select another value.</span>
                 </div>
               </div>
             )}
@@ -487,7 +555,7 @@ export function CRMFieldMappingSettings({
                   className="text-xs border-slate-700 text-slate-300 hover:bg-slate-800"
                 >
                   {isSavingAttr ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                  <span>Save {activeModule === 'Leads' ? 'Lead' : 'Contact'} Creation Settings</span>
+                  <span>Save</span>
                 </Button>
               </div>
             )}
