@@ -465,19 +465,20 @@ export function CRMFieldMappingSettings({
               <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
                 Lead Source
               </label>
-              {isSourcePicklist && Array.isArray(selectedSourceMetadata?.options) ? (
+              {isSourcePicklist ? (
                 <select
                   value={attrValue}
-                  disabled={!isAdmin}
+                  disabled={!isAdmin || !Array.isArray(selectedSourceMetadata?.options)}
                   onChange={(e) => setAttrValue(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500 disabled:opacity-60"
                 >
                   <option value="">Select a Lead Source</option>
-                  {selectedSourceMetadata.options.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label} ({opt.value})
-                    </option>
-                  ))}
+                  {Array.isArray(selectedSourceMetadata?.options) &&
+                    selectedSourceMetadata.options.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label} ({opt.value})
+                      </option>
+                    ))}
                 </select>
               ) : (
                 <input
@@ -517,19 +518,20 @@ export function CRMFieldMappingSettings({
               <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
                 Lead Status
               </label>
-              {isStatusPicklist && Array.isArray(selectedStatusMetadata?.options) ? (
+              {isStatusPicklist ? (
                 <select
                   value={statusValue}
-                  disabled={!isAdmin}
+                  disabled={!isAdmin || !Array.isArray(selectedStatusMetadata?.options)}
                   onChange={(e) => setStatusValue(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500 disabled:opacity-60"
                 >
                   <option value="">Select a Lead Status</option>
-                  {selectedStatusMetadata.options.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label} ({opt.value})
-                    </option>
-                  ))}
+                  {Array.isArray(selectedStatusMetadata?.options) &&
+                    selectedStatusMetadata.options.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label} ({opt.value})
+                      </option>
+                    ))}
                 </select>
               ) : (
                 <input

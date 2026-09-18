@@ -117,7 +117,7 @@ export interface CRMAttributionRule {
  * Increment when provider adapter field normalization logic or data type classifications update.
  * Automatically invalidates legacy DB cached metadata snapshots without needing DB migrations.
  */
-export const CRM_FIELD_METADATA_CACHE_VERSION = 3;
+export const CRM_FIELD_METADATA_CACHE_VERSION = 4;
 
 export interface CRMFieldMetadataCache {
   id?: string;
