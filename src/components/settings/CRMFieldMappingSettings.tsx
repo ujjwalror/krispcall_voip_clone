@@ -224,10 +224,11 @@ export function CRMFieldMappingSettings({
 
   const selectedAttrMetadata = fields.find((f) => f.fieldKey === attrTargetKey);
   const isAttrPicklist = selectedAttrMetadata?.dataType === 'picklist';
-  const hasVoipHubOption =
+  const isSavedValueMissing =
     isAttrPicklist &&
+    Boolean(attrValue) &&
     Array.isArray(selectedAttrMetadata?.options) &&
-    selectedAttrMetadata.options.some((opt) => opt.value === 'VoIP Hub' || opt.label === 'VoIP Hub');
+    !selectedAttrMetadata.options.some((opt) => opt.value === attrValue || opt.label === attrValue);
 
   return (
     <div className="space-y-5">
@@ -249,99 +250,100 @@ export function CRMFieldMappingSettings({
             size="sm"
             onClick={() => loadMetadataAndMappings(true)}
             disabled={isRefreshing || isLoading}
-            className="text-xs border-slate-700 text-slate-300 hover:bg-slate-800"
+            className="text-xs border-slate-800 bg-slate-950 text-slate-300 hover:bg-slate-800"
             title="Re-fetch field metadata snapshot from Zoho CRM"
           >
-            {isRefreshing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
             <span>Refresh CRM Fields</span>
           </Button>
         </div>
       </div>
 
-      {/* Module Selector Tabs */}
-      <div className="flex items-center gap-2 border-b border-slate-800 pb-2 text-xs">
+      {/* Module Selector (Leads vs Contacts) */}
+      <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
         <button
           onClick={() => setActiveModule('Leads')}
-          className={`px-3 py-1.5 rounded-lg font-medium transition-colors ${
+          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
             activeModule === 'Leads'
-              ? 'bg-blue-600/20 text-blue-400 border border-blue-500/40'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+              ? 'bg-blue-600 text-white'
+              : 'bg-slate-900 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
           }`}
         >
-          Zoho Leads Module (Active)
+          Leads Module
         </button>
         <button
           onClick={() => setActiveModule('Contacts')}
-          className={`px-3 py-1.5 rounded-lg font-medium transition-colors ${
+          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
             activeModule === 'Contacts'
-              ? 'bg-blue-600/20 text-blue-400 border border-blue-500/40'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+              ? 'bg-blue-600 text-white'
+              : 'bg-slate-900 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
           }`}
         >
-          Zoho Contacts Module (Future/Prepared)
+          Contacts Module (Prepared)
         </button>
       </div>
 
-      {/* Alerts */}
+      {/* Error / Success Banners */}
       {error && (
-        <div className="p-3.5 rounded-xl bg-rose-950/70 border border-rose-800 text-rose-200 text-xs flex items-center gap-2.5">
+        <div className="p-3.5 rounded-xl bg-rose-950/60 border border-rose-800 text-rose-200 text-xs flex items-center gap-2">
           <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
           <span>{error}</span>
         </div>
       )}
 
       {successMsg && (
-        <div className="p-3.5 rounded-xl bg-emerald-950/70 border border-emerald-800 text-emerald-200 text-xs flex items-center gap-2.5">
+        <div className="p-3.5 rounded-xl bg-emerald-950/60 border border-emerald-800 text-emerald-200 text-xs flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
           <span>{successMsg}</span>
         </div>
       )}
 
-      {/* Main Mapping Table */}
+      {/* Main Mapping Area */}
       {isLoading ? (
-        <div className="p-12 text-center text-xs text-slate-400 flex flex-col items-center justify-center gap-2 bg-slate-900/60 rounded-xl border border-slate-800">
-          <Loader2 className="w-6 h-6 animate-spin text-blue-400" />
-          <span>Loading CRM field metadata snapshot...</span>
+        <div className="p-12 text-center text-slate-400 space-y-3 bg-slate-900/60 rounded-xl border border-slate-800">
+          <Loader2 className="w-6 h-6 animate-spin mx-auto text-blue-400" />
+          <p className="text-xs">Loading {provider.toUpperCase()} module metadata and field mappings...</p>
         </div>
       ) : (
         <div className="space-y-4">
+          {/* Mappings Table / List */}
           <div className="rounded-xl border border-slate-800 overflow-hidden bg-slate-900/60">
-            <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 p-3 bg-slate-950/80 border-b border-slate-800 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-              <div className="sm:col-span-5">VoIP Hub Generic Contact Field</div>
-              <div className="hidden sm:block sm:col-span-1 text-center">→</div>
-              <div className="sm:col-span-6">Target {provider.toUpperCase()} {activeModule} Field</div>
+            <div className="p-3 bg-slate-900 border-b border-slate-800 flex items-center justify-between text-xs font-semibold text-slate-300">
+              <div className="w-1/3">VoIP Hub Field</div>
+              <div className="w-8 text-center text-slate-500">→</div>
+              <div className="w-2/3">{provider.toUpperCase()} {activeModule} Field</div>
             </div>
 
-            <div className="divide-y divide-slate-800/60 text-xs">
+            <div className="divide-y divide-slate-800/60">
               {LOCAL_VOIP_HUB_FIELDS.map((local) => {
-                const currentExtKey = mappings[local.key] || '';
-                const selectedMetadata = fields.find((f) => f.fieldKey === currentExtKey);
+                const selectedExtKey = mappings[local.key] || '';
+                const selectedMetadata = fields.find((f) => f.fieldKey === selectedExtKey);
 
                 return (
-                  <div key={local.key} className="grid grid-cols-1 sm:grid-cols-12 gap-3 p-3.5 items-center hover:bg-slate-950/30 transition-colors">
-                    {/* Local Field */}
-                    <div className="sm:col-span-5 space-y-0.5">
-                      <p className="font-semibold text-slate-200">{local.label}</p>
-                      <p className="text-[10px] text-slate-500 font-mono">key: {local.key} ({local.dataType})</p>
+                  <div
+                    key={local.key}
+                    className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs hover:bg-slate-900/40 transition-colors"
+                  >
+                    <div className="w-full sm:w-1/3 space-y-0.5">
+                      <div className="font-semibold text-slate-200 flex items-center gap-1.5">
+                        <span>{local.label}</span>
+                      </div>
+                      <p className="text-[11px] text-slate-400 font-mono">key: {local.key} ({local.dataType})</p>
                     </div>
 
-                    {/* Arrow */}
-                    <div className="hidden sm:flex sm:col-span-1 justify-center text-slate-600">
-                      <ArrowRight className="w-4 h-4" />
-                    </div>
+                    <div className="hidden sm:block text-slate-600 font-bold">→</div>
 
-                    {/* Target Dropdown */}
-                    <div className="sm:col-span-6 space-y-1">
+                    <div className="w-full sm:w-2/3 space-y-1">
                       <select
-                        value={currentExtKey}
+                        value={selectedExtKey}
                         disabled={!isAdmin}
                         onChange={(e) => handleFieldSelect(local.key, e.target.value)}
-                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500 disabled:opacity-60 disabled:cursor-not-allowed"
+                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500 disabled:opacity-60"
                       >
                         <option value="">-- Do Not Map --</option>
                         {fields.map((field) => {
                           const isCompatible = isFieldMappingCompatible(local.dataType, field);
-                          if (!isCompatible && field.fieldKey !== currentExtKey) {
+                          if (!isCompatible && field.fieldKey !== selectedExtKey) {
                             return null; // Hide incompatible fields from dropdown options
                           }
                           return (
@@ -385,25 +387,24 @@ export function CRMFieldMappingSettings({
             </div>
           </div>
 
-          {/* CRM Record Attribution Section */}
+          {/* Lead Creation Settings Section */}
           <div className="rounded-xl border border-slate-800 overflow-hidden bg-slate-900/60 p-4 space-y-3">
             <div className="flex items-center justify-between border-b border-slate-800 pb-2">
               <div>
                 <h4 className="text-xs font-bold text-slate-200 flex items-center gap-2">
-                  <span>CRM Record Attribution</span>
-                  <Badge variant="purple" size="sm">Optional Metadata</Badge>
+                  <span>{activeModule === 'Leads' ? 'Lead Creation Settings' : 'Contact Creation Settings'}</span>
                 </h4>
                 <p className="text-[11px] text-slate-400 mt-0.5">
-                  Attribute exported CRM records to VoIP Hub by assigning a record source field (e.g. Lead Source → "VoIP Hub").
+                  Choose CRM values automatically applied when VoIP Hub creates a new {activeModule === 'Leads' ? 'Lead' : 'Contact'}.
                 </p>
               </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-              {/* Destination Field */}
+              {/* Lead Source Field */}
               <div className="space-y-1">
                 <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                  Target CRM Record Source Field
+                  {activeModule === 'Leads' ? 'Lead Source Field' : 'Contact Source Field'}
                 </label>
                 <select
                   value={attrTargetKey}
@@ -412,16 +413,18 @@ export function CRMFieldMappingSettings({
                     const key = e.target.value;
                     setAttrTargetKey(key);
                     const meta = fields.find((f) => f.fieldKey === key);
-                    if (meta?.dataType === 'picklist' && Array.isArray(meta.options) && meta.options.length > 0) {
-                      const v = meta.options.find((o) => o.value === 'VoIP Hub')?.value || meta.options[0].value;
-                      setAttrValue(v);
-                    } else if (!attrValue) {
-                      setAttrValue('VoIP Hub');
+                    if (meta?.dataType === 'picklist' && Array.isArray(meta.options)) {
+                      const isValid = meta.options.some((o) => o.value === attrValue || o.label === attrValue);
+                      if (!isValid) {
+                        setAttrValue('');
+                      }
+                    } else if (!meta) {
+                      setAttrValue('');
                     }
                   }}
                   className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500 disabled:opacity-60"
                 >
-                  <option value="">-- No Record Attribution --</option>
+                  <option value="">-- No Source Field Selected --</option>
                   {fields
                     .filter((f) => f.isWritable && (f.dataType === 'text' || f.dataType === 'picklist'))
                     .map((field) => (
@@ -432,10 +435,10 @@ export function CRMFieldMappingSettings({
                 </select>
               </div>
 
-              {/* Attribution Value */}
+              {/* Lead Source Value */}
               <div className="space-y-1">
                 <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                  Attribution Value
+                  {activeModule === 'Leads' ? 'Lead Source Value' : 'Contact Source Value'}
                 </label>
                 {isAttrPicklist && Array.isArray(selectedAttrMetadata?.options) ? (
                   <select
@@ -444,6 +447,7 @@ export function CRMFieldMappingSettings({
                     onChange={(e) => setAttrValue(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-blue-500 disabled:opacity-60"
                   >
+                    <option value="">Select a value</option>
                     {selectedAttrMetadata.options.map((opt) => (
                       <option key={opt.value} value={opt.value}>
                         {opt.label} ({opt.value})
@@ -463,15 +467,12 @@ export function CRMFieldMappingSettings({
               </div>
             </div>
 
-            {/* Warning if "VoIP Hub" is not an allowed picklist value */}
-            {isAttrPicklist && !hasVoipHubOption && attrTargetKey && (
+            {/* Warning if a previously saved picklist value no longer exists in CRM metadata */}
+            {isSavedValueMissing && (
               <div className="p-3 rounded-lg bg-amber-950/60 border border-amber-800 text-amber-200 text-[11px] flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                 <div>
-                  <span className="font-semibold">"VoIP Hub" is not currently an available value in field '{selectedAttrMetadata?.label}'.</span>
-                  <p className="text-[10px] text-amber-300/80 mt-0.5">
-                    Add "VoIP Hub" to your {provider.toUpperCase()} {activeModule} picklist options in CRM settings, then click <span className="font-semibold text-amber-200">Refresh CRM Fields</span> above to select it.
-                  </p>
+                  <span className="font-semibold">This saved value is no longer available in your CRM. Select another value.</span>
                 </div>
               </div>
             )}
@@ -486,7 +487,7 @@ export function CRMFieldMappingSettings({
                   className="text-xs border-slate-700 text-slate-300 hover:bg-slate-800"
                 >
                   {isSavingAttr ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                  <span>Save Record Attribution</span>
+                  <span>Save {activeModule === 'Leads' ? 'Lead' : 'Contact'} Creation Settings</span>
                 </Button>
               </div>
             )}
