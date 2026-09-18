@@ -129,7 +129,12 @@ export async function POST(request: Request) {
       .eq('external_module', externalModule)
       .maybeSingle();
 
-    const fieldsMetadata: CRMFieldMetadata[] = cacheRow?.fields_json || [];
+    const rawCache = cacheRow?.fields_json;
+    const fieldsMetadata: CRMFieldMetadata[] = Array.isArray(rawCache)
+      ? rawCache
+      : rawCache && typeof rawCache === 'object' && Array.isArray(rawCache.fields)
+      ? rawCache.fields
+      : [];
 
     // Server-side compatibility check for each submitted mapping
     for (const m of mappings) {

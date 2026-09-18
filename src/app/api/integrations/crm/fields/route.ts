@@ -3,14 +3,15 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getValidCRMCredentials } from '@/lib/integrations/crm/service';
 import { getCRMAdapter } from '@/lib/integrations/crm/registry';
-import { CRMFieldMetadata } from '@/lib/integrations/crm/types';
+import { CRMFieldMetadata, CRM_FIELD_METADATA_CACHE_VERSION } from '@/lib/integrations/crm/types';
 
 export const dynamic = 'force-dynamic';
 
 /**
  * GET /api/integrations/crm/fields?provider=zoho&module=Leads&refresh=false
  * Persistent metadata snapshot retrieval endpoint.
- * Serves cached fields snapshot from Supabase DB (0 CRM API calls) unless refresh=true is explicitly requested.
+ * Serves cached fields snapshot from Supabase DB (0 CRM API calls) unless refresh=true is explicitly requested
+ * or cached payload is legacy/stale relative to CRM_FIELD_METADATA_CACHE_VERSION.
  */
 export async function GET(request: Request) {
   try {
@@ -51,26 +52,42 @@ export async function GET(request: Request) {
         .eq('external_module', moduleName)
         .maybeSingle();
 
-      if (cacheRow && cacheRow.fields_json && Array.isArray(cacheRow.fields_json) && cacheRow.fields_json.length > 0) {
-        return NextResponse.json({
-          success: true,
-          provider,
-          module: moduleName,
-          fields: cacheRow.fields_json as CRMFieldMetadata[],
-          fetchedAt: cacheRow.fetched_at,
-          cached: true,
-        });
+      if (cacheRow && cacheRow.fields_json) {
+        const rawJson = cacheRow.fields_json;
+        let isVersionValid = false;
+        let cachedFields: CRMFieldMetadata[] = [];
+
+        if (
+          typeof rawJson === 'object' &&
+          !Array.isArray(rawJson) &&
+          rawJson !== null &&
+          rawJson._version === CRM_FIELD_METADATA_CACHE_VERSION
+        ) {
+          isVersionValid = true;
+          cachedFields = rawJson.fields || [];
+        }
+
+        if (isVersionValid && cachedFields.length > 0) {
+          return NextResponse.json({
+            success: true,
+            provider,
+            module: moduleName,
+            fields: cachedFields,
+            fetchedAt: cacheRow.fetched_at,
+            cached: true,
+          });
+        }
       }
     }
 
-    // 2. Fetch fresh metadata from CRM adapter
+    // 2. Fetch fresh metadata from CRM adapter (cache missing, legacy version, or forceRefresh requested)
     const credentials = await getValidCRMCredentials(profile.organization_id, provider);
     const adapter = getCRMAdapter(provider);
     const freshFields = await adapter.getModuleFields(credentials, moduleName);
 
     const nowIso = new Date().toISOString();
 
-    // 3. Persist metadata snapshot to Supabase DB
+    // 3. Persist metadata snapshot to Supabase DB with current cache version
     await (adminSupabase as any)
       .from('crm_field_metadata_cache')
       .upsert(
@@ -78,7 +95,10 @@ export async function GET(request: Request) {
           organization_id: profile.organization_id,
           provider,
           external_module: moduleName,
-          fields_json: freshFields,
+          fields_json: {
+            _version: CRM_FIELD_METADATA_CACHE_VERSION,
+            fields: freshFields,
+          },
           fetched_at: nowIso,
           updated_at: nowIso,
         },
