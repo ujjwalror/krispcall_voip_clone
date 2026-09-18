@@ -87,6 +87,7 @@ export interface CRMFieldMetadata {
   isWritable: boolean;
   isCustom: boolean;
   isSourceField?: boolean;
+  isStatusField?: boolean;
   options?: CRMFieldOption[];
 }
 

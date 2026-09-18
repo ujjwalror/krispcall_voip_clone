@@ -527,6 +527,11 @@ export class ZohoCRMAdapter implements CRMAdapter {
         fieldKey.toLowerCase() === 'lead_source' ||
         label.toLowerCase() === 'lead source';
 
+      const isStatusField =
+        fieldKey === 'Lead_Status' ||
+        fieldKey.toLowerCase() === 'lead_status' ||
+        label.toLowerCase() === 'lead status';
+
       results.push({
         fieldKey,
         label,
@@ -535,6 +540,7 @@ export class ZohoCRMAdapter implements CRMAdapter {
         isWritable,
         isCustom,
         isSourceField,
+        isStatusField,
         options,
       });
     }
