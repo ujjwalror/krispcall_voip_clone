@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VoIP Hub Dialer</title>
+  <link rel="stylesheet" href="dialer-window.css">
+  <script src="lib/twilio.min.js"></script>
+</head>
+<body>
+  <div id="app-container" class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-title">VoIP Hub</span>
+        <span id="status-badge" class="status-badge">● Loading</span>
+      </div>
+      <div id="user-display" class="user-display"></div>
+    </header>
+
+    <!-- Error Banner -->
+    <div id="error-banner" class="error-banner" style="display: none;"></div>
+
+    <!-- State 1: Signed Out View -->
+    <div id="signed-out-view" class="view-panel" style="display: none;">
+      <div class="auth-card">
+        <h2>Sign in to VoIP Hub</h2>
+        <p class="auth-subtitle">Enter your account credentials to enable click-to-call.</p>
+        
+        <form id="auth-form" class="auth-form">
+          <div class="form-group">
+            <label for="auth-email">Email</label>
+            <input type="email" id="auth-email" class="input-field" placeholder="agent@company.com" required>
+          </div>
+          <div class="form-group">
+            <label for="auth-password">Password</label>
+            <input type="password" id="auth-password" class="input-field" placeholder="••••••••" required>
+          </div>
+          <button type="submit" id="btn-login" class="btn-primary">Sign In</button>
+        </form>
+
+        <div class="auth-footer">
+          <span>Or sign in via web browser:</span>
+          <a href="#" id="link-web-login">Open VoIP Hub Web App</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- State 2: Microphone Permission Setup View -->
+    <div id="mic-setup-view" class="view-panel" style="display: none;">
+      <div class="mic-card">
+        <h2>Microphone Access Required</h2>
+        <p>VoIP Hub requires access to your microphone to place crystal-clear WebRTC voice calls.</p>
+        <button id="btn-enable-mic" class="btn-primary">Enable Microphone</button>
+      </div>
+    </div>
+
+    <!-- State 3: Ready / CRM Loaded View -->
+    <div id="ready-view" class="view-panel" style="display: none;">
+      <!-- CRM Context Banner -->
+      <div id="crm-context-card" class="crm-context-card" style="display: none;">
+        <div class="crm-badge" id="crm-provider-badge">Zoho CRM</div>
+        <div class="crm-contact-name" id="crm-contact-name">Record Name</div>
+        <div class="crm-phone-label" id="crm-phone-label">Mobile</div>
+      </div>
+
+      <!-- Outbound Form -->
+      <div class="form-group">
+        <label class="form-label">Calling From</label>
+        <select id="business-number-select" class="select-field">
+          <option value="">Primary Business Line</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Destination Phone</label>
+        <input type="tel" id="destination-input" class="input-field" placeholder="+61412345678">
+      </div>
+
+      <div class="form-group toggle-row">
+        <label class="form-label">Record Call</label>
+        <label class="switch">
+          <input type="checkbox" id="record-toggle" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <button id="btn-start-call" class="btn-call">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+        Call
+      </button>
+
+      <div id="ready-keypad-panel" class="ready-keypad-panel">
+        <div class="keypad-grid">
+          <button class="key-btn" data-digit="1">1</button>
+          <button class="key-btn" data-digit="2">2</button>
+          <button class="key-btn" data-digit="3">3</button>
+          <button class="key-btn" data-digit="4">4</button>
+          <button class="key-btn" data-digit="5">5</button>
+          <button class="key-btn" data-digit="6">6</button>
+          <button class="key-btn" data-digit="7">7</button>
+          <button class="key-btn" data-digit="8">8</button>
+          <button class="key-btn" data-digit="9">9</button>
+          <button class="key-btn" data-digit="*">*</button>
+          <button class="key-btn" data-digit="0">0</button>
+          <button class="key-btn" data-digit="#">#</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- State 4: Active Call View -->
+    <div id="active-call-view" class="view-panel" style="display: none;">
+      <div class="active-call-card">
+        <div id="active-state-title" class="active-state-title">CONNECTED</div>
+        <div id="active-contact-name" class="active-contact-name">Contact Name</div>
+        <div id="active-target-phone" class="active-target-phone">+61412345678</div>
+        <div id="active-from-number" class="active-from-number">Calling from Primary Line</div>
+        <div id="active-timer" class="active-timer">00:00</div>
+        <div id="active-rec-badge" class="rec-badge">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="red" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle></svg>
+          Recording
+        </div>
+
+        <div class="ctrl-row">
+          <button id="btn-mute" class="ctrl-btn">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
+            Mute
+          </button>
+          <button id="btn-keypad-toggle" class="ctrl-btn">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="4" height="4" rx="1"></rect><rect x="10" y="3" width="4" height="4" rx="1"></rect><rect x="17" y="3" width="4" height="4" rx="1"></rect><rect x="3" y="10" width="4" height="4" rx="1"></rect><rect x="10" y="10" width="4" height="4" rx="1"></rect><rect x="17" y="10" width="4" height="4" rx="1"></rect><rect x="3" y="17" width="4" height="4" rx="1"></rect><rect x="10" y="17" width="4" height="4" rx="1"></rect><rect x="17" y="17" width="4" height="4" rx="1"></rect></svg>
+            Keypad
+          </button>
+        </div>
+
+        <div id="incall-keypad-grid" class="keypad-grid incall-keypad" style="display: none;">
+          <button class="key-btn incall-key-btn" data-digit="1">1</button>
+          <button class="key-btn incall-key-btn" data-digit="2">2</button>
+          <button class="key-btn incall-key-btn" data-digit="3">3</button>
+          <button class="key-btn incall-key-btn" data-digit="4">4</button>
+          <button class="key-btn incall-key-btn" data-digit="5">5</button>
+          <button class="key-btn incall-key-btn" data-digit="6">6</button>
+          <button class="key-btn incall-key-btn" data-digit="7">7</button>
+          <button class="key-btn incall-key-btn" data-digit="8">8</button>
+          <button class="key-btn incall-key-btn" data-digit="9">9</button>
+          <button class="key-btn incall-key-btn" data-digit="*">*</button>
+          <button class="key-btn incall-key-btn" data-digit="0">0</button>
+          <button class="key-btn incall-key-btn" data-digit="#">#</button>
+        </div>
+
+        <button id="btn-end-call" class="btn-end">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-3.33-2.67m-2.67-3.34a19.79 19.79 0 0 1-3.07-8.63A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91"></path><line x1="23" y1="1" x2="1" y2="23"></line></svg>
+          End Call
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="dialer-window.js"></script>
+</body>
+</html>

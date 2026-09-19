@@ -1,0 +1,386 @@
+/* VoIP Hub Chrome Extension - CRM-Native Content Script & Floating Panel Styles */
+
+.voiphub-c2c-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  padding: 3px 7px;
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+  border: 1px solid #06b6d4;
+  border-radius: 4px;
+  color: #06b6d4;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  vertical-align: middle;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  line-height: 1.2;
+}
+
+.voiphub-c2c-btn:hover {
+  background: #06b6d4;
+  color: #0f172a;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(6, 182, 212, 0.4);
+}
+
+.voiphub-c2c-btn svg {
+  width: 12px;
+  height: 12px;
+  margin-right: 4px;
+  fill: none;
+  stroke: currentColor;
+}
+
+/* CRM Floating Dialer Container */
+#voiphub-crm-floating-panel {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  width: 340px;
+  background: #0b0f19;
+  border: 1px solid #1f2937;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(6, 182, 212, 0.2);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: #f8fafc;
+  z-index: 9999999;
+  overflow: hidden;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+#voiphub-crm-floating-panel.minimized {
+  width: 220px;
+  height: 44px;
+}
+
+.vh-panel-header {
+  height: 48px;
+  background: #111827;
+  border-bottom: 1px solid #1f2937;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  user-select: none;
+}
+
+.vh-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vh-brand-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #06b6d4;
+  letter-spacing: -0.01em;
+}
+
+.vh-status-badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vh-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.vh-icon-btn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 14px;
+  cursor: pointer;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vh-icon-btn:hover {
+  background: #1f2937;
+  color: #f8fafc;
+}
+
+.vh-panel-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.vh-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vh-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: #94a3b8;
+  letter-spacing: 0.04em;
+}
+
+.vh-select, .vh-input {
+  width: 100%;
+  padding: 9px 12px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  color: #f8fafc;
+  font-size: 13px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.vh-select:focus, .vh-input:focus {
+  border-color: #06b6d4;
+}
+
+/* Pre-call Toggle Row */
+.vh-toggle-row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+  margin-bottom: 6px;
+  padding: 6px 0;
+}
+
+
+.vh-switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+}
+
+.vh-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.vh-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: #334155;
+  transition: .2s;
+  border-radius: 20px;
+}
+
+.vh-slider:before {
+  position: absolute;
+  content: "";
+  height: 14px;
+  width: 14px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: .2s;
+  border-radius: 50%;
+}
+
+input:checked + .vh-slider {
+  background-color: #06b6d4;
+}
+
+input:checked + .vh-slider:before {
+  transform: translateX(16px);
+}
+
+.vh-contact-display {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.vh-contact-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #f8fafc;
+}
+
+.vh-contact-phone {
+  font-size: 12px;
+  color: #38bdf8;
+  margin-top: 2px;
+}
+
+.vh-btn-call {
+  width: 100%;
+  padding: 11px;
+  background: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%);
+  border: none;
+  border-radius: 8px;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.vh-btn-call:hover {
+  opacity: 0.95;
+}
+
+/* Active Call Layout in CRM Floating Panel */
+.vh-active-card {
+  background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+  border: 1px solid rgba(6, 182, 212, 0.4);
+  border-radius: 10px;
+  padding: 14px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.vh-active-state {
+  font-size: 11px;
+  font-weight: 700;
+  color: #38bdf8;
+  letter-spacing: 0.05em;
+}
+
+.vh-active-from {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.vh-active-timer {
+  font-size: 22px;
+  font-weight: 700;
+  color: #22d3ee;
+  font-variant-numeric: tabular-nums;
+}
+
+.vh-rec-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.15);
+  padding: 2px 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vh-ctrl-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.vh-ctrl-btn {
+  flex: 1;
+  padding: 8px;
+  background: #334155;
+  border: 1px solid #475569;
+  border-radius: 6px;
+  color: #f8fafc;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.vh-ctrl-btn.active {
+  background: #ea580c;
+  border-color: #f97316;
+}
+
+.vh-keypad-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.vh-key-btn {
+  padding: 8px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  color: #f8fafc;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.vh-key-btn:hover {
+  background: #334155;
+}
+
+.vh-btn-end {
+  width: 100%;
+  padding: 10px;
+  background: #dc2626;
+  border: none;
+  border-radius: 6px;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.vh-btn-end:hover {
+  background: #b91c1c;
+}
+
+/* Minimized Bar State */
+.vh-minimized-bar {
+  height: 44px;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #0f172a;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.vh-min-brand {
+  color: #06b6d4;
+}
+
+.vh-min-status {
+  color: #38bdf8;
+}
+

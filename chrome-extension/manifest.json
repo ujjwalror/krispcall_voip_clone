@@ -1,0 +1,54 @@
+{
+  "manifest_version": 3,
+  "name": "VoIP Hub - CRM Telephony Extension",
+  "version": "1.0.0",
+  "description": "VoIP Hub WebRTC click-to-call extension for Zoho CRM and web applications.",
+  "action": {
+    "default_title": "VoIP Hub Dialer"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": [
+    "storage",
+    "tabs",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://localhost:3000/*",
+    "https://*.zoho.com/*",
+    "https://crm.zoho.com/*",
+    "https://*.zoho.com.au/*",
+    "https://crm.zoho.com.au/*",
+    "https://*.zoho.eu/*",
+    "https://crm.zoho.eu/*",
+    "https://*.zoho.in/*",
+    "https://crm.zoho.in/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.zoho.com/*",
+        "https://crm.zoho.com/*",
+        "https://*.zoho.com.au/*",
+        "https://crm.zoho.com.au/*",
+        "https://*.zoho.eu/*",
+        "https://crm.zoho.eu/*",
+        "https://*.zoho.in/*",
+        "https://crm.zoho.in/*"
+      ],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "all_frames": true,
+      "run_at": "document_end"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["assets/*", "lib/*"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
