@@ -69,21 +69,57 @@ export async function executeOutboundCallSetup(
   const reservationId = resRow.id;
 
   try {
-    // 3. Check if agent already owns an active call row in database
-    const { data: existingActiveCall } = await (adminSupabase as any)
+    // 3. Check if agent already owns an active call row in database (with stale 'initiated' safety net)
+    const { data: existingActiveCalls } = await (adminSupabase as any)
       .from('calls')
-      .select('id')
+      .select('id, status, started_at, created_at')
       .eq('organization_id', organizationId)
       .in('status', ['initiated', 'ringing', 'in-progress', 'queued'])
-      .eq('user_id', userId)
-      .limit(1)
-      .maybeSingle();
+      .eq('user_id', userId);
 
-    if (existingActiveCall) {
-      throw new OutboundCallError(
-        'You already have an active call. Finish your current call before starting another.',
-        409
-      );
+    if (existingActiveCalls && existingActiveCalls.length > 0) {
+      const nowMs = Date.now();
+      const STALE_INITIATED_THRESHOLD_MS = 60 * 1000; // 60s threshold (exceeds 45s reservation TTL)
+
+      let hasGenuineActiveCall = false;
+
+      for (const callRow of existingActiveCalls) {
+        if (callRow.status === 'initiated') {
+          const startTimeStr = callRow.started_at || callRow.created_at;
+          const startTimeMs = startTimeStr ? new Date(startTimeStr).getTime() : 0;
+          const ageMs = nowMs - startTimeMs;
+
+          if (ageMs > STALE_INITIATED_THRESHOLD_MS) {
+            console.log(`[Outbound Call Setup] Found stale initiated call "${callRow.id}" (age: ${Math.round(ageMs / 1000)}s). Terminalizing as failed.`);
+            const nowIso = new Date().toISOString();
+            await (adminSupabase as any)
+              .from('calls')
+              .update({
+                status: 'failed',
+                ended_at: nowIso,
+                updated_at: nowIso,
+              })
+              .eq('id', callRow.id);
+
+            await (adminSupabase as any)
+              .from('agent_call_reservations')
+              .delete()
+              .eq('call_id', callRow.id);
+          } else {
+            hasGenuineActiveCall = true;
+          }
+        } else {
+          // 'ringing', 'in-progress', or 'queued' calls are genuine active calls
+          hasGenuineActiveCall = true;
+        }
+      }
+
+      if (hasGenuineActiveCall) {
+        throw new OutboundCallError(
+          'You already have an active call. Finish your current call before starting another.',
+          409
+        );
+      }
     }
 
     // 4. Extract & validate destination E.164 phone number

@@ -9,12 +9,18 @@ import { SERVER_BASE } from './config';
 declare const chrome: any;
 
 let dialerWindowId: number | null = null;
+let pendingCrmContext: any = null;
 
 /**
  * Opens or focuses the primary standalone VoIP Hub Dialer Window.
  * Prevents creation of duplicate windows.
  */
 async function openOrFocusDialerWindow(crmContext?: any): Promise<number> {
+  if (crmContext) {
+    pendingCrmContext = crmContext;
+    console.log('[VoIP Hub BG] Stored pending CRM context:', pendingCrmContext);
+  }
+
   if (dialerWindowId !== null) {
     try {
       const existingWin = await chrome.windows.get(dialerWindowId);
@@ -22,6 +28,7 @@ async function openOrFocusDialerWindow(crmContext?: any): Promise<number> {
         console.log('[VoIP Hub BG] Focusing existing dialer window:', dialerWindowId);
         await chrome.windows.update(dialerWindowId, { focused: true });
         if (crmContext) {
+          // If window is already open and initialized, push context immediately
           chrome.runtime.sendMessage({ type: 'LOAD_CRM_CONTEXT', data: crmContext }).catch(() => {});
         }
         return dialerWindowId;
@@ -42,12 +49,6 @@ async function openOrFocusDialerWindow(crmContext?: any): Promise<number> {
 
   dialerWindowId = createdWin?.id || null;
   console.log('[VoIP Hub BG] Primary dialer window created with ID:', dialerWindowId);
-
-  if (crmContext) {
-    setTimeout(() => {
-      chrome.runtime.sendMessage({ type: 'LOAD_CRM_CONTEXT', data: crmContext }).catch(() => {});
-    }, 800);
-  }
 
   return dialerWindowId || 0;
 }
@@ -95,9 +96,24 @@ chrome.runtime.onMessage.addListener((message: any, _sender: any, sendResponse: 
   }
 
   if (message.type === 'INITIATE_CALL_FROM_CRM') {
-    console.log('[VoIP Hub BG] INITIATE_CALL_FROM_CRM received:', message.data);
-    openOrFocusDialerWindow(message.data);
+    const rawData = message.data || {};
+    const sanitizedContext = {
+      provider: String(rawData.provider || 'crm'),
+      recordType: String(rawData.recordType || 'Record'),
+      recordId: rawData.recordId ? String(rawData.recordId) : undefined,
+      recordName: String(rawData.recordName || 'CRM Record'),
+      phoneLabel: String(rawData.phoneLabel || 'Phone'),
+      phoneNumber: String(rawData.phoneNumber || '').trim(),
+    };
+    console.log('[VoIP Hub BG] INITIATE_CALL_FROM_CRM received:', sanitizedContext);
+    openOrFocusDialerWindow(sanitizedContext);
     sendResponse({ success: true, windowId: dialerWindowId });
+    return false;
+  } else if (message.type === 'GET_PENDING_CRM_CONTEXT') {
+    console.log('[VoIP Hub BG] GET_PENDING_CRM_CONTEXT query received. Returning:', pendingCrmContext);
+    const ctx = pendingCrmContext;
+    pendingCrmContext = null;
+    sendResponse({ success: true, crmContext: ctx });
     return false;
   } else if (message.type === 'FETCH_BUSINESS_NUMBERS') {
     fetchBusinessNumbersForExtension().then((numbers) => {

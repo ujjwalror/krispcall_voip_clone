@@ -291,6 +291,23 @@
       return false;
     }
   }
+  async function abortCallSetup(callId) {
+    if (!callId || !authToken) return;
+    console.log("[VoIP Hub][CALL] setup abort requested for callId:", callId);
+    try {
+      await fetch(`${SERVER_BASE}/api/extension/calls/abort`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({ callId })
+      });
+      console.log("[VoIP Hub][CALL] setup abort completed for callId:", callId);
+    } catch (err) {
+      console.warn("[VoIP Hub Window] Abort call network warning:", err);
+    }
+  }
   async function executeOutboundCall(destinationPhone) {
     showError(null);
     const normResult = normalizeE164(destinationPhone);
@@ -321,6 +338,8 @@
     if (fromElem) fromElem.textContent = `Calling from ${fromNumber || "Primary Line"}`;
     if (stateTitle) stateTitle.textContent = "CONNECTING";
     if (recBadge) recBadge.style.display = recordCall ? "inline-flex" : "none";
+    let createdCallId = null;
+    let isCallConnectedOrRinging = false;
     try {
       let res = await fetch(`${SERVER_BASE}/api/extension/calls/create`, {
         method: "POST",
@@ -356,22 +375,25 @@
         throw new Error(errData.error || "Failed to reserve outbound call.");
       }
       const resData = await res.json();
-      const callId = resData.callId;
+      createdCallId = resData.callId;
+      console.log("[VoIP Hub][CALL] setup created. callId:", createdCallId);
       const params = {
         To: destination,
-        dbCallId: callId,
+        dbCallId: createdCallId,
         recordCall: recordCall ? "true" : "false"
       };
-      console.log("[VoIP Hub Window] Invoking device.connect() for callId:", callId);
+      console.log("[VoIP Hub][CALL] device connect starting for callId:", createdCallId);
       activeCall = await device.connect({ params });
       isMuted = false;
       activeCall.on("ringing", () => {
-        console.log("[VoIP Hub Window] Call ringing");
+        console.log("[VoIP Hub][CALL] Call ringing");
+        isCallConnectedOrRinging = true;
         if (stateTitle) stateTitle.textContent = "RINGING";
         updateStatusBadge("\u25CF RINGING", "#38bdf8", "rgba(56, 189, 248, 0.3)");
       });
       activeCall.on("accept", () => {
-        console.log("[VoIP Hub Window] Call connected");
+        console.log("[VoIP Hub][CALL] device connected");
+        isCallConnectedOrRinging = true;
         if (stateTitle) stateTitle.textContent = "CONNECTED";
         updateStatusBadge("\u25CF CONNECTED", "#38bdf8", "rgba(56, 189, 248, 0.3)");
         startCallTimer();
@@ -393,6 +415,9 @@
       activeCall.on("reject", handleCallEnd);
       activeCall.on("error", (callErr) => {
         console.error("[VoIP Hub Window] Call error:", callErr.message || callErr);
+        if (!isCallConnectedOrRinging && createdCallId) {
+          abortCallSetup(createdCallId);
+        }
         stopCallTimer();
         activeCall = null;
         showError(callErr.message || "Call error encountered.");
@@ -401,6 +426,9 @@
       });
     } catch (err) {
       console.error("[VoIP Hub Window] Setup error:", err.message || err);
+      if (!isCallConnectedOrRinging && createdCallId) {
+        await abortCallSetup(createdCallId);
+      }
       stopCallTimer();
       activeCall = null;
       showError(err.message || "Failed to place call.");
@@ -409,6 +437,7 @@
     }
   }
   function applyCrmContext(ctx) {
+    if (!ctx) return;
     currentCrmContext = ctx;
     const card = document.getElementById("crm-context-card");
     const badge = document.getElementById("crm-provider-badge");
@@ -423,6 +452,13 @@
       if (destInput) destInput.value = ctx.phoneNumber;
     }
   }
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg?.type === "LOAD_CRM_CONTEXT" && msg.data) {
+      console.log("[VoIP Hub][CRM] context received via push:", msg.data);
+      applyCrmContext(msg.data);
+    }
+    return false;
+  });
   document.addEventListener("DOMContentLoaded", async () => {
     authToken = await getStoredAuthToken(false);
     if (!authToken) {
@@ -433,6 +469,17 @@
       setView("READY");
       await fetchBusinessNumbers();
       await initializeTwilioDevice();
+    }
+    try {
+      chrome.runtime.sendMessage({ type: "GET_PENDING_CRM_CONTEXT" }, (res) => {
+        if (chrome.runtime.lastError) return;
+        if (res?.success && res.crmContext) {
+          console.log("[VoIP Hub][CRM] context received via pull:", res.crmContext);
+          applyCrmContext(res.crmContext);
+        }
+      });
+    } catch (err) {
+      console.warn("[VoIP Hub Window] GET_PENDING_CRM_CONTEXT warning:", err);
     }
     const authForm = document.getElementById("auth-form");
     if (authForm) {
@@ -459,6 +506,13 @@
               updateStatusBadge("\u25CF Ready", "#4ade80", "rgba(34, 197, 94, 0.3)");
               await fetchBusinessNumbers();
               await initializeTwilioDevice();
+              chrome.runtime.sendMessage({ type: "GET_PENDING_CRM_CONTEXT" }, (ctxRes) => {
+                if (chrome.runtime.lastError) return;
+                if (ctxRes?.success && ctxRes.crmContext) {
+                  console.log("[VoIP Hub][CRM] context received via pull post-signin:", ctxRes.crmContext);
+                  applyCrmContext(ctxRes.crmContext);
+                }
+              });
               return;
             }
           }
@@ -551,13 +605,6 @@
           if (destInput) destInput.value += digit;
         }
       });
-    });
-    chrome.runtime.onMessage.addListener((msg) => {
-      if (msg?.type === "LOAD_CRM_CONTEXT" && msg.data) {
-        console.log("[VoIP Hub Window] Received CRM Context:", msg.data);
-        applyCrmContext(msg.data);
-      }
-      return false;
     });
   });
   window.addEventListener("beforeunload", () => {

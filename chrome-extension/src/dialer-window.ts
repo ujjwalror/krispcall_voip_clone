@@ -283,6 +283,24 @@ async function checkOrRequestMicPermission(): Promise<boolean> {
   }
 }
 
+async function abortCallSetup(callId: string) {
+  if (!callId || !authToken) return;
+  console.log('[VoIP Hub][CALL] setup abort requested for callId:', callId);
+  try {
+    await fetch(`${SERVER_BASE}/api/extension/calls/abort`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authToken}`,
+      },
+      body: JSON.stringify({ callId }),
+    });
+    console.log('[VoIP Hub][CALL] setup abort completed for callId:', callId);
+  } catch (err) {
+    console.warn('[VoIP Hub Window] Abort call network warning:', err);
+  }
+}
+
 async function executeOutboundCall(destinationPhone: string) {
   showError(null);
 
@@ -322,6 +340,9 @@ async function executeOutboundCall(destinationPhone: string) {
   if (stateTitle) stateTitle.textContent = 'CONNECTING';
   if (recBadge) recBadge.style.display = recordCall ? 'inline-flex' : 'none';
 
+  let createdCallId: string | null = null;
+  let isCallConnectedOrRinging = false;
+
   try {
     let res = await fetch(`${SERVER_BASE}/api/extension/calls/create`, {
       method: 'POST',
@@ -360,26 +381,30 @@ async function executeOutboundCall(destinationPhone: string) {
     }
 
     const resData = await res.json();
-    const callId = resData.callId;
+    createdCallId = resData.callId;
+
+    console.log('[VoIP Hub][CALL] setup created. callId:', createdCallId);
 
     const params = {
       To: destination,
-      dbCallId: callId,
+      dbCallId: createdCallId,
       recordCall: recordCall ? 'true' : 'false',
     };
 
-    console.log('[VoIP Hub Window] Invoking device.connect() for callId:', callId);
+    console.log('[VoIP Hub][CALL] device connect starting for callId:', createdCallId);
     activeCall = await device.connect({ params });
     isMuted = false;
 
     activeCall.on('ringing', () => {
-      console.log('[VoIP Hub Window] Call ringing');
+      console.log('[VoIP Hub][CALL] Call ringing');
+      isCallConnectedOrRinging = true;
       if (stateTitle) stateTitle.textContent = 'RINGING';
       updateStatusBadge('● RINGING', '#38bdf8', 'rgba(56, 189, 248, 0.3)');
     });
 
     activeCall.on('accept', () => {
-      console.log('[VoIP Hub Window] Call connected');
+      console.log('[VoIP Hub][CALL] device connected');
+      isCallConnectedOrRinging = true;
       if (stateTitle) stateTitle.textContent = 'CONNECTED';
       updateStatusBadge('● CONNECTED', '#38bdf8', 'rgba(56, 189, 248, 0.3)');
       startCallTimer();
@@ -404,6 +429,9 @@ async function executeOutboundCall(destinationPhone: string) {
 
     activeCall.on('error', (callErr: any) => {
       console.error('[VoIP Hub Window] Call error:', callErr.message || callErr);
+      if (!isCallConnectedOrRinging && createdCallId) {
+        abortCallSetup(createdCallId);
+      }
       stopCallTimer();
       activeCall = null;
       showError(callErr.message || 'Call error encountered.');
@@ -412,6 +440,9 @@ async function executeOutboundCall(destinationPhone: string) {
     });
   } catch (err: any) {
     console.error('[VoIP Hub Window] Setup error:', err.message || err);
+    if (!isCallConnectedOrRinging && createdCallId) {
+      await abortCallSetup(createdCallId);
+    }
     stopCallTimer();
     activeCall = null;
     showError(err.message || 'Failed to place call.');
@@ -421,6 +452,7 @@ async function executeOutboundCall(destinationPhone: string) {
 }
 
 function applyCrmContext(ctx: CrmContext) {
+  if (!ctx) return;
   currentCrmContext = ctx;
   const card = document.getElementById('crm-context-card');
   const badge = document.getElementById('crm-provider-badge');
@@ -437,6 +469,15 @@ function applyCrmContext(ctx: CrmContext) {
   }
 }
 
+// Register push listener early
+chrome.runtime.onMessage.addListener((msg: any) => {
+  if (msg?.type === 'LOAD_CRM_CONTEXT' && msg.data) {
+    console.log('[VoIP Hub][CRM] context received via push:', msg.data);
+    applyCrmContext(msg.data);
+  }
+  return false;
+});
+
 document.addEventListener('DOMContentLoaded', async () => {
   // Initialize Auth & Device
   authToken = await getStoredAuthToken(false);
@@ -449,6 +490,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     setView('READY');
     await fetchBusinessNumbers();
     await initializeTwilioDevice();
+  }
+
+  // Pull any pending CRM Context from background service worker
+  try {
+    chrome.runtime.sendMessage({ type: 'GET_PENDING_CRM_CONTEXT' }, (res: any) => {
+      if (chrome.runtime.lastError) return;
+      if (res?.success && res.crmContext) {
+        console.log('[VoIP Hub][CRM] context received via pull:', res.crmContext);
+        applyCrmContext(res.crmContext);
+      }
+    });
+  } catch (err) {
+    console.warn('[VoIP Hub Window] GET_PENDING_CRM_CONTEXT warning:', err);
   }
 
   // Auth Form Submit
@@ -479,6 +533,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             updateStatusBadge('● Ready', '#4ade80', 'rgba(34, 197, 94, 0.3)');
             await fetchBusinessNumbers();
             await initializeTwilioDevice();
+
+            // Retry pulling pending CRM context after sign-in
+            chrome.runtime.sendMessage({ type: 'GET_PENDING_CRM_CONTEXT' }, (ctxRes: any) => {
+              if (chrome.runtime.lastError) return;
+              if (ctxRes?.success && ctxRes.crmContext) {
+                console.log('[VoIP Hub][CRM] context received via pull post-signin:', ctxRes.crmContext);
+                applyCrmContext(ctxRes.crmContext);
+              }
+            });
             return;
           }
         }
@@ -587,15 +650,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (destInput) destInput.value += digit;
       }
     });
-  });
-
-  // Listen for CRM Context messages from background
-  chrome.runtime.onMessage.addListener((msg: any) => {
-    if (msg?.type === 'LOAD_CRM_CONTEXT' && msg.data) {
-      console.log('[VoIP Hub Window] Received CRM Context:', msg.data);
-      applyCrmContext(msg.data);
-    }
-    return false;
   });
 });
 
