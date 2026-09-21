@@ -21,6 +21,14 @@ export type CallStatus =
   | 'missed'
   | 'blocked';
 export type MessageDirection = 'inbound' | 'outbound';
+export type MessageStatus =
+  | 'queued'
+  | 'sending'
+  | 'sent'
+  | 'delivered'
+  | 'undelivered'
+  | 'failed'
+  | 'received';
 
 export interface Database {
   public: {
@@ -290,6 +298,9 @@ export interface Database {
           body: string;
           direction: MessageDirection;
           status: string;
+          error_code: string | null;
+          error_message: string | null;
+          is_read: boolean;
           sent_at: string | null;
           created_at: string;
           updated_at: string;
@@ -305,6 +316,9 @@ export interface Database {
           body: string;
           direction: MessageDirection;
           status?: string;
+          error_code?: string | null;
+          error_message?: string | null;
+          is_read?: boolean;
           sent_at?: string | null;
           created_at?: string;
           updated_at?: string;
@@ -320,6 +334,9 @@ export interface Database {
           body?: string;
           direction?: MessageDirection;
           status?: string;
+          error_code?: string | null;
+          error_message?: string | null;
+          is_read?: boolean;
           sent_at?: string | null;
           created_at?: string;
           updated_at?: string;
@@ -334,6 +351,9 @@ export interface Database {
           friendly_name: string | null;
           active: boolean;
           is_primary: boolean;
+          capabilities_voice: boolean;
+          capabilities_sms: boolean;
+          capabilities_mms: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -345,6 +365,9 @@ export interface Database {
           friendly_name?: string | null;
           active?: boolean;
           is_primary?: boolean;
+          capabilities_voice?: boolean;
+          capabilities_sms?: boolean;
+          capabilities_mms?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -356,6 +379,9 @@ export interface Database {
           friendly_name?: string | null;
           active?: boolean;
           is_primary?: boolean;
+          capabilities_voice?: boolean;
+          capabilities_sms?: boolean;
+          capabilities_mms?: boolean;
           created_at?: string;
           updated_at?: string;
         };

@@ -5,6 +5,7 @@
 
 import { safeStorageGet, safeStorageSet, safeStorageRemove } from './storage';
 import { SERVER_BASE } from './config';
+import parsePhoneNumberFromString, { getCountries, getCountryCallingCode, CountryCode } from 'libphonenumber-js';
 
 declare const Twilio: any;
 declare const chrome: any;
@@ -22,31 +23,161 @@ let device: any = null;
 let activeCall: any = null;
 let callTimerInterval: any = null;
 let secondsElapsed = 0;
-let isMuted = false;
+
 let authToken: string | null = null;
 let isDeviceInitializing = false;
+let isMuted = false;
 let currentCrmContext: CrmContext | null = null;
 
-function normalizeE164(phone: string): { isValid: boolean; normalized: string; error?: string } {
-  if (!phone || typeof phone !== 'string') {
+function populateCountrySelect() {
+  const selectElem = document.getElementById('country-select') as HTMLSelectElement;
+  if (!selectElem) return;
+
+  const displayNames =
+    typeof Intl !== 'undefined' && (Intl as any).DisplayNames
+      ? new (Intl as any).DisplayNames(['en'], { type: 'region' })
+      : null;
+
+  const countries = getCountries();
+  const options: { code: CountryCode; name: string; prefix: string }[] = [];
+
+  for (const c of countries) {
+    try {
+      const prefix = getCountryCallingCode(c);
+      const name = displayNames ? displayNames.of(c) || c : c;
+      options.push({ code: c, name, prefix: `+${prefix}` });
+    } catch {}
+  }
+
+  options.sort((a, b) => a.name.localeCompare(b.name));
+
+  const priorityCodes: CountryCode[] = ['IN', 'AU', 'US', 'GB', 'NZ', 'CA'];
+  const priorityOptions = options.filter((o) => priorityCodes.includes(o.code));
+  const otherOptions = options.filter((o) => !priorityCodes.includes(o.code));
+
+  selectElem.innerHTML = '<option value="">Select country</option>';
+
+  const addOption = (opt: { code: CountryCode; name: string; prefix: string }) => {
+    const el = document.createElement('option');
+    el.value = opt.code;
+    el.textContent = `${opt.name} (${opt.prefix})`;
+    selectElem.appendChild(el);
+  };
+
+  priorityOptions.forEach(addOption);
+
+  if (priorityOptions.length > 0 && otherOptions.length > 0) {
+    const divider = document.createElement('option');
+    divider.disabled = true;
+    divider.textContent = '──────────';
+    selectElem.appendChild(divider);
+  }
+
+  otherOptions.forEach(addOption);
+}
+
+function updatePhonePreviewAndValidation(): { isValid: boolean; normalized: string; error?: string } {
+  const destInput = document.getElementById('destination-input') as HTMLInputElement;
+  const countrySelect = document.getElementById('country-select') as HTMLSelectElement;
+  const previewDiv = document.getElementById('normalized-phone-preview');
+  const callBtn = document.getElementById('btn-start-call') as HTMLButtonElement;
+
+  if (!destInput || !countrySelect || !previewDiv) {
+    return { isValid: false, normalized: '', error: 'Form elements not found' };
+  }
+
+  const rawPhone = destInput.value.trim();
+  if (!rawPhone) {
+    previewDiv.style.display = 'none';
+    previewDiv.textContent = '';
+    if (callBtn) {
+      callBtn.disabled = true;
+      callBtn.style.opacity = '0.5';
+    }
     return { isValid: false, normalized: '', error: 'Destination number is required.' };
   }
-  const stripped = phone.trim().replace(/[\s\-\(\)\.]/g, '');
-  if (!stripped) {
-    return { isValid: false, normalized: '', error: 'Destination number cannot be blank.' };
-  }
-  let normalized = stripped;
-  if (!normalized.startsWith('+')) {
-    if (/^\d{7,15}$/.test(normalized)) {
-      normalized = `+${normalized}`;
-    } else {
-      return { isValid: false, normalized: '', error: 'Enter a valid international phone number' };
+
+  const selectedCountry = countrySelect.value as CountryCode | '';
+
+  // 1. Check if raw input is an explicit +E.164 or international phone number
+  try {
+    const phoneNumber = parsePhoneNumberFromString(rawPhone);
+
+    if (phoneNumber && phoneNumber.isValid()) {
+      if (phoneNumber.country && countrySelect.value !== phoneNumber.country) {
+        countrySelect.value = phoneNumber.country;
+      }
+
+      previewDiv.style.display = 'block';
+      previewDiv.style.color = '#4ade80';
+      previewDiv.textContent = `Formatted E.164: ${phoneNumber.number}`;
+      if (callBtn) {
+        callBtn.disabled = false;
+        callBtn.style.opacity = '1';
+      }
+      return { isValid: true, normalized: phoneNumber.number };
+    }
+  } catch {}
+
+  // 2. Fallback check for raw + prefix number format
+  if (rawPhone.startsWith('+')) {
+    const stripped = rawPhone.replace(/[\s\-\(\)\.]/g, '');
+    if (/^\+[1-9]\d{6,14}$/.test(stripped)) {
+      try {
+        const parsed = parsePhoneNumberFromString(stripped);
+        if (parsed?.country && countrySelect.value !== parsed.country) {
+          countrySelect.value = parsed.country;
+        }
+      } catch {}
+
+      previewDiv.style.display = 'block';
+      previewDiv.style.color = '#4ade80';
+      previewDiv.textContent = `Formatted E.164: ${stripped}`;
+      if (callBtn) {
+        callBtn.disabled = false;
+        callBtn.style.opacity = '1';
+      }
+      return { isValid: true, normalized: stripped };
     }
   }
-  if (!/^\+[1-9]\d{6,14}$/.test(normalized)) {
-    return { isValid: false, normalized: '', error: 'Enter a valid international phone number' };
+
+  // 3. For national/local number without + prefix: require user to select country first
+  if (!selectedCountry) {
+    previewDiv.style.display = 'block';
+    previewDiv.style.color = '#f59e0b';
+    previewDiv.textContent = 'Select country to format national number.';
+    if (callBtn) {
+      callBtn.disabled = true;
+      callBtn.style.opacity = '0.5';
+    }
+    return { isValid: false, normalized: '', error: 'Please select a country.' };
   }
-  return { isValid: true, normalized };
+
+  // 4. Try parsing national number with the user-selected country
+  try {
+    const phoneNumber = parsePhoneNumberFromString(rawPhone, selectedCountry);
+
+    if (phoneNumber && phoneNumber.isValid()) {
+      previewDiv.style.display = 'block';
+      previewDiv.style.color = '#4ade80';
+      previewDiv.textContent = `Formatted E.164: ${phoneNumber.number}`;
+      if (callBtn) {
+        callBtn.disabled = false;
+        callBtn.style.opacity = '1';
+      }
+      return { isValid: true, normalized: phoneNumber.number };
+    }
+  } catch {}
+
+  // 5. Invalid number format for selected country or raw string
+  previewDiv.style.display = 'block';
+  previewDiv.style.color = '#f87171';
+  previewDiv.textContent = 'Invalid phone number format.';
+  if (callBtn) {
+    callBtn.disabled = true;
+    callBtn.style.opacity = '0.5';
+  }
+  return { isValid: false, normalized: '', error: 'Enter a valid phone number format.' };
 }
 
 function formatTimer(seconds: number): string {
@@ -304,9 +435,9 @@ async function abortCallSetup(callId: string) {
 async function executeOutboundCall(destinationPhone: string) {
   showError(null);
 
-  const normResult = normalizeE164(destinationPhone);
+  const normResult = updatePhonePreviewAndValidation();
   if (!normResult.isValid || !normResult.normalized) {
-    showError(normResult.error || 'Enter a valid international phone number');
+    showError(normResult.error || 'Enter a valid phone number.');
     return;
   }
   const destination = normResult.normalized;
@@ -344,6 +475,9 @@ async function executeOutboundCall(destinationPhone: string) {
   let isCallConnectedOrRinging = false;
 
   try {
+    const countrySelect = document.getElementById('country-select') as HTMLSelectElement;
+    const selectedCountry = countrySelect?.value || undefined;
+
     let res = await fetch(`${SERVER_BASE}/api/extension/calls/create`, {
       method: 'POST',
       headers: {
@@ -354,6 +488,7 @@ async function executeOutboundCall(destinationPhone: string) {
         destination,
         fromNumber,
         recordCall,
+        defaultCountry: selectedCountry,
       }),
     });
 
@@ -370,6 +505,7 @@ async function executeOutboundCall(destinationPhone: string) {
             destination,
             fromNumber,
             recordCall,
+            defaultCountry: selectedCountry,
           }),
         });
       }
@@ -459,6 +595,7 @@ function applyCrmContext(ctx: CrmContext) {
   const name = document.getElementById('crm-contact-name');
   const label = document.getElementById('crm-phone-label');
   const destInput = document.getElementById('destination-input') as HTMLInputElement;
+  const countrySelect = document.getElementById('country-select') as HTMLSelectElement;
 
   if (card && ctx.phoneNumber) {
     card.style.display = 'block';
@@ -466,6 +603,20 @@ function applyCrmContext(ctx: CrmContext) {
     if (name) name.textContent = ctx.recordName || 'CRM Record';
     if (label) label.textContent = `${ctx.phoneLabel || 'Phone'}: ${ctx.phoneNumber}`;
     if (destInput) destInput.value = ctx.phoneNumber;
+
+    // Detect country code if starts with +, otherwise set default country
+    if (ctx.phoneNumber.startsWith('+')) {
+      try {
+        const parsed = parsePhoneNumberFromString(ctx.phoneNumber);
+        if (parsed?.country && countrySelect) {
+          countrySelect.value = parsed.country;
+        }
+      } catch {}
+    } else if (countrySelect) {
+      countrySelect.value = '';
+    }
+
+    updatePhonePreviewAndValidation();
   }
 }
 
@@ -479,6 +630,8 @@ chrome.runtime.onMessage.addListener((msg: any) => {
 });
 
 document.addEventListener('DOMContentLoaded', async () => {
+  populateCountrySelect();
+
   // Initialize Auth & Device
   authToken = await getStoredAuthToken(false);
 
@@ -581,6 +734,22 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (ok) {
         setView('READY');
       }
+    });
+  }
+
+  // Live Destination Input & Country Selector Format Preview
+  const destInputElem = document.getElementById('destination-input') as HTMLInputElement;
+  const countrySelectElem = document.getElementById('country-select') as HTMLSelectElement;
+
+  if (destInputElem) {
+    destInputElem.addEventListener('input', () => {
+      updatePhonePreviewAndValidation();
+    });
+  }
+
+  if (countrySelectElem) {
+    countrySelectElem.addEventListener('change', () => {
+      updatePhonePreviewAndValidation();
     });
   }
 

@@ -17,7 +17,6 @@
     "scripting"
   ],
   "host_permissions": [
-    "http://localhost:3000/*",
     "https://*.zoho.com/*",
     "https://crm.zoho.com/*",
     "https://*.zoho.com.au/*",
@@ -39,16 +38,32 @@
         "https://*.zoho.in/*",
         "https://crm.zoho.in/*"
       ],
-      "js": ["content.js"],
-      "css": ["content.css"],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
       "all_frames": true,
       "run_at": "document_end"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["assets/*", "lib/*"],
-      "matches": ["<all_urls>"]
+      "resources": [
+        "assets/*",
+        "lib/*"
+      ],
+      "matches": [
+        "https://*.zoho.com/*",
+        "https://crm.zoho.com/*",
+        "https://*.zoho.com.au/*",
+        "https://crm.zoho.com.au/*",
+        "https://*.zoho.eu/*",
+        "https://crm.zoho.eu/*",
+        "https://*.zoho.in/*",
+        "https://crm.zoho.in/*"
+      ]
     }
   ]
 }

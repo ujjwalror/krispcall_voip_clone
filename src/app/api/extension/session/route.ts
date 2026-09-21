@@ -38,7 +38,8 @@ export async function GET(request: Request) {
       );
     }
 
-    const { data: profile } = await supabase
+    const adminSupabase = createAdminClient();
+    const { data: profile } = await (adminSupabase as any)
       .from('profiles')
       .select('id, full_name, role, organization_id, active')
       .eq('id', user.id)

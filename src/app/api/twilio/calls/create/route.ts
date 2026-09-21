@@ -39,6 +39,7 @@ export async function POST(request: Request) {
     const destination = body.destination || body.to || '';
     const fromNumber = body.fromNumber || body.from || '';
     const recordCall = Boolean(body.recordCall);
+    const defaultCountry = body.defaultCountry || body.country || undefined;
 
     // 3. Delegate to shared server-only outbound call service
     const result = await executeOutboundCallSetup({
@@ -47,6 +48,7 @@ export async function POST(request: Request) {
       destination,
       fromNumber,
       recordCall,
+      defaultCountry,
     });
 
     return NextResponse.json(result);

@@ -29,9 +29,18 @@ if (fs.existsSync(twilioSrc)) {
   process.exit(1);
 }
 
-// 3. Copy manifest.json
+// 3. Copy manifest.json (with optional development host permission if DEV_MANIFEST=true)
 const manifestSrc = path.join(rootDir, 'chrome-extension', 'manifest.json');
-fs.copyFileSync(manifestSrc, path.join(distDir, 'manifest.json'));
+const manifestContent = JSON.parse(fs.readFileSync(manifestSrc, 'utf8'));
+
+if (process.env.DEV_MANIFEST === 'true' || process.argv.includes('--dev')) {
+  console.log('[BUILD EXTENSION] Adding local development host permission (http://localhost:3000/*)...');
+  if (!manifestContent.host_permissions.includes('http://localhost:3000/*')) {
+    manifestContent.host_permissions.unshift('http://localhost:3000/*');
+  }
+}
+
+fs.writeFileSync(path.join(distDir, 'manifest.json'), JSON.stringify(manifestContent, null, 2));
 
 // 4. Copy HTML & CSS files
 const staticFiles = ['dialer-window.html', 'dialer-window.css', 'content.css'];

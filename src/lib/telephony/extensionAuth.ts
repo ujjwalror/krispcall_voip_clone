@@ -8,7 +8,33 @@ export interface ExtensionAuthResult {
 }
 
 /**
+ * Resolves the explicit allowlist of authorized extension IDs and development origins.
+ * Configured via process.env.ALLOWED_EXTENSION_IDS (comma-separated list of Extension IDs).
+ */
+export function getAllowedExtensionOrigins(): Set<string> {
+  const allowed = new Set<string>();
+
+  const envIds = process.env.ALLOWED_EXTENSION_IDS || process.env.NEXT_PUBLIC_ALLOWED_EXTENSION_IDS || '';
+  if (envIds) {
+    envIds.split(',').forEach((id) => {
+      const trimmed = id.trim();
+      if (trimmed) {
+        allowed.add(`chrome-extension://${trimmed}`);
+      }
+    });
+  }
+
+  const devId = process.env.DEVELOPMENT_EXTENSION_ID;
+  if (devId) {
+    allowed.add(`chrome-extension://${devId.trim()}`);
+  }
+
+  return allowed;
+}
+
+/**
  * Handles CORS preflight and response headers for Chrome Extension API endpoints.
+ * Enforces explicit Chrome Extension ID origin matching.
  */
 export function getExtensionCorsHeaders(request: Request): Record<string, string> {
   const origin = request.headers.get('origin') || '';
@@ -18,9 +44,11 @@ export function getExtensionCorsHeaders(request: Request): Record<string, string
     'Access-Control-Allow-Credentials': 'true',
   };
 
-  if (origin.startsWith('chrome-extension://') || origin.startsWith('http://localhost:')) {
+  const allowedOrigins = getAllowedExtensionOrigins();
+
+  if (origin && (allowedOrigins.has(origin) || (process.env.NODE_ENV !== 'production' && origin.startsWith('http://localhost:')))) {
     headers['Access-Control-Allow-Origin'] = origin;
-  } else if (!origin) {
+  } else if (!origin && process.env.NODE_ENV !== 'production') {
     headers['Access-Control-Allow-Origin'] = '*';
   }
 

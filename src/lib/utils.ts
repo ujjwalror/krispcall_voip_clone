@@ -215,11 +215,24 @@ export function formatCallTime(isoString: string, timeZone?: string | null, time
   return formatUserDateTime(isoString, timeZone, timeFormat);
 }
 
+import parsePhoneNumberFromString, { CountryCode } from 'libphonenumber-js';
+
+export interface PhoneNormalizationResult {
+  isValid: boolean;
+  normalized: string;
+  country?: CountryCode;
+  nationalNumber?: string;
+  error?: string;
+}
+
 /**
- * Normalizes phone numbers to E.164 format for Twilio PSTN dialing.
- * Trims input, strips illegal characters, and enforces '+' prefix.
+ * Country-aware E.164 phone number parser & normalizer powered by libphonenumber-js.
+ * Handles national numbers, leading zero stripping, human formatting, and E.164 validation.
  */
-export function normalizeE164PhoneNumber(phone: string): { isValid: boolean; normalized: string; error?: string } {
+export function parseAndNormalizePhoneNumber(
+  phone: string,
+  defaultCountry?: string
+): PhoneNormalizationResult {
   if (!phone || typeof phone !== 'string') {
     return { isValid: false, normalized: '', error: 'Destination number is required.' };
   }
@@ -229,24 +242,48 @@ export function normalizeE164PhoneNumber(phone: string): { isValid: boolean; nor
     return { isValid: false, normalized: '', error: 'Destination number cannot be blank.' };
   }
 
-  // Remove whitespace, dashes, parentheses, dots
-  const stripped = trimmed.replace(/[\s\-\(\)\.]/g, '');
+  const upperCountry = defaultCountry ? (defaultCountry.toUpperCase() as CountryCode) : undefined;
 
-  let normalized = stripped;
-  if (!normalized.startsWith('+')) {
-    if (/^\d{7,15}$/.test(normalized)) {
-      normalized = `+${normalized}`;
-    } else {
-      return { isValid: false, normalized: '', error: 'Phone number must be a valid E.164 format (e.g. +61412345678 or +15550199).' };
+  try {
+    const phoneNumber = parsePhoneNumberFromString(trimmed, upperCountry);
+
+    if (phoneNumber && phoneNumber.isValid()) {
+      return {
+        isValid: true,
+        normalized: phoneNumber.number, // E.164 string (e.g. +919193399740)
+        country: phoneNumber.country,
+        nationalNumber: phoneNumber.nationalNumber,
+      };
+    }
+  } catch {}
+
+  // Fallback check for explicitly formatted +E.164 numbers
+  if (trimmed.startsWith('+')) {
+    const stripped = trimmed.replace(/[\s\-\(\)\.]/g, '');
+    if (/^\+[1-9]\d{6,14}$/.test(stripped)) {
+      return { isValid: true, normalized: stripped };
     }
   }
 
-  // Validate E.164 regex: + followed by 7 to 15 digits
-  const e164Regex = /^\+[1-9]\d{6,14}$/;
-  if (!e164Regex.test(normalized)) {
-    return { isValid: false, normalized: '', error: 'Invalid E.164 phone number format.' };
-  }
+  return {
+    isValid: false,
+    normalized: '',
+    error: 'Enter a valid phone number.',
+  };
+}
 
-  return { isValid: true, normalized };
+/**
+ * Backward-compatible E.164 normalization helper.
+ */
+export function normalizeE164PhoneNumber(
+  phone: string,
+  defaultCountry?: string
+): { isValid: boolean; normalized: string; error?: string } {
+  const result = parseAndNormalizePhoneNumber(phone, defaultCountry);
+  return {
+    isValid: result.isValid,
+    normalized: result.normalized,
+    error: result.error,
+  };
 }
 
