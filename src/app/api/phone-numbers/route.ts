@@ -35,12 +35,13 @@ export async function GET() {
       );
     }
 
-    // 1. Fetch active business numbers from public.phone_numbers
+    // 1. Fetch active Voice-capable business numbers from public.phone_numbers
     const { data: phoneNumbers, error: fetchError } = await (supabase as any)
       .from('phone_numbers')
       .select('*')
       .eq('organization_id', profile.organization_id)
       .eq('active', true)
+      .eq('capabilities_voice', true)
       .order('is_primary', { ascending: false })
       .order('created_at', { ascending: true });
 
@@ -52,43 +53,7 @@ export async function GET() {
       );
     }
 
-    let result = phoneNumbers || [];
-
-    // 2. Auto-initialize default primary business number if database table is currently empty for this org
-    if (result.length === 0) {
-      const defaultPhone = process.env.TWILIO_PHONE_NUMBER || '+61348328472';
-      const validation = normalizeE164PhoneNumber(defaultPhone);
-      const normalizedPhone = validation.normalized || defaultPhone;
-
-      const { data: insertedNumber } = await (supabase as any)
-        .from('phone_numbers')
-        .insert({
-          organization_id: profile.organization_id,
-          phone_number: normalizedPhone,
-          friendly_name: 'Primary Business Line',
-          active: true,
-          is_primary: true,
-        })
-        .select()
-        .maybeSingle();
-
-      if (insertedNumber) {
-        result = [insertedNumber];
-      } else {
-        // Fallback transient object if insertion restricted
-        result = [
-          {
-            id: 'default-primary',
-            organization_id: profile.organization_id,
-            phone_number: normalizedPhone,
-            friendly_name: 'Primary Business Line',
-            active: true,
-            is_primary: true,
-            created_at: new Date().toISOString(),
-          },
-        ];
-      }
-    }
+    const result = phoneNumbers || [];
 
     return NextResponse.json({
       success: true,

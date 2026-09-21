@@ -50,7 +50,7 @@ export async function POST(request: Request) {
 
     const callSid = params.CallSid || params.callSid || '';
     const customerFrom = params.From || params.from || 'Unknown Caller';
-    const companyTo = params.To || params.to || process.env.TWILIO_PHONE_NUMBER || '';
+    const companyTo = params.To || params.to || '';
 
     console.log('[TWILIO INBOUND REQUEST]', {
       CallSid: callSid,
@@ -60,47 +60,45 @@ export async function POST(request: Request) {
 
     const adminSupabase = createAdminClient();
 
-    // 1. Locate organization associated with phone number or default organization
+    // 1. Locate organization strictly associated with active phone_number
     let organizationId = '';
     let routingStrategy: 'ring_all' | 'round_robin' = 'ring_all';
     let preferAssignedAgentEnabled = false;
     let autoRecordingEnabled = true;
     let lastRoutedUserId: string | null = null;
 
-    const { data: phoneRecord } = await (adminSupabase as any)
-      .from('phone_numbers')
-      .select('organization_id')
-      .eq('phone_number', companyTo)
-      .single();
+    if (companyTo) {
+      const { data: phoneRecord } = await (adminSupabase as any)
+        .from('phone_numbers')
+        .select('organization_id')
+        .eq('phone_number', companyTo)
+        .eq('active', true)
+        .eq('capabilities_voice', true)
+        .maybeSingle();
 
-    if (phoneRecord && phoneRecord.organization_id) {
-      organizationId = phoneRecord.organization_id;
-    } else {
-      // Fallback: pick first organization in workspace
-      const { data: firstOrg } = await (adminSupabase as any)
-        .from('organizations')
-        .select('id, routing_strategy, prefer_assigned_agent, auto_recording_enabled, last_routed_user_id')
-        .limit(1)
-        .single();
+      if (phoneRecord && phoneRecord.organization_id) {
+        organizationId = phoneRecord.organization_id;
 
-      if (firstOrg) {
-        organizationId = firstOrg.id;
-        routingStrategy = firstOrg.routing_strategy || 'ring_all';
-        preferAssignedAgentEnabled = Boolean(firstOrg.prefer_assigned_agent);
-        autoRecordingEnabled = firstOrg.auto_recording_enabled !== false;
-        lastRoutedUserId = firstOrg.last_routed_user_id || null;
+        const { data: orgRecord } = await (adminSupabase as any)
+          .from('organizations')
+          .select('id, routing_strategy, prefer_assigned_agent, auto_recording_enabled, last_routed_user_id')
+          .eq('id', organizationId)
+          .single();
+
+        if (orgRecord) {
+          routingStrategy = orgRecord.routing_strategy || 'ring_all';
+          preferAssignedAgentEnabled = Boolean(orgRecord.prefer_assigned_agent);
+          autoRecordingEnabled = orgRecord.auto_recording_enabled !== false;
+          lastRoutedUserId = orgRecord.last_routed_user_id || null;
+        }
       }
     }
 
     if (!organizationId) {
-      console.error('[TWILIO WEBHOOK ERROR]', {
-        route: '/api/twilio/voice/inbound',
-        status: 200,
-        error: 'No active organization found to handle this call',
-      });
+      console.warn('[TWILIO INBOUND WARNING] Unregistered or inactive destination phone number:', companyTo);
       const errRes = new twilio.twiml.VoiceResponse();
-      errRes.say('No active organization found to handle this call.');
-      errRes.hangup();
+      errRes.say('The number you have dialed is not in service.');
+      errRes.reject();
       return new NextResponse(errRes.toString(), {
         status: 200,
         headers: { 'Content-Type': 'text/xml' },
@@ -424,7 +422,7 @@ export async function POST(request: Request) {
     })));
 
     const isValidE164 = (num: string) => /^\+[1-9]\d{1,14}$/.test(num);
-    const dialCallerId = isValidE164(customerFrom) ? customerFrom : (isValidE164(companyTo) ? companyTo : process.env.TWILIO_PHONE_NUMBER || companyTo);
+    const dialCallerId = isValidE164(customerFrom) ? customerFrom : companyTo;
 
     // If preferred attempt, set action to preferred fallback route with 40s timeout; else status route with 30s timeout
     const dialStatusActionUrl = isPreferredAttempt

@@ -23,7 +23,7 @@ import { useTwilioDeviceContext } from '@/components/providers/TwilioDeviceProvi
 
 export function DialerWidget() {
   const [phoneNumber, setPhoneNumber] = useState('');
-  const [businessNumber, setBusinessNumber] = useState('+61348328472');
+  const [businessNumber, setBusinessNumber] = useState('');
 
   const {
     deviceStatus,
@@ -54,6 +54,8 @@ export function DialerWidget() {
             if (isMounted && primary?.phone_number) {
               setBusinessNumber(primary.phone_number);
             }
+          } else if (isMounted) {
+            setBusinessNumber('');
           }
         }
       } catch (err) {

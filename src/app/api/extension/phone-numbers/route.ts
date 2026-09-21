@@ -27,23 +27,11 @@ export async function GET(request: Request) {
       .select('*')
       .eq('organization_id', auth.organizationId)
       .eq('active', true)
+      .eq('capabilities_voice', true)
       .order('is_primary', { ascending: false })
       .order('created_at', { ascending: true });
 
-    let result = phoneNumbers || [];
-    if (result.length === 0) {
-      const defaultPhone = process.env.TWILIO_PHONE_NUMBER || '+61348328472';
-      result = [
-        {
-          id: 'default-primary',
-          organization_id: auth.organizationId,
-          phone_number: defaultPhone,
-          friendly_name: 'Primary Business Number',
-          active: true,
-          is_primary: true,
-        },
-      ];
-    }
+    const result = phoneNumbers || [];
 
     return NextResponse.json({ success: true, phoneNumbers: result }, { headers: corsHeaders });
   } catch (error: any) {
