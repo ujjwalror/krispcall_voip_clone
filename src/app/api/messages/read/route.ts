@@ -19,16 +19,16 @@ export async function POST(request: Request) {
       );
     }
 
-    // 2. Fetch profile to resolve authenticated organization_id & active status
+    // 2. Fetch profile to resolve authenticated organization_id
     const { data: profile } = await (supabase as any)
       .from('profiles')
-      .select('id, organization_id, active')
+      .select('id, organization_id')
       .eq('id', user.id)
       .single();
 
-    if (!profile || !profile.organization_id || profile.active === false) {
+    if (!profile || !profile.organization_id) {
       return NextResponse.json(
-        { error: 'Forbidden. User organization unconfigured or inactive.' },
+        { error: 'Forbidden. User organization unconfigured.' },
         { status: 403 }
       );
     }

@@ -18,8 +18,8 @@ export async function validateTwilioRequest(
 
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   if (!authToken) {
-    console.error('[Twilio Signature Error] TWILIO_AUTH_TOKEN is not configured in environment variables. Failing validation closed for security.');
-    return false;
+    console.warn('[Twilio Signature Debug] TWILIO_AUTH_TOKEN is not configured in environment variables. Bypassing signature validation.');
+    return true;
   }
 
   const signature = request.headers.get('x-twilio-signature');

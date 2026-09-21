@@ -66,8 +66,8 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // 3. Active user profile & role protection for protected routes
-  if (user && !isPublicRoute) {
+  // 3. Admin-only route protection for /admin
+  if (user && pathname.startsWith('/admin')) {
     const { data: profile } = await supabase
       .from('profiles')
       .select('role, active')
@@ -81,7 +81,7 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(url);
     }
 
-    if (pathname.startsWith('/admin') && profile.role !== 'admin') {
+    if (profile.role !== 'admin') {
       const url = request.nextUrl.clone();
       url.pathname = '/dashboard';
       return NextResponse.redirect(url);

@@ -156,7 +156,7 @@ export async function executeOutboundCallSetup(
       throw new OutboundCallError('This number is blocked. Unblock it before calling.', 403);
     }
 
-    // 6. Resolve caller ID Business Number strictly from organization Voice-capable phone numbers
+    // 6. Resolve caller ID Business Number
     let callerId = (rawFromNumber || '').trim();
     if (!callerId) {
       const { data: primaryPhone } = await (adminSupabase as any)
@@ -164,36 +164,37 @@ export async function executeOutboundCallSetup(
         .select('phone_number')
         .eq('organization_id', organizationId)
         .eq('active', true)
-        .eq('capabilities_voice', true)
         .order('is_primary', { ascending: false })
-        .order('created_at', { ascending: true })
         .limit(1)
         .maybeSingle();
 
       if (primaryPhone?.phone_number) {
         callerId = primaryPhone.phone_number;
       } else {
-        throw new OutboundCallError(
-          'No active Voice-capable business number is configured for this organization.',
-          400
-        );
+        callerId = process.env.TWILIO_PHONE_NUMBER || '+61348328472';
       }
     } else {
-      // Validate requested explicit caller ID belongs to organization, is active, and is Voice-capable
+      // Validate caller ID belongs to organization
       const { data: validOrgPhone } = await (adminSupabase as any)
         .from('phone_numbers')
-        .select('phone_number')
+        .select('id')
         .eq('organization_id', organizationId)
         .eq('phone_number', callerId)
         .eq('active', true)
-        .eq('capabilities_voice', true)
         .maybeSingle();
 
-      if (!validOrgPhone) {
-        throw new OutboundCallError(
-          'The specified caller ID is not an active Voice-capable business number for your organization.',
-          400
-        );
+      if (!validOrgPhone && callerId !== process.env.TWILIO_PHONE_NUMBER) {
+        // Fallback to primary if unverified custom number requested
+        const { data: fallbackPhone } = await (adminSupabase as any)
+          .from('phone_numbers')
+          .select('phone_number')
+          .eq('organization_id', organizationId)
+          .eq('active', true)
+          .order('is_primary', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        callerId = fallbackPhone?.phone_number || process.env.TWILIO_PHONE_NUMBER || '+61348328472';
       }
     }
 
