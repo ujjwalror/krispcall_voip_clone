@@ -1,23 +1,16 @@
 import { NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { executeOutboundCallSetup, OutboundCallError } from '@/lib/telephony/outboundCallService';
+import { requireActiveSession } from '@/lib/auth/requireActiveSession';
 
 export async function POST(request: Request) {
   try {
-    const supabase = await createServerSupabaseClient();
-
-    // 1. Authenticate user
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      return NextResponse.json(
-        { error: 'Unauthorized. Authenticated session required.' },
-        { status: 401 }
-      );
+    // 1. Enforce active session authority
+    const sessionResult = await requireActiveSession();
+    if (!sessionResult.success) {
+      return sessionResult.errorResponse;
     }
+
+    const { user, supabase } = sessionResult;
 
     // 2. Fetch user profile & organization_id
     const { data: profileData, error: profileError } = await supabase
@@ -64,4 +57,3 @@ export async function POST(request: Request) {
     );
   }
 }
-

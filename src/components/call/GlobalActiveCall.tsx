@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Button } from '@/components/ui/Button';
-import { Phone, PhoneOff, Mic, MicOff, Loader2, CheckCircle2, User } from 'lucide-react';
+import { Phone, PhoneOff, Mic, MicOff, Loader2, CheckCircle2, User, AlertTriangle } from 'lucide-react';
 import { useTwilioDeviceContext } from '@/components/providers/TwilioDeviceProvider';
 import { formatDuration } from '@/lib/utils';
 
@@ -14,6 +14,7 @@ export function GlobalActiveCall() {
     incomingCaller,
     activeDestination,
     activeCallContactName,
+    displacedNotice,
     endCall,
     toggleMute,
   } = useTwilioDeviceContext();
@@ -88,6 +89,13 @@ export function GlobalActiveCall() {
             : 'Call Failed'}
         </span>
       </div>
+
+      {displacedNotice && (
+        <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+          <span className="leading-snug">{displacedNotice}</span>
+        </div>
+      )}
 
       {/* Contact Name & Number Info */}
       <div className="py-1">

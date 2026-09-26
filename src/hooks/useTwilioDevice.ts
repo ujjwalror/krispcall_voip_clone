@@ -28,6 +28,8 @@ export interface UseTwilioDeviceReturn {
   incomingCaller: string | null;
   activeDestination: string | null;
   activeCallContactName: string | null;
+  isDisplaced: boolean;
+  displacedNotice: string | null;
   setRecordCallPreference: (val: boolean) => void;
   initDevice: () => Promise<void>;
   makeCall: (destinationNumber: string, contactName?: string) => Promise<boolean>;
@@ -39,7 +41,7 @@ export interface UseTwilioDeviceReturn {
 }
 
 export function useTwilioDevice(): UseTwilioDeviceReturn {
-  const { profile } = useAuth();
+  const { profile, isDisplaced, isSessionRegistered, displaceSession } = useAuth();
   const profileRef = useRef(profile);
   useEffect(() => {
     profileRef.current = profile;
@@ -61,6 +63,10 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
   const activeCallRef = useRef<any>(null);
   const incomingCallRef = useRef<any>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const displacedNotice = isDisplaced && callState === 'connected'
+    ? 'This account was signed in on another device. Your session will end when this call finishes.'
+    : null;
 
   // Timer helpers for connected call duration
   const startTimer = useCallback(() => {
@@ -108,6 +114,10 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
   // Initialize Twilio.Device (client-side only)
   const initDevice = useCallback(async () => {
     if (typeof window === 'undefined') return;
+    if (!isSessionRegistered || isDisplaced) {
+      console.warn('[Twilio Device] Cannot initialize: session is not registered or is displaced.');
+      return;
+    }
     if (deviceRef.current) return; // Prevent duplicate instances
 
     setDeviceStatus('initializing');
@@ -164,13 +174,13 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
       device.on('incoming', (incomingCall: any) => {
         console.log('[Twilio Device] Incoming browser call detected:', incomingCall.parameters);
 
-        // Auto-reject if agent is already handling an active call
-        if (activeCallRef.current || callState === 'connecting' || callState === 'ringing' || callState === 'connected') {
-          console.log('[Twilio Device] Agent is currently occupied on an active call. Auto-rejecting incoming call.');
+        // Auto-reject if session is displaced, unregistered, or agent is already handling an active call
+        if (isDisplaced || !isSessionRegistered || activeCallRef.current || callState === 'connecting' || callState === 'ringing' || callState === 'connected') {
+          console.log('[Twilio Device] Rejecting incoming call (displaced/unregistered/busy).');
           try {
             incomingCall.reject();
           } catch (e) {
-            console.warn('[Twilio Device] Error rejecting incoming call while busy:', e);
+            console.warn('[Twilio Device] Error rejecting incoming call:', e);
           }
           return;
         }
@@ -193,7 +203,6 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
           startTimer();
           activeCallRef.current = incomingCall;
 
-          // Deterministically extract dbCallId passed via TwiML <Client><Parameter name="dbCallId" value="..."/></Client>
           const dbCallId =
             incomingCall.customParameters?.get?.('dbCallId') ||
             incomingCall.customParameters?.dbCallId ||
@@ -210,12 +219,9 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok || data.error?.includes('already answered')) {
                   console.warn('[Browser Answer Endpoint Rejection]', data);
-                  // Another agent won ownership or agent was busy
                   try {
                     incomingCall.disconnect();
-                  } catch (e) {
-                    // Ignore disconnect error
-                  }
+                  } catch (e) {}
                   activeCallRef.current = null;
                   stopTimer();
                   setCallState('ended');
@@ -228,8 +234,6 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
               .catch((err) => {
                 console.error('[Browser Answer Endpoint Error]', err);
               });
-          } else {
-            console.warn('[Twilio Device] Incoming call accepted but no dbCallId parameter was attached.');
           }
         });
 
@@ -240,6 +244,14 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
           setCallState('ended');
           setIncomingCaller(null);
           resetCallStateAfterDelay();
+
+          if (isDisplaced) {
+            if (deviceRef.current) {
+              try { deviceRef.current.destroy(); } catch (e) {}
+              deviceRef.current = null;
+            }
+            displaceSession('Your account was signed in on another device.');
+          }
         });
 
         incomingCall.on('cancel', () => {
@@ -260,12 +272,55 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
       setDeviceStatus('error');
       setErrorMessage(err.message || 'Initialization failed.');
     }
-  }, [fetchRecordingSettings, startTimer, stopTimer, resetCallStateAfterDelay]);
+  }, [isSessionRegistered, isDisplaced, fetchRecordingSettings, startTimer, stopTimer, resetCallStateAfterDelay, displaceSession]);
+
+  // Handle Displacement Side-Effects for Telephony
+  useEffect(() => {
+    if (isDisplaced) {
+      console.warn('[useTwilioDevice] Session displacement side-effect triggered.');
+      ringtoneEngine.stopIncomingRingtone();
+
+      if (callState === 'connected') {
+        // Connected active call: unregister from future calls, but allow current call to finish gracefully
+        if (deviceRef.current) {
+          try {
+            deviceRef.current.unregister();
+          } catch (e) {}
+        }
+      } else {
+        // Idle / Ringing / Connecting: destroy device immediately and sign out
+        if (incomingCallRef.current) {
+          try { incomingCallRef.current.reject(); } catch (e) {}
+          incomingCallRef.current = null;
+        }
+        if (activeCallRef.current) {
+          try { activeCallRef.current.disconnect(); } catch (e) {}
+          activeCallRef.current = null;
+        }
+        if (deviceRef.current) {
+          try { deviceRef.current.destroy(); } catch (e) {}
+          deviceRef.current = null;
+        }
+        setDeviceStatus('uninitialized');
+        displaceSession('Your account was signed in on another device.');
+      }
+    }
+  }, [isDisplaced, callState, displaceSession]);
 
   // Make Outbound Call
   const makeCall = useCallback(
     async (destinationNumber: string, contactName?: string): Promise<boolean> => {
       setErrorMessage(null);
+
+      if (isDisplaced) {
+        setErrorMessage('Session has been displaced by another login on another device.');
+        return false;
+      }
+
+      if (!isSessionRegistered) {
+        setErrorMessage('Active session registration pending. Please try again.');
+        return false;
+      }
 
       // 1. Validate destination phone number
       const validation = normalizeE164PhoneNumber(destinationNumber);
@@ -375,6 +430,14 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
           setCallState('ended');
           stopTimer();
           resetCallStateAfterDelay();
+
+          if (isDisplaced) {
+            if (deviceRef.current) {
+              try { deviceRef.current.destroy(); } catch (e) {}
+              deviceRef.current = null;
+            }
+            displaceSession('Your account was signed in on another device.');
+          }
         });
 
         call.on('reject', () => {
@@ -400,7 +463,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
         return false;
       }
     },
-    [deviceStatus, initDevice, recordCallPreference, startTimer, stopTimer, resetCallStateAfterDelay]
+    [isDisplaced, isSessionRegistered, deviceStatus, initDevice, recordCallPreference, startTimer, stopTimer, resetCallStateAfterDelay, displaceSession]
   );
 
   // Accept Incoming Call
@@ -436,7 +499,15 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
     setCallState('ended');
     stopTimer();
     resetCallStateAfterDelay();
-  }, [stopTimer, resetCallStateAfterDelay]);
+
+    if (isDisplaced) {
+      if (deviceRef.current) {
+        try { deviceRef.current.destroy(); } catch (e) {}
+        deviceRef.current = null;
+      }
+      displaceSession('Your account was signed in on another device.');
+    }
+  }, [isDisplaced, displaceSession, stopTimer, resetCallStateAfterDelay]);
 
   // Toggle Mute
   const toggleMute = useCallback(() => {
@@ -477,6 +548,8 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
     incomingCaller,
     activeDestination,
     activeCallContactName,
+    isDisplaced,
+    displacedNotice,
     setRecordCallPreference,
     initDevice,
     makeCall,

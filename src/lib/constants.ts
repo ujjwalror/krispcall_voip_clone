@@ -8,6 +8,11 @@ import {
   Mic,
   ShieldCheck,
   Settings,
+  CreditCard,
+  Zap,
+  Receipt,
+  Hash,
+  Sparkles,
 } from 'lucide-react';
 
 export interface NavItem {
@@ -15,10 +20,11 @@ export interface NavItem {
   href: string;
   icon: any;
   badge?: string | number;
-  category: 'main' | 'admin';
+  category: 'main' | 'numbers' | 'billing' | 'admin';
 }
 
 export const NAVIGATION_ITEMS: NavItem[] = [
+  // Communication Category
   {
     name: 'Dashboard',
     href: '/dashboard',
@@ -63,6 +69,36 @@ export const NAVIGATION_ITEMS: NavItem[] = [
     icon: Mic,
     category: 'main',
   },
+
+  // VoIP Numbers Category
+  {
+    name: 'My Numbers',
+    href: '/numbers',
+    icon: Hash,
+    category: 'numbers',
+  },
+
+  // Billing Category
+  {
+    name: 'Credit',
+    href: '/billing/credit',
+    icon: Zap,
+    category: 'billing',
+  },
+  {
+    name: 'Plan & Subscription',
+    href: '/settings/billing',
+    icon: Sparkles,
+    category: 'billing',
+  },
+  {
+    name: 'Number Subscription',
+    href: '/billing/numbers',
+    icon: Receipt,
+    category: 'billing',
+  },
+
+  // Preferences & Admin Category
   {
     name: 'Administration',
     href: '/admin',

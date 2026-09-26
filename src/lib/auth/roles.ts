@@ -1,19 +1,27 @@
 import { Profile } from '@/lib/types';
 
 /**
- * Checks if a profile belongs to an active Administrator.
+ * Checks if a profile belongs to an active Owner.
  */
-export function isAdmin(profile: Profile | null | undefined): boolean {
+export function isOwner(profile: Profile | null | undefined): boolean {
   if (!profile) return false;
-  return profile.role === 'admin' && profile.active === true;
+  return profile.role === 'owner' && profile.active === true;
 }
 
 /**
- * Checks if a profile belongs to an active Agent or Administrator.
+ * Checks if a profile belongs to an active Owner or Administrator.
+ */
+export function isAdmin(profile: Profile | null | undefined): boolean {
+  if (!profile) return false;
+  return ['owner', 'admin'].includes(profile.role) && profile.active === true;
+}
+
+/**
+ * Checks if a profile belongs to an active Agent, Manager, Admin, or Owner.
  */
 export function isAgent(profile: Profile | null | undefined): boolean {
   if (!profile) return false;
-  return (profile.role === 'agent' || profile.role === 'admin') && profile.active === true;
+  return ['owner', 'admin', 'manager', 'agent'].includes(profile.role) && profile.active === true;
 }
 
 /**

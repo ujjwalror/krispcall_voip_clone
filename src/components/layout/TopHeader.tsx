@@ -14,7 +14,7 @@ import { useTheme } from '@/components/providers/ThemeProvider';
 
 export function TopHeader() {
   const pathname = usePathname();
-  const { profile, signOut } = useAuth();
+  const { profile, organization, signOut } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const [agentStatus] = useState<AgentStatus>('online');
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
@@ -25,6 +25,9 @@ export function TopHeader() {
   const userName = profile?.full_name || 'Authenticated Agent';
   const userEmail = profile?.email || '';
   const userRole = profile?.role || 'agent';
+
+  const workspaceLabel = organization?.name ? `${organization.name} Workspace` : 'Workspace';
+  const tenantName = organization?.name || 'Workspace';
 
   return (
     <>
@@ -49,7 +52,7 @@ export function TopHeader() {
           <div className="hidden lg:flex items-center gap-3">
             <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100 tracking-tight">{title}</h2>
             <span className="text-slate-300 dark:text-slate-700">/</span>
-            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Legendary Careers Workspace</span>
+            <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">{workspaceLabel}</span>
           </div>
         </div>
 
@@ -150,11 +153,8 @@ export function TopHeader() {
                 <div>
                   <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
                     <span>VoIP Hub</span>
-                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400 font-semibold border border-blue-500/20">
-                      INTERNAL
-                    </span>
                   </h3>
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400">Legendary Careers</p>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate max-w-[130px]" title={tenantName}>{tenantName}</p>
                 </div>
               </div>
 
@@ -174,9 +174,9 @@ export function TopHeader() {
             <div className="p-3 border-t border-slate-200 dark:border-slate-800">
               <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 flex items-center gap-2.5">
                 <Sparkles className="w-4 h-4 text-cyan-500 shrink-0" />
-                <div className="text-[11px] leading-tight">
-                  <p className="font-medium text-slate-900 dark:text-slate-200">Legendary Careers</p>
-                  <p className="text-slate-500">Internal Staff Portal</p>
+                <div className="text-[11px] leading-tight min-w-0 flex-1">
+                  <p className="font-medium text-slate-900 dark:text-slate-200 truncate" title={tenantName}>{tenantName}</p>
+                  <p className="text-slate-500">Business Workspace</p>
                 </div>
               </div>
             </div>

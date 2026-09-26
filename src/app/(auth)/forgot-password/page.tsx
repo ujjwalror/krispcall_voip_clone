@@ -80,7 +80,7 @@ export default function ForgotPasswordPage() {
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="agent@legendarycareers.internal"
+                    placeholder="name@company.com"
                     icon={<Mail className="w-4 h-4" />}
                   />
                 </div>

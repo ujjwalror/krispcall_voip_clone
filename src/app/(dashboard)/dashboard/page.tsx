@@ -127,7 +127,7 @@ export default function DashboardPage() {
         <div className="space-y-1.5 max-w-2xl w-full">
           <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             <h1 className="text-lg sm:text-2xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight leading-snug">
-              Internal Telecom Dashboard
+              Communications Dashboard
             </h1>
             <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 font-bold text-[11px] border border-emerald-200 dark:border-emerald-800/80 shadow-xs shrink-0">
               <span className="relative flex h-2 w-2">
@@ -138,7 +138,7 @@ export default function DashboardPage() {
             </span>
           </div>
           <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 font-medium leading-relaxed">
-            Internal VoIP operations center. WebRTC browser calling & Twilio telephony backend ready.
+            Manage calls, messages, team activity, and business communications from your workspace.
           </p>
         </div>
         <div className="flex items-center gap-2.5 w-full md:w-auto shrink-0 pt-1 md:pt-0">

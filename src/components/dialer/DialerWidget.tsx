@@ -23,7 +23,7 @@ import { useTwilioDeviceContext } from '@/components/providers/TwilioDeviceProvi
 
 export function DialerWidget() {
   const [phoneNumber, setPhoneNumber] = useState('');
-  const [businessNumber, setBusinessNumber] = useState('+61348328472');
+  const [businessNumber, setBusinessNumber] = useState('');
 
   const {
     deviceStatus,
@@ -54,6 +54,8 @@ export function DialerWidget() {
             if (isMounted && primary?.phone_number) {
               setBusinessNumber(primary.phone_number);
             }
+          } else {
+            if (isMounted) setBusinessNumber('');
           }
         }
       } catch (err) {
@@ -90,12 +92,12 @@ export function DialerWidget() {
   };
 
   const handleStartCall = async () => {
-    if (!phoneNumber) return;
+    if (!phoneNumber || !businessNumber) return;
     await makeCall(phoneNumber);
   };
 
   const isCallActive = callState === 'connecting' || callState === 'ringing' || callState === 'connected';
-  const displayCallerId = formatDisplayPhoneNumber(businessNumber);
+  const displayCallerId = businessNumber ? formatDisplayPhoneNumber(businessNumber) : 'No business number assigned';
 
   return (
     <div className="w-full max-w-sm mx-auto rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl dark:shadow-2xl p-4 sm:p-5 flex flex-col gap-3.5 transition-colors">
@@ -138,7 +140,9 @@ export function DialerWidget() {
           <Phone className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
           <span>Calling from</span>
         </div>
-        <span className="font-mono font-bold text-slate-900 dark:text-slate-100 text-xs tracking-wide">{displayCallerId}</span>
+        <span className={`font-mono text-xs tracking-wide ${businessNumber ? 'font-bold text-slate-900 dark:text-slate-100' : 'text-amber-600 dark:text-amber-400 font-medium'}`}>
+          {displayCallerId}
+        </span>
       </div>
 
       {/* Per-Call Recording Override Controls */}
@@ -263,8 +267,9 @@ export function DialerWidget() {
             variant="success"
             size="lg"
             className="w-full font-semibold py-3"
-            disabled={!phoneNumber || deviceStatus === 'initializing'}
+            disabled={!phoneNumber || !businessNumber || deviceStatus === 'initializing'}
             onClick={handleStartCall}
+            title={!businessNumber ? 'No business number assigned to this workspace.' : undefined}
           >
             <Phone className="w-4 h-4" />
             <span>Call Number</span>

@@ -1,26 +1,22 @@
 import { NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { requireActiveSession } from '@/lib/auth/requireActiveSession';
 
 /**
  * Admin User Creation API Route.
  * Creates a new Supabase Auth user and corresponding public.profiles record
  * with auto-assigned unique extension and auto-generated system-wide unique twilio_identity.
- * Executable ONLY by users with role === 'admin'.
+ * Executable ONLY by users with active session and role === 'owner' or 'admin'.
  */
 export async function POST(request: Request) {
   try {
-    const supabase = await createServerSupabaseClient();
-
-    // 1. Verify caller authentication
-    const {
-      data: { user: currentUser },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !currentUser) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    // 1. Enforce active session authority
+    const sessionResult = await requireActiveSession();
+    if (!sessionResult.success) {
+      return sessionResult.errorResponse;
     }
+
+    const { user: currentUser, supabase } = sessionResult;
 
     // 2. Verify caller has Admin role and fetch organization_id
     const { data: adminProfileData } = await supabase
@@ -31,9 +27,9 @@ export async function POST(request: Request) {
 
     const adminProfile = adminProfileData as { organization_id?: string; role?: string } | null;
 
-    if (!adminProfile || !adminProfile.organization_id || adminProfile.role !== 'admin') {
+    if (!adminProfile || !adminProfile.organization_id || !['owner', 'admin'].includes(adminProfile.role || '')) {
       return NextResponse.json(
-        { error: 'Forbidden. User creation requires Admin privileges.' },
+        { error: 'Forbidden. User creation requires Owner or Admin privileges.' },
         { status: 403 }
       );
     }
@@ -48,7 +44,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const targetRole = ['admin', 'manager', 'agent'].includes(role) ? role : 'agent';
+    const targetRole = ['owner', 'admin', 'manager', 'agent'].includes(role) ? role : 'agent';
     const adminSupabase = createAdminClient();
 
     // 3. Check for existing profile email duplication
@@ -80,7 +76,6 @@ export async function POST(request: Request) {
       if (ext && !assignedExtensions.includes(ext)) {
         assignedExtensions.push(ext);
       } else {
-        // Calculate next available numeric extension >= 101 for duplicate or null extensions
         const numericExts = assignedExtensions
           .map((e) => parseInt(e, 10))
           .filter((n) => !isNaN(n) && n >= 100);
@@ -98,7 +93,6 @@ export async function POST(request: Request) {
       }
     });
 
-    // Backfill any duplicate/null extension profiles in database
     for (const updateItem of profilesToUpdate) {
       await (adminSupabase as any)
         .from('profiles')
@@ -116,7 +110,6 @@ export async function POST(request: Request) {
         );
       }
     } else {
-      // Find highest numeric extension >= 100
       const numericExts = assignedExtensions
         .map((ext) => parseInt(ext, 10))
         .filter((n) => !isNaN(n) && n >= 100);
@@ -132,7 +125,7 @@ export async function POST(request: Request) {
       finalExtension = String(nextExt);
     }
 
-    // 5. System-wide Unique Twilio Identity Auto-Generation (Format: agent_simran_kaur)
+    // 5. System-wide Unique Twilio Identity Auto-Generation
     const nameClean = fullName
       .toLowerCase()
       .trim()
@@ -143,7 +136,6 @@ export async function POST(request: Request) {
     let finalTwilioIdentity = baseIdentity;
     let identitySuffix = 2;
 
-    // Verify system-wide uniqueness in public.profiles
     while (true) {
       const { data: existingIdentity } = await (adminSupabase as any)
         .from('profiles')
@@ -152,7 +144,7 @@ export async function POST(request: Request) {
         .maybeSingle();
 
       if (!existingIdentity) {
-        break; // Unique identity found
+        break;
       }
       finalTwilioIdentity = `${baseIdentity}_${identitySuffix}`;
       identitySuffix++;

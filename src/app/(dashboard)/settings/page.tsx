@@ -33,6 +33,7 @@ import {
   Globe,
   Clock,
   Zap,
+  CreditCard,
 } from 'lucide-react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useTheme } from '@/components/providers/ThemeProvider';
@@ -64,7 +65,12 @@ function SettingsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const rawTab = searchParams.get('tab');
-  const initialTab = rawTab === 'blocked' ? 'blocked' : rawTab === 'integrations' ? 'integrations' : 'general';
+  const initialTab =
+    rawTab === 'blocked'
+      ? 'blocked'
+      : rawTab === 'integrations'
+      ? 'integrations'
+      : 'general';
 
   const { theme, setTheme } = useTheme();
   const { profile, refreshProfile } = useAuth();
@@ -72,14 +78,16 @@ function SettingsContent() {
 
   useEffect(() => {
     const tabParam = searchParams.get('tab');
-    if (tabParam === 'blocked') {
+    if (tabParam === 'billing') {
+      router.replace('/settings/billing');
+    } else if (tabParam === 'blocked') {
       setActiveTab('blocked');
     } else if (tabParam === 'integrations') {
       setActiveTab('integrations');
     } else if (tabParam === 'general') {
       setActiveTab('general');
     }
-  }, [searchParams]);
+  }, [searchParams, router]);
 
   const handleTabChange = (tab: 'general' | 'blocked' | 'integrations') => {
     setActiveTab(tab);
@@ -198,7 +206,7 @@ function SettingsContent() {
   }, [activeTab, fetchBlockedNumbers]);
 
   const handleToggleAutoRecording = async (nextVal: boolean) => {
-    if (role !== 'admin') return;
+    if (!['owner', 'admin'].includes(role)) return;
     setIsSaving(true);
     setMessage(null);
     try {
@@ -475,7 +483,7 @@ function SettingsContent() {
                 <Radio className="w-4 h-4 text-rose-500 dark:text-rose-400" />
                 <span>Workspace Automatic Call Recording</span>
               </CardTitle>
-              {role === 'admin' ? (
+              {['owner', 'admin'].includes(role) ? (
                 <Badge variant="purple" size="sm">ADMIN CONTROL</Badge>
               ) : (
                 <Badge variant="neutral" size="sm">AGENT VIEW</Badge>
@@ -495,7 +503,7 @@ function SettingsContent() {
                   </p>
                 </div>
 
-                {role === 'admin' ? (
+                {['owner', 'admin'].includes(role) ? (
                   <button
                     onClick={() => handleToggleAutoRecording(!autoRecording)}
                     disabled={isSaving || isLoadingSettings}

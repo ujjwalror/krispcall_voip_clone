@@ -84,10 +84,10 @@ export async function POST(request: Request) {
       );
     }
 
-    // Admin role check for modifying workspace settings
-    if (profile.role !== 'admin') {
+    // Admin/Owner role check for modifying workspace settings
+    if (!['owner', 'admin'].includes(profile.role || '')) {
       return NextResponse.json(
-        { error: 'Forbidden. Only organization Admins can change auto recording settings.' },
+        { error: 'Forbidden. Only organization Owners or Admins can change auto recording settings.' },
         { status: 403 }
       );
     }

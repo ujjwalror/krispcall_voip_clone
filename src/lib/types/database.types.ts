@@ -6,7 +6,7 @@ export type Json =
   | { [key: string]: Json | undefined }
   | Json[];
 
-export type UserRole = 'admin' | 'agent';
+export type UserRole = 'owner' | 'admin' | 'manager' | 'agent';
 export type CallDirection = 'inbound' | 'outbound';
 export type CallStatus =
   | 'queued'
@@ -70,6 +70,7 @@ export interface Database {
           id: string;
           name: string;
           slug: string;
+          status?: 'active' | 'suspended' | 'deactivated';
           routing_strategy?: string;
           prefer_assigned_agent?: boolean;
           created_at: string;
@@ -79,6 +80,7 @@ export interface Database {
           id?: string;
           name: string;
           slug: string;
+          status?: 'active' | 'suspended' | 'deactivated';
           routing_strategy?: string;
           prefer_assigned_agent?: boolean;
           created_at?: string;
@@ -88,6 +90,7 @@ export interface Database {
           id?: string;
           name?: string;
           slug?: string;
+          status?: 'active' | 'suspended' | 'deactivated';
           routing_strategy?: string;
           prefer_assigned_agent?: boolean;
           created_at?: string;
@@ -354,6 +357,10 @@ export interface Database {
           capabilities_voice: boolean;
           capabilities_sms: boolean;
           capabilities_mms: boolean;
+          status: 'active' | 'inactive' | 'suspended' | 'released' | 'ported_out';
+          country_code: string | null;
+          number_type: 'local' | 'mobile' | 'toll_free' | null;
+          acquisition_source: 'provider_purchase' | 'port_in' | 'legacy' | null;
           created_at: string;
           updated_at: string;
         };
@@ -368,6 +375,10 @@ export interface Database {
           capabilities_voice?: boolean;
           capabilities_sms?: boolean;
           capabilities_mms?: boolean;
+          status?: 'active' | 'inactive' | 'suspended' | 'released' | 'ported_out';
+          country_code?: string | null;
+          number_type?: 'local' | 'mobile' | 'toll_free' | null;
+          acquisition_source?: 'provider_purchase' | 'port_in' | 'legacy' | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -382,6 +393,42 @@ export interface Database {
           capabilities_voice?: boolean;
           capabilities_sms?: boolean;
           capabilities_mms?: boolean;
+          status?: 'active' | 'inactive' | 'suspended' | 'released' | 'ported_out';
+          country_code?: string | null;
+          number_type?: 'local' | 'mobile' | 'toll_free' | null;
+          acquisition_source?: 'provider_purchase' | 'port_in' | 'legacy' | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
+      number_provider_mappings: {
+        Row: {
+          id: string;
+          phone_number_id: string;
+          provider: string;
+          provider_account_id: string | null;
+          provider_resource_id: string;
+          provider_status: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          phone_number_id: string;
+          provider?: string;
+          provider_account_id?: string | null;
+          provider_resource_id: string;
+          provider_status?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          phone_number_id?: string;
+          provider?: string;
+          provider_account_id?: string | null;
+          provider_resource_id?: string;
+          provider_status?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -438,6 +485,385 @@ export interface Database {
           contact_id?: string | null;
           reason?: string | null;
           created_by?: string | null;
+          created_at?: string;
+        };
+      };
+      plans: {
+        Row: {
+          id: string;
+          code: string;
+          name: string;
+          description: string | null;
+          is_active: boolean;
+          is_public: boolean;
+          trial_days_default: number | null;
+          sort_order: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          code: string;
+          name: string;
+          description?: string | null;
+          is_active?: boolean;
+          is_public?: boolean;
+          trial_days_default?: number | null;
+          sort_order?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          code?: string;
+          name?: string;
+          description?: string | null;
+          is_active?: boolean;
+          is_public?: boolean;
+          trial_days_default?: number | null;
+          sort_order?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
+      features: {
+        Row: {
+          id: string;
+          code: string;
+          name: string;
+          value_type: 'boolean' | 'numeric' | 'text';
+          description: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          code: string;
+          name: string;
+          value_type: 'boolean' | 'numeric' | 'text';
+          description?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          code?: string;
+          name?: string;
+          value_type?: 'boolean' | 'numeric' | 'text';
+          description?: string | null;
+          created_at?: string;
+        };
+      };
+      plan_entitlements: {
+        Row: {
+          id: string;
+          plan_id: string;
+          feature_code: string;
+          enabled: boolean;
+          numeric_value: number | null;
+          text_value: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          plan_id: string;
+          feature_code: string;
+          enabled?: boolean;
+          numeric_value?: number | null;
+          text_value?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          plan_id?: string;
+          feature_code?: string;
+          enabled?: boolean;
+          numeric_value?: number | null;
+          text_value?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
+      organization_subscriptions: {
+        Row: {
+          id: string;
+          organization_id: string;
+          plan_id: string;
+          price_id: string | null;
+          status: 'trialing' | 'active' | 'past_due' | 'canceled' | 'expired' | 'suspended';
+          current_period_start: string | null;
+          current_period_end: string | null;
+          trial_ends_at: string | null;
+          cancel_at_period_end: boolean;
+          canceled_at: string | null;
+          ended_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          organization_id: string;
+          plan_id: string;
+          price_id?: string | null;
+          status?: 'trialing' | 'active' | 'past_due' | 'canceled' | 'expired' | 'suspended';
+          current_period_start?: string | null;
+          current_period_end?: string | null;
+          trial_ends_at?: string | null;
+          cancel_at_period_end?: boolean;
+          canceled_at?: string | null;
+          ended_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          organization_id?: string;
+          plan_id?: string;
+          price_id?: string | null;
+          status?: 'trialing' | 'active' | 'past_due' | 'canceled' | 'expired' | 'suspended';
+          current_period_start?: string | null;
+          current_period_end?: string | null;
+          trial_ends_at?: string | null;
+          cancel_at_period_end?: boolean;
+          canceled_at?: string | null;
+          ended_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
+      prices: {
+        Row: {
+          id: string;
+          plan_id: string;
+          currency: string;
+          billing_interval: 'monthly' | 'annual';
+          pricing_model: 'per_seat' | 'base_plus_seat' | 'flat' | 'custom';
+          unit_amount_minor: number | null;
+          base_amount_minor: number | null;
+          is_active: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          plan_id: string;
+          currency: string;
+          billing_interval: 'monthly' | 'annual';
+          pricing_model: 'per_seat' | 'base_plus_seat' | 'flat' | 'custom';
+          unit_amount_minor?: number | null;
+          base_amount_minor?: number | null;
+          is_active?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          plan_id?: string;
+          currency?: string;
+          billing_interval?: 'monthly' | 'annual';
+          pricing_model?: 'per_seat' | 'base_plus_seat' | 'flat' | 'custom';
+          unit_amount_minor?: number | null;
+          base_amount_minor?: number | null;
+          is_active?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
+      billing_outbox_events: {
+        Row: {
+          id: string;
+          organization_id: string;
+          event_type: string;
+          payload: Record<string, any>;
+          status: 'pending' | 'processing' | 'completed' | 'failed';
+          attempt_count: number;
+          available_at: string;
+          processed_at: string | null;
+          last_error: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          organization_id: string;
+          event_type: string;
+          payload?: Record<string, any>;
+          status?: 'pending' | 'processing' | 'completed' | 'failed';
+          attempt_count?: number;
+          available_at?: string;
+          processed_at?: string | null;
+          last_error?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          organization_id?: string;
+          event_type?: string;
+          payload?: Record<string, any>;
+          status?: 'pending' | 'processing' | 'completed' | 'failed';
+          attempt_count?: number;
+          available_at?: string;
+          processed_at?: string | null;
+          last_error?: string | null;
+          created_at?: string;
+        };
+      };
+      organization_entitlement_overrides: {
+        Row: {
+          id: string;
+          organization_id: string;
+          feature_code: string;
+          enabled: boolean;
+          numeric_value: number | null;
+          text_value: string | null;
+          expires_at: string | null;
+          reason: string | null;
+          created_by_user_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          organization_id: string;
+          feature_code: string;
+          enabled?: boolean;
+          numeric_value?: number | null;
+          text_value?: string | null;
+          expires_at?: string | null;
+          reason?: string | null;
+          created_by_user_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          organization_id?: string;
+          feature_code?: string;
+          enabled?: boolean;
+          numeric_value?: number | null;
+          text_value?: string | null;
+          expires_at?: string | null;
+          reason?: string | null;
+          created_by_user_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
+      billing_provider_customers: {
+        Row: {
+          id: string;
+          organization_id: string;
+          provider: string;
+          provider_customer_id: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          organization_id: string;
+          provider: string;
+          provider_customer_id: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          organization_id?: string;
+          provider?: string;
+          provider_customer_id?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
+      billing_provider_prices: {
+        Row: {
+          id: string;
+          price_id: string;
+          provider: string;
+          provider_price_id: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          price_id: string;
+          provider: string;
+          provider_price_id: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          price_id?: string;
+          provider?: string;
+          provider_price_id?: string;
+          created_at?: string;
+        };
+      };
+      billing_provider_subscriptions: {
+        Row: {
+          id: string;
+          organization_subscription_id: string;
+          provider: string;
+          provider_subscription_id: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          organization_subscription_id: string;
+          provider: string;
+          provider_subscription_id: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          organization_subscription_id?: string;
+          provider?: string;
+          provider_subscription_id?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
+      billing_webhook_events: {
+        Row: {
+          id: string;
+          provider: string;
+          provider_event_id: string;
+          event_type: string;
+          payload: Record<string, any>;
+          status: 'pending' | 'processing' | 'completed' | 'failed';
+          attempt_count: number;
+          available_at: string;
+          processing_started_at: string | null;
+          processed_at: string | null;
+          last_error: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          provider: string;
+          provider_event_id: string;
+          event_type: string;
+          payload: Record<string, any>;
+          status?: 'pending' | 'processing' | 'completed' | 'failed';
+          attempt_count?: number;
+          available_at?: string;
+          processing_started_at?: string | null;
+          processed_at?: string | null;
+          last_error?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          provider?: string;
+          provider_event_id?: string;
+          event_type?: string;
+          payload?: Record<string, any>;
+          status?: 'pending' | 'processing' | 'completed' | 'failed';
+          attempt_count?: number;
+          available_at?: string;
+          processing_started_at?: string | null;
+          processed_at?: string | null;
+          last_error?: string | null;
           created_at?: string;
         };
       };

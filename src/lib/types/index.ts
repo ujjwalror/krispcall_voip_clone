@@ -11,6 +11,7 @@ export type Recording = Database['public']['Tables']['recordings']['Row'];
 export type Message = Database['public']['Tables']['messages']['Row'];
 export type PhoneNumber = Database['public']['Tables']['phone_numbers']['Row'];
 export type UserPhoneAssignment = Database['public']['Tables']['user_phone_assignments']['Row'];
+export type NumberProviderMapping = Database['public']['Tables']['number_provider_mappings']['Row'];
 
 // Database Insert & Update Types
 export type ContactInsert = Database['public']['Tables']['contacts']['Insert'];
@@ -25,7 +26,7 @@ export interface UserProfile {
   email: string;
   fullName: string;
   avatarUrl?: string;
-  role: 'admin' | 'agent';
+  role: 'owner' | 'admin' | 'manager' | 'agent';
   status: AgentStatus;
   twilioIdentity?: string;
 }

@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
-import { normalizeE164PhoneNumber } from '@/lib/utils';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 /**
  * GET /api/phone-numbers
  * Fetches provider-neutral business numbers for the authenticated user's organization.
+ * Strictly derives organization identity server-side.
  */
 export async function GET() {
   try {
@@ -24,76 +25,70 @@ export async function GET() {
 
     const { data: profile, error: profileError } = await (supabase as any)
       .from('profiles')
-      .select('organization_id')
+      .select('organization_id, role, active')
       .eq('id', user.id)
-      .single();
+      .maybeSingle();
 
-    if (profileError || !profile || !profile.organization_id) {
+    if (profileError || !profile || !profile.organization_id || profile.active === false) {
       return NextResponse.json(
-        { error: 'Forbidden. User organization unconfigured.' },
+        { error: 'Forbidden. User organization unconfigured or account inactive.' },
         { status: 403 }
       );
     }
 
-    // 1. Fetch active business numbers from public.phone_numbers
-    const { data: phoneNumbers, error: fetchError } = await (supabase as any)
-      .from('phone_numbers')
-      .select('*')
-      .eq('organization_id', profile.organization_id)
-      .eq('active', true)
-      .order('is_primary', { ascending: false })
-      .order('created_at', { ascending: true });
+    const isOwnerOrAdmin = ['owner', 'admin'].includes(profile.role || '');
 
-    if (fetchError) {
-      console.error('Error fetching phone numbers:', fetchError);
-      return NextResponse.json(
-        { error: `Database error retrieving business numbers: ${fetchError.message || fetchError.code}` },
-        { status: 500 }
-      );
-    }
-
-    let result = phoneNumbers || [];
-
-    // 2. Auto-initialize default primary business number if database table is currently empty for this org
-    if (result.length === 0) {
-      const defaultPhone = process.env.TWILIO_PHONE_NUMBER || '+61348328472';
-      const validation = normalizeE164PhoneNumber(defaultPhone);
-      const normalizedPhone = validation.normalized || defaultPhone;
-
-      const { data: insertedNumber } = await (supabase as any)
+    if (isOwnerOrAdmin) {
+      // Fetch active lifecycle business numbers for the authenticated organization (excluding historical released/ported_out rows)
+      const { data: phoneNumbers, error: fetchError } = await (supabase as any)
         .from('phone_numbers')
-        .insert({
-          organization_id: profile.organization_id,
-          phone_number: normalizedPhone,
-          friendly_name: 'Primary Business Line',
-          active: true,
-          is_primary: true,
-        })
-        .select()
-        .maybeSingle();
+        .select('*')
+        .eq('organization_id', profile.organization_id)
+        .in('status', ['active', 'inactive', 'suspended'])
+        .order('is_primary', { ascending: false })
+        .order('created_at', { ascending: true });
 
-      if (insertedNumber) {
-        result = [insertedNumber];
-      } else {
-        // Fallback transient object if insertion restricted
-        result = [
-          {
-            id: 'default-primary',
-            organization_id: profile.organization_id,
-            phone_number: normalizedPhone,
-            friendly_name: 'Primary Business Line',
-            active: true,
-            is_primary: true,
-            created_at: new Date().toISOString(),
-          },
-        ];
+      if (fetchError) {
+        console.error('Error fetching phone numbers:', fetchError);
+        return NextResponse.json(
+          { error: `Database error retrieving business numbers: ${fetchError.message || fetchError.code}` },
+          { status: 500 }
+        );
       }
-    }
 
-    return NextResponse.json({
-      success: true,
-      phoneNumbers: result,
-    });
+      return NextResponse.json({
+        success: true,
+        phoneNumbers: phoneNumbers || [],
+      });
+    } else {
+      // Manager/Agent: Return only numbers explicitly assigned to this user
+      const adminSupabase = createAdminClient();
+      const { data: userAssignments, error: assignErr } = await (adminSupabase as any)
+        .from('user_phone_assignments')
+        .select(`
+          phone_number_id,
+          phone_numbers:phone_number_id (*)
+        `)
+        .eq('user_id', user.id)
+        .eq('organization_id', profile.organization_id);
+
+      if (assignErr) {
+        console.error('Error fetching assigned phone numbers:', assignErr);
+        return NextResponse.json(
+          { error: 'Database error retrieving assigned business numbers.' },
+          { status: 500 }
+        );
+      }
+
+      const assignedNumbers = (userAssignments || [])
+        .map((a: any) => a.phone_numbers)
+        .filter((pn: any) => pn && pn.active === true && pn.status === 'active');
+
+      return NextResponse.json({
+        success: true,
+        phoneNumbers: assignedNumbers,
+      });
+    }
   } catch (error: any) {
     console.error('Error in GET /api/phone-numbers:', error.message || error);
     return NextResponse.json(

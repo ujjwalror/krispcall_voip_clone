@@ -13,7 +13,7 @@ import { useAuth } from '@/components/providers/AuthProvider';
 
 export default function RecordingsPage() {
   const { profile } = useAuth();
-  const isAdmin = profile?.role === 'admin';
+  const isAdmin = ['owner', 'admin'].includes(profile?.role || '');
 
   const [recordings, setRecordings] = useState<RecordingWithDetails[]>([]);
   const [activePlayingId, setActivePlayingId] = useState<string | null>(null);

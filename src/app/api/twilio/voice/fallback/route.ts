@@ -48,7 +48,7 @@ export async function POST(request: Request) {
     const preferredUserId = params.preferredUserId || params.preferred_user_id || searchParams.get('preferredUserId') || '';
     const dialCallStatus = (params.DialCallStatus || params.dialCallStatus || '').toLowerCase();
     const customerFrom = params.From || params.from || 'Unknown Caller';
-    const companyTo = params.To || params.to || process.env.TWILIO_PHONE_NUMBER || '';
+    const companyTo = params.To || params.to || '';
 
     console.log('[TWILIO PREFERRED AGENT FALLBACK CALLBACK]', {
       CallSid: callSid,
@@ -66,19 +66,19 @@ export async function POST(request: Request) {
 
     const adminSupabase = createAdminClient();
 
-    // 1. Fetch current call record
-    let callRecord: { id: string; organization_id: string; status: string; answered_at: string | null; record_call: boolean } | null = null;
+    // 1. Fetch current call record authoritatively
+    let callRecord: { id: string; organization_id: string; from_number: string; to_number: string; status: string; answered_at: string | null; record_call: boolean } | null = null;
     if (dbCallId) {
       const { data } = await (adminSupabase as any)
         .from('calls')
-        .select('id, organization_id, status, answered_at, record_call')
+        .select('id, organization_id, from_number, to_number, status, answered_at, record_call')
         .eq('id', dbCallId)
         .maybeSingle();
       callRecord = data;
     } else if (callSid) {
       const { data } = await (adminSupabase as any)
         .from('calls')
-        .select('id, organization_id, status, answered_at, record_call')
+        .select('id, organization_id, from_number, to_number, status, answered_at, record_call')
         .eq('twilio_call_sid', callSid)
         .maybeSingle();
       callRecord = data;
@@ -193,7 +193,23 @@ export async function POST(request: Request) {
       .filter((id) => Boolean(id && id.trim()));
 
     const isValidE164 = (num: string) => /^\+[1-9]\d{1,14}$/.test(num);
-    const dialCallerId = isValidE164(customerFrom) ? customerFrom : (isValidE164(companyTo) ? companyTo : process.env.TWILIO_PHONE_NUMBER || companyTo);
+    const dialCallerId = isValidE164(customerFrom)
+      ? customerFrom
+      : (isValidE164(companyTo)
+          ? companyTo
+          : (isValidE164(callRecord.to_number)
+              ? callRecord.to_number
+              : (isValidE164(callRecord.from_number) ? callRecord.from_number : '')));
+
+    if (!dialCallerId) {
+      console.warn('[TWILIO PREFERRED FALLBACK ENGINE] Authoritative caller ID could not be established. Failing safely.');
+      voiceResponse.say('An error occurred while connecting your call.');
+      voiceResponse.hangup();
+      return new NextResponse(voiceResponse.toString(), {
+        status: 200,
+        headers: { 'Content-Type': 'text/xml' },
+      });
+    }
 
     const dialStatusActionUrl = `${baseUrl}/api/twilio/status?source=dial-action&dbCallId=${encodeURIComponent(callRecord.id)}`;
 

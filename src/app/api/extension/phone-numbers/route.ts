@@ -22,30 +22,41 @@ export async function GET(request: Request) {
 
     const adminSupabase = createAdminClient();
 
-    const { data: phoneNumbers } = await (adminSupabase as any)
-      .from('phone_numbers')
-      .select('*')
-      .eq('organization_id', auth.organizationId)
-      .eq('active', true)
-      .order('is_primary', { ascending: false })
-      .order('created_at', { ascending: true });
+    const { data: profile } = await (adminSupabase as any)
+      .from('profiles')
+      .select('role, active')
+      .eq('id', auth.userId)
+      .maybeSingle();
 
-    let result = phoneNumbers || [];
-    if (result.length === 0) {
-      const defaultPhone = process.env.TWILIO_PHONE_NUMBER || '+61348328472';
-      result = [
-        {
-          id: 'default-primary',
-          organization_id: auth.organizationId,
-          phone_number: defaultPhone,
-          friendly_name: 'Primary Business Number',
-          active: true,
-          is_primary: true,
-        },
-      ];
+    const isOwnerOrAdmin = profile && ['owner', 'admin'].includes(profile.role || '');
+
+    if (isOwnerOrAdmin) {
+      const { data: phoneNumbers } = await (adminSupabase as any)
+        .from('phone_numbers')
+        .select('*')
+        .eq('organization_id', auth.organizationId)
+        .eq('active', true)
+        .order('is_primary', { ascending: false })
+        .order('created_at', { ascending: true });
+
+      const result = (phoneNumbers || []).filter((pn: any) => pn && pn.active === true && pn.status === 'active');
+      return NextResponse.json({ success: true, phoneNumbers: result }, { headers: corsHeaders });
+    } else {
+      const { data: userAssignments } = await (adminSupabase as any)
+        .from('user_phone_assignments')
+        .select(`
+          phone_number_id,
+          phone_numbers:phone_number_id (*)
+        `)
+        .eq('user_id', auth.userId)
+        .eq('organization_id', auth.organizationId);
+
+      const assignedNumbers = (userAssignments || [])
+        .map((a: any) => a.phone_numbers)
+        .filter((pn: any) => pn && pn.active === true && pn.status === 'active');
+
+      return NextResponse.json({ success: true, phoneNumbers: assignedNumbers }, { headers: corsHeaders });
     }
-
-    return NextResponse.json({ success: true, phoneNumbers: result }, { headers: corsHeaders });
   } catch (error: any) {
     console.error('Error in GET /api/extension/phone-numbers:', error.message || error);
     return NextResponse.json(

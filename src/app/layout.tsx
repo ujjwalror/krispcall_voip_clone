@@ -7,8 +7,8 @@ import { ThemeProvider } from '@/components/providers/ThemeProvider';
 const inter = Inter({ subsets: ['latin'], variable: '--font-sans' });
 
 export const metadata: Metadata = {
-  title: 'VoIP Hub - Legendary Careers Internal Telecom',
-  description: 'Internal browser-based VoIP communication platform built with Next.js, Twilio, and Supabase.',
+  title: 'VoIP Hub - Business Communications Platform',
+  description: 'Browser-based multi-tenant VoIP communication platform built with Next.js, Twilio, and Supabase.',
 };
 
 export const viewport: Viewport = {

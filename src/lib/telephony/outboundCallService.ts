@@ -156,45 +156,94 @@ export async function executeOutboundCallSetup(
       throw new OutboundCallError('This number is blocked. Unblock it before calling.', 403);
     }
 
-    // 6. Resolve caller ID Business Number
+    // 6. Resolve & validate caller ID Business Number (Phase 7.4 Role-Based Access)
+    const { data: userProfile } = await (adminSupabase as any)
+      .from('profiles')
+      .select('id, organization_id, role, active')
+      .eq('id', userId)
+      .maybeSingle();
+
+    if (!userProfile || userProfile.active === false || userProfile.organization_id !== organizationId) {
+      throw new OutboundCallError('Forbidden. Active user profile required.', 403);
+    }
+
+    const isOwnerOrAdmin = ['owner', 'admin'].includes(userProfile.role || '');
     let callerId = (rawFromNumber || '').trim();
-    if (!callerId) {
-      const { data: primaryPhone } = await (adminSupabase as any)
-        .from('phone_numbers')
-        .select('phone_number')
-        .eq('organization_id', organizationId)
-        .eq('active', true)
-        .order('is_primary', { ascending: false })
-        .limit(1)
-        .maybeSingle();
 
-      if (primaryPhone?.phone_number) {
-        callerId = primaryPhone.phone_number;
-      } else {
-        callerId = process.env.TWILIO_PHONE_NUMBER || '+61348328472';
-      }
-    } else {
-      // Validate caller ID belongs to organization
-      const { data: validOrgPhone } = await (adminSupabase as any)
-        .from('phone_numbers')
-        .select('id')
-        .eq('organization_id', organizationId)
-        .eq('phone_number', callerId)
-        .eq('active', true)
-        .maybeSingle();
-
-      if (!validOrgPhone && callerId !== process.env.TWILIO_PHONE_NUMBER) {
-        // Fallback to primary if unverified custom number requested
-        const { data: fallbackPhone } = await (adminSupabase as any)
+    if (isOwnerOrAdmin) {
+      // Owner/Admin: Administrative access to all active workspace numbers
+      if (callerId) {
+        const { data: validOrgPhone } = await (adminSupabase as any)
           .from('phone_numbers')
-          .select('phone_number')
+          .select('phone_number, status')
+          .eq('organization_id', organizationId)
+          .eq('phone_number', callerId)
+          .eq('active', true)
+          .maybeSingle();
+
+        const isOperational = validOrgPhone && validOrgPhone.status === 'active';
+        if (!isOperational) {
+          callerId = '';
+        }
+      }
+
+      if (!callerId) {
+        const { data: primaryPhone } = await (adminSupabase as any)
+          .from('phone_numbers')
+          .select('phone_number, status')
           .eq('organization_id', organizationId)
           .eq('active', true)
           .order('is_primary', { ascending: false })
           .limit(1)
           .maybeSingle();
 
-        callerId = fallbackPhone?.phone_number || process.env.TWILIO_PHONE_NUMBER || '+61348328472';
+        const isOperational = primaryPhone && primaryPhone.status === 'active';
+        if (isOperational && primaryPhone?.phone_number) {
+          callerId = primaryPhone.phone_number;
+        }
+      }
+
+      if (!callerId) {
+        throw new OutboundCallError('No active business number is available for this workspace.', 400);
+      }
+    } else {
+      // Manager/Agent: Strictly limited to numbers assigned via user_phone_assignments
+      const { data: userAssignments, error: assignErr } = await (adminSupabase as any)
+        .from('user_phone_assignments')
+        .select(`
+          phone_number_id,
+          phone_numbers:phone_number_id (
+            id,
+            phone_number,
+            active,
+            status,
+            is_primary
+          )
+        `)
+        .eq('user_id', userId)
+        .eq('organization_id', organizationId);
+
+      if (assignErr) {
+        console.error('[Outbound Call Setup] Error fetching user phone assignments:', assignErr);
+        throw new OutboundCallError('Failed to verify user phone number assignment.', 500);
+      }
+
+      const activeAssignedNumbers = (userAssignments || [])
+        .map((a: any) => a.phone_numbers)
+        .filter((pn: any) => pn && pn.active === true && pn.status === 'active');
+
+      if (!activeAssignedNumbers || activeAssignedNumbers.length === 0) {
+        throw new OutboundCallError('No business number assigned to your user account.', 403);
+      }
+
+      if (callerId) {
+        const match = activeAssignedNumbers.find((pn: any) => pn.phone_number === callerId);
+        if (!match) {
+          throw new OutboundCallError('No business number assigned to your user account.', 403);
+        }
+      } else {
+        const primaryMatch = activeAssignedNumbers.find((pn: any) => pn.is_primary) || activeAssignedNumbers[0];
+        callerId = primaryMatch.phone_number;
       }
     }
 

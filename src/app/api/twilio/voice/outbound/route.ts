@@ -106,8 +106,8 @@ export async function POST(request: Request) {
     // Base application URL for absolute callbacks
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://krispcall-voip-clone-udlg.vercel.app';
 
-    // Dial destination using caller ID resolved from DB call record or fallback
-    let callerId = process.env.TWILIO_PHONE_NUMBER || '+61348328472';
+    // Dial destination using caller ID resolved from DB call record
+    let callerId = '';
     if (dbCallId) {
       try {
         const adminSupabase = createAdminClient();
@@ -123,6 +123,15 @@ export async function POST(request: Request) {
       } catch (err) {
         console.error('[Twilio Outbound Webhook] Error resolving callerId from DB:', err);
       }
+    }
+
+    if (!callerId) {
+      voiceResponse.say('No business number is assigned to this workspace.');
+      voiceResponse.reject();
+      return new NextResponse(voiceResponse.toString(), {
+        status: 200,
+        headers: { 'Content-Type': 'text/xml' },
+      });
     }
 
     const dialOptions: Record<string, any> = {

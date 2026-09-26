@@ -25,7 +25,7 @@ export default function AdminPage() {
     {
       id: 'u1',
       name: 'Alex Smith',
-      email: 'alex.smith@company.internal',
+      email: 'alex.smith@acme.com',
       role: 'admin' as const,
       status: 'online' as const,
       identity: 'agent_alex_smith',
@@ -33,7 +33,7 @@ export default function AdminPage() {
     {
       id: 'u2',
       name: 'Sarah Jenkins',
-      email: 'sarah.jenkins@company.internal',
+      email: 'sarah.jenkins@acme.com',
       role: 'agent' as const,
       status: 'online' as const,
       identity: 'agent_sarah_j',
@@ -41,7 +41,7 @@ export default function AdminPage() {
     {
       id: 'u3',
       name: 'David Miller',
-      email: 'david.miller@company.internal',
+      email: 'david.miller@acme.com',
       role: 'agent' as const,
       status: 'offline' as const,
       identity: 'agent_david_m',
@@ -79,7 +79,7 @@ export default function AdminPage() {
             </Badge>
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Manage internal team agents, role assignments, and organization business numbers.
+            Manage team agents, role assignments, and organization business numbers.
           </p>
         </div>
         <Button variant="primary" size="md">

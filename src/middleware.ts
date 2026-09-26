@@ -36,21 +36,28 @@ export async function middleware(request: NextRequest) {
 
   const pathname = request.nextUrl.pathname;
 
-  // Exclude Twilio server webhooks and extension API endpoints from browser authentication redirects
+  // Exclude Twilio server webhooks, extension API endpoints, and public invitation verification/acceptance routes from browser authentication redirects
   if (
     pathname.startsWith('/api/twilio/voice/') ||
     pathname.startsWith('/api/twilio/status') ||
     pathname.startsWith('/api/twilio/recording') ||
-    pathname.startsWith('/api/extension')
+    pathname.startsWith('/api/extension') ||
+    pathname.startsWith('/api/invitations/verify') ||
+    pathname.startsWith('/api/invitations/accept')
   ) {
     return NextResponse.next();
   }
 
+  // Public auth routes (unauthenticated landing)
   const isAuthRoute =
     pathname === '/login' ||
+    pathname === '/signup' ||
     pathname === '/forgot-password' ||
     pathname === '/reset-password';
-  const isPublicRoute = isAuthRoute || pathname.startsWith('/auth/callback');
+  const isPublicRoute =
+    isAuthRoute ||
+    pathname.startsWith('/auth/callback') ||
+    pathname.startsWith('/invite/accept');
 
   // 1. Unauthenticated users trying to access protected routes -> redirect to /login
   if (!user && !isPublicRoute && pathname !== '/') {
@@ -59,32 +66,52 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // 2. Authenticated users visiting auth routes -> redirect to /dashboard
+  // 2. Authenticated users visiting auth routes -> check profile and redirect
   if (user && isAuthRoute) {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('id', user.id)
+      .maybeSingle();
+
     const url = request.nextUrl.clone();
-    url.pathname = '/dashboard';
+    url.pathname = profile ? '/dashboard' : '/onboarding';
     return NextResponse.redirect(url);
   }
 
-  // 3. Admin-only route protection for /admin
-  if (user && pathname.startsWith('/admin')) {
+  // 3. Authenticated users onboarding check for protected web app routes (excluding API and public assets)
+  if (user && !isPublicRoute && !pathname.startsWith('/api') && !pathname.startsWith('/_next')) {
     const { data: profile } = await supabase
       .from('profiles')
       .select('role, active')
       .eq('id', user.id)
-      .single();
+      .maybeSingle();
 
-    if (!profile || !profile.active) {
-      const url = request.nextUrl.clone();
-      url.pathname = '/login';
-      url.searchParams.set('error', !profile ? 'unconfigured' : 'inactive');
-      return NextResponse.redirect(url);
-    }
+    if (!profile) {
+      if (pathname !== '/onboarding' && !pathname.startsWith('/invite/accept')) {
+        const url = request.nextUrl.clone();
+        url.pathname = '/onboarding';
+        return NextResponse.redirect(url);
+      }
+    } else {
+      if (pathname === '/onboarding') {
+        const url = request.nextUrl.clone();
+        url.pathname = '/dashboard';
+        return NextResponse.redirect(url);
+      }
 
-    if (profile.role !== 'admin') {
-      const url = request.nextUrl.clone();
-      url.pathname = '/dashboard';
-      return NextResponse.redirect(url);
+      if (!profile.active) {
+        const url = request.nextUrl.clone();
+        url.pathname = '/login';
+        url.searchParams.set('error', 'inactive');
+        return NextResponse.redirect(url);
+      }
+
+      if (pathname.startsWith('/admin') && !['owner', 'admin'].includes(profile.role)) {
+        const url = request.nextUrl.clone();
+        url.pathname = '/dashboard';
+        return NextResponse.redirect(url);
+      }
     }
   }
 

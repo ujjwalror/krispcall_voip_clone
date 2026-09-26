@@ -116,25 +116,52 @@ export async function sendOutboundSms(
 
   const { data: phoneRow, error: phoneErr } = await (adminSupabase as any)
     .from('phone_numbers')
-    .select('id, phone_number, active, organization_id, capabilities_sms')
+    .select('id, phone_number, active, organization_id, capabilities_sms, status')
     .eq('organization_id', organizationId)
     .eq('phone_number', normalizedFrom)
     .eq('active', true)
     .maybeSingle();
 
-  if (phoneErr || !phoneRow) {
+  const isOperational = phoneRow && phoneRow.active === true && phoneRow.status === 'active';
+  if (phoneErr || !phoneRow || !isOperational) {
     throw new SmsServiceError(
       'The selected business phone number is not active or unconfigured for your organization.',
       400
     );
   }
 
-  // Enforce SMS capability check if column exists
+  // Enforce SMS capability check
   if (phoneRow.capabilities_sms === false) {
     throw new SmsServiceError(
       'The selected business phone number does not have SMS messaging capability enabled.',
       400
     );
+  }
+
+  // Phase 7.4 Role-Based Assignment Check for Manager / Agent
+  const { data: userProfile } = await (adminSupabase as any)
+    .from('profiles')
+    .select('role, active')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (!userProfile || userProfile.active === false) {
+    throw new SmsServiceError('Forbidden. Active user profile required.', 403);
+  }
+
+  const isOwnerOrAdmin = ['owner', 'admin'].includes(userProfile.role || '');
+  if (!isOwnerOrAdmin) {
+    const { data: assignment } = await (adminSupabase as any)
+      .from('user_phone_assignments')
+      .select('id')
+      .eq('phone_number_id', phoneRow.id)
+      .eq('user_id', userId)
+      .eq('organization_id', organizationId)
+      .maybeSingle();
+
+    if (!assignment) {
+      throw new SmsServiceError('No business number assigned to your user account.', 403);
+    }
   }
 
   // 4. Blocked-number check for organization

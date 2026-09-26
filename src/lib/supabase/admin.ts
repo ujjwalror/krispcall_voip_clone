@@ -11,6 +11,16 @@ export function createAdminClient() {
     throw new Error('Security Error: createAdminClient cannot be executed in browser context.');
   }
 
+  // Ensure WebSocket is defined in Node.js runtime environments (< v22) for @supabase/supabase-js
+  if (typeof globalThis.WebSocket === 'undefined') {
+    class DummyWebSocket {
+      constructor() {}
+      close() {}
+      send() {}
+    }
+    (globalThis as any).WebSocket = DummyWebSocket;
+  }
+
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co';
   const secretKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 

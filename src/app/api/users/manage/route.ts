@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { requireActiveSession } from '@/lib/auth/requireActiveSession';
 
 /**
  * Workspace User Management API for Admins and Managers.
@@ -8,16 +8,13 @@ import { createAdminClient } from '@/lib/supabase/admin';
  */
 export async function GET() {
   try {
-    const supabase = await createServerSupabaseClient();
-
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    // Enforce active session authority
+    const sessionResult = await requireActiveSession();
+    if (!sessionResult.success) {
+      return sessionResult.errorResponse;
     }
+
+    const { user, supabase } = sessionResult;
 
     const { data: profileData } = await supabase
       .from('profiles')
@@ -48,7 +45,6 @@ export async function GET() {
       .order('created_at', { ascending: true });
 
     // Fetch active calls in organization to determine automatic call occupancy per user
-    // A call is occupied ONLY if ended_at IS NULL AND (status === 'in-progress' OR (transient status IN ('initiated', 'ringing', 'queued') AND created_at within 15 mins))
     const { data: activeCalls } = await (adminSupabase as any)
       .from('calls')
       .select('user_id, status, created_at')
@@ -105,16 +101,13 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const supabase = await createServerSupabaseClient();
-
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    // Enforce active session authority
+    const sessionResult = await requireActiveSession();
+    if (!sessionResult.success) {
+      return sessionResult.errorResponse;
     }
+
+    const { user, supabase } = sessionResult;
 
     // Verify actor authentication & permissions
     const { data: profileData } = await supabase
@@ -130,9 +123,9 @@ export async function POST(request: Request) {
       !actorProfile.organization_id ||
       !actorProfile.role ||
       actorProfile.active === false ||
-      !['admin', 'manager'].includes(actorProfile.role)
+      !['owner', 'admin'].includes(actorProfile.role)
     ) {
-      return NextResponse.json({ error: 'Forbidden. Active Admin or Manager role required.' }, { status: 403 });
+      return NextResponse.json({ error: 'Forbidden. Member management requires active Owner or Admin role.' }, { status: 403 });
     }
 
     const body = await request.json();
@@ -140,12 +133,8 @@ export async function POST(request: Request) {
 
     const adminSupabase = createAdminClient();
 
-    // 1. Action: update_routing (ADMIN ONLY)
+    // 1. Action: update_routing (OWNER & ADMIN ONLY)
     if (action === 'update_routing') {
-      if (actorProfile.role !== 'admin') {
-        return NextResponse.json({ error: 'Forbidden. Routing strategy can only be updated by Admins.' }, { status: 403 });
-      }
-
       const updateData: Record<string, any> = {
         updated_at: new Date().toISOString(),
       };
@@ -176,7 +165,7 @@ export async function POST(request: Request) {
       });
     }
 
-    // 2. Action: update_member
+    // 2. Action: update_member (OWNER & ADMIN ONLY)
     if (action === 'update_member' && userId) {
       // Fetch target user profile by userId AND same organization_id
       const { data: targetData } = await (adminSupabase as any)
@@ -192,60 +181,45 @@ export async function POST(request: Request) {
 
       const targetProfile = targetData as { id: string; organization_id: string; role: string; active: boolean; full_name: string };
 
-      // --- MANAGER AUTHORIZATION RULES ---
-      if (actorProfile.role === 'manager') {
-        // Manager may NOT modify themselves via this API endpoint
-        if (userId === user.id) {
-          return NextResponse.json({ error: 'Forbidden. Managers cannot modify their own profile or role via team management.' }, { status: 403 });
-        }
+      // Reject any attempt to assign 'owner' role via member management
+      if (role === 'owner') {
+        return NextResponse.json({ error: 'Forbidden. Owner role cannot be assigned via role changes.' }, { status: 403 });
+      }
 
-        // Target MUST be an agent
-        if (targetProfile.role !== 'agent') {
-          return NextResponse.json({ error: 'Forbidden. Managers can only manage Agent accounts.' }, { status: 403 });
+      // Safeguards for Workspace Owner target
+      if (targetProfile.role === 'owner') {
+        if (role && role !== 'owner') {
+          return NextResponse.json({ error: 'Forbidden. Workspace Owner role cannot be changed.' }, { status: 403 });
         }
-
-        // Manager may NOT assign role='admin' or role='manager'
-        if (role && role !== 'agent') {
-          return NextResponse.json({ error: 'Forbidden. Managers cannot assign Manager or Admin roles.' }, { status: 403 });
+        if (typeof active === 'boolean' && active === false) {
+          return NextResponse.json({ error: 'Forbidden. Workspace Owner cannot be deactivated.' }, { status: 403 });
         }
       }
 
-      // --- ADMIN AUTHORIZATION RULES & SAFEGUARDS ---
+      // Safeguards for Admin actor
       if (actorProfile.role === 'admin') {
-        const isTargetAdmin = targetProfile.role === 'admin';
-        const isDeactivatingAdmin = isTargetAdmin && typeof active === 'boolean' && active === false;
-        const isDemotingAdmin = isTargetAdmin && role && role !== 'admin';
-
-        if (isDeactivatingAdmin || isDemotingAdmin) {
-          // Prevent self-deactivation and self-demotion
-          if (userId === user.id) {
-            return NextResponse.json({ error: 'Forbidden. Admins cannot deactivate or demote their own account.' }, { status: 403 });
-          }
-
-          // Verify at least one OTHER active admin exists in the organization
-          const { data: activeAdmins } = await (adminSupabase as any)
-            .from('profiles')
-            .select('id')
-            .eq('organization_id', actorProfile.organization_id)
-            .eq('role', 'admin')
-            .eq('active', true)
-            .neq('id', userId);
-
-          if (!activeAdmins || activeAdmins.length === 0) {
-            return NextResponse.json(
-              { error: 'Forbidden. Cannot deactivate or demote the last active Admin in the organization.' },
-              { status: 403 }
-            );
-          }
+        if (targetProfile.role === 'owner') {
+          return NextResponse.json({ error: 'Forbidden. Admins cannot modify Workspace Owner.' }, { status: 403 });
         }
+        if (targetProfile.role === 'admin' && targetProfile.id !== actorProfile.id) {
+          return NextResponse.json({ error: 'Forbidden. Admins cannot modify other Admins.' }, { status: 403 });
+        }
+        if (role && !['manager', 'agent'].includes(role)) {
+          return NextResponse.json({ error: 'Forbidden. Admins can only assign Manager or Agent roles.' }, { status: 403 });
+        }
+      }
+
+      // Prevent self-deactivation
+      if (typeof active === 'boolean' && active === false && userId === user.id) {
+        return NextResponse.json({ error: 'Forbidden. You cannot deactivate your own account.' }, { status: 403 });
       }
 
       // Construct updates object
       const { fullName } = body;
       const updates: Record<string, any> = { updated_at: new Date().toISOString() };
       if (fullName && typeof fullName === 'string') updates.full_name = fullName.trim();
-      if (role && ['admin', 'manager', 'agent'].includes(role)) {
-        if (actorProfile.role === 'admin') {
+      if (role && ['owner', 'admin', 'manager', 'agent'].includes(role)) {
+        if (['owner', 'admin'].includes(actorProfile.role)) {
           updates.role = role;
         }
       }
@@ -254,7 +228,6 @@ export async function POST(request: Request) {
       if (extension !== undefined) {
         const trimmedExt = String(extension).trim();
         if (trimmedExt) {
-          // Check extension uniqueness in org
           const { data: extConflict } = await (adminSupabase as any)
             .from('profiles')
             .select('id')

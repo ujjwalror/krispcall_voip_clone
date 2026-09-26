@@ -47,10 +47,10 @@ export async function DELETE(
       );
     }
 
-    // 3. Strict Admin-Only Role Authorization Check
-    if (profile.role !== 'admin') {
+    // 3. Strict Admin/Owner-Only Role Authorization Check
+    if (!['owner', 'admin'].includes(profile.role || '')) {
       return NextResponse.json(
-        { error: 'Forbidden. Admin privileges required to delete call recordings.' },
+        { error: 'Forbidden. Owner or Admin privileges required to delete call recordings.' },
         { status: 403 }
       );
     }
