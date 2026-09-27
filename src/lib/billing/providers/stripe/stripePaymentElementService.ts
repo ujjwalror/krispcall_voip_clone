@@ -130,9 +130,21 @@ export class StripePaymentElementService {
       };
     }
 
-    // 2. Authoritative Phone Number Availability Recheck
-    const inventory = await inventoryProvider.searchAvailableNumbers({ countryCode: cc, numberType: type as any, limit: 20 });
-    const isAvailable = inventory.some((item: any) => item.phoneNumber === phoneNumber);
+    // 2. Authoritative Exact Phone Number Availability Recheck
+    const digitsOnly = phoneNumber.replace(/[^0-9]/g, '');
+    const inventory = await inventoryProvider.searchAvailableNumbers({
+      countryCode: cc,
+      numberType: type as any,
+      contains: digitsOnly,
+      limit: 10,
+    });
+
+    const isAvailable = inventory.some(
+      (item: any) =>
+        item.phoneNumber === phoneNumber ||
+        item.phoneNumber.replace(/[^0-9]/g, '') === digitsOnly
+    );
+
     if (!isAvailable) {
       return {
         success: false,
