@@ -79,7 +79,8 @@ export class StripePaymentElementService {
     attemptToken: string = ''
   ): string {
     const raw = `${organizationId}:${phoneNumber}:${countryCode.toUpperCase()}:${numberType.toLowerCase()}:${retailMinor}:${currency.toUpperCase()}:${pricingPolicyId || 'default'}:${attemptToken}`;
-    return crypto.createHash('sha256').update(raw).digest('hex');
+    const hash = crypto.createHash('sha256').update(raw).digest('hex');
+    return `sha256:${hash}`;
   }
 
   /**
@@ -246,12 +247,12 @@ export class StripePaymentElementService {
             .single();
           op = racedOp;
         } else {
-          console.error('[StripePaymentElementService] Insert operation error:', insertErr.message);
+          console.error('[StripePaymentElementService] Insert operation DB error:', insertErr.code, insertErr.message, insertErr.details);
           return {
             success: false,
             error: {
               code: 'OPERATION_CREATION_FAILED',
-              message: `Failed to create payment operation: ${insertErr.message}`,
+              message: 'We couldn’t initialize checkout right now. Please try again or contact support if the issue persists.',
             },
           };
         }
