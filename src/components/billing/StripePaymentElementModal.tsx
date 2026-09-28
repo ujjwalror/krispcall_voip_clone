@@ -53,7 +53,6 @@ function CheckoutFormContent({
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [consentSavedMethod, setConsentSavedMethod] = useState(false);
-  const [authSuccess, setAuthSuccess] = useState(false);
 
   const formattedAmount = (priceSummary.monthlyRetailMinor / 100).toLocaleString('en-US', {
     style: 'currency',
@@ -85,11 +84,8 @@ function CheckoutFormContent({
         setIsProcessing(false);
       } else if (paymentIntent) {
         if (paymentIntent.status === 'requires_capture' || paymentIntent.status === 'succeeded') {
-          setAuthSuccess(true);
           setIsProcessing(false);
-          setTimeout(() => {
-            onSuccess(operationId);
-          }, 1500);
+          onSuccess(operationId);
         } else if (paymentIntent.status === 'requires_action') {
           setErrorMessage('Additional authentication required. Please follow the prompt.');
           setIsProcessing(false);
@@ -103,23 +99,6 @@ function CheckoutFormContent({
       setIsProcessing(false);
     }
   };
-
-  if (authSuccess) {
-    return (
-      <div className="py-8 text-center space-y-4">
-        <div className="mx-auto w-16 h-16 bg-emerald-500/20 text-emerald-400 rounded-full flex items-center justify-center text-3xl">
-          ✓
-        </div>
-        <h3 className="text-xl font-semibold text-white">Payment Authorized</h3>
-        <p className="text-sm text-slate-300 max-w-sm mx-auto">
-          Your payment method has been authorized for <span className="font-semibold text-emerald-400">{formattedAmount}</span>. No funds have been captured yet.
-        </p>
-        <p className="text-xs text-slate-400">
-          Authorization Hold ID: <code className="bg-slate-800 px-2 py-1 rounded text-slate-300">{operationId.slice(0, 18)}...</code>
-        </p>
-      </div>
-    );
-  }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
