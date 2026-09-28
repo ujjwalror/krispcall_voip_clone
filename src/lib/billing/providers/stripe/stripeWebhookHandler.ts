@@ -3,6 +3,7 @@ import Stripe from 'stripe';
 import { verifyStripeWebhookSignature } from './stripeClient';
 import { PaymentStateMachine } from '../../paymentStateMachine';
 import { PaymentCanonicalStatus } from '../../types';
+import { CommercialCaptureReconciliationService } from '../../commercialCaptureReconciliationService';
 
 export interface ProcessWebhookResult {
   success: boolean;
@@ -154,13 +155,26 @@ export class StripeWebhookHandler {
     const currentStatus = op.status as PaymentCanonicalStatus;
     let targetStatus: PaymentCanonicalStatus = currentStatus;
 
-    if (eventType === 'payment_intent.requires_action') {
+    if (eventType === 'payment_intent.succeeded') {
+      // MANDATORY CORRECTION 1: Webhook MUST NOT directly update status to captured from event.data.object alone.
+      // Route through Authoritative Shared Reconciliation Service (retrieves live PI & enforces capture_dispatch_claimed_at).
+      const stripeMode = (process.env.STRIPE_EXPECTED_MODE || (pi.livemode ? 'live' : 'test')) as 'test' | 'live';
+      const reconResult = await CommercialCaptureReconciliationService.reconcilePaymentStateAndCompleteSaga(
+        supabase,
+        {
+          providerPaymentId,
+          expectedMode: stripeMode,
+        }
+      );
+
+      if (!reconResult.success && reconResult.classification === 'DISPATCH_NOT_CLAIMED_RECONCILIATION_REQUIRED') {
+        console.warn(`[StripeWebhookHandler] payment_intent.succeeded received for ${providerPaymentId} without durable dispatch claim lock. Canonical capture skipped.`);
+      }
+      return;
+    } else if (eventType === 'payment_intent.requires_action') {
       targetStatus = 'requires_customer_action';
     } else if (eventType === 'payment_intent.amount_capturable_updated') {
       targetStatus = 'authorized';
-    } else if (eventType === 'payment_intent.succeeded') {
-      // Phase 13.2 requires manual capture. Unexpected succeeded event is flagged for reconciliation.
-      targetStatus = 'captured';
     } else if (eventType === 'payment_intent.payment_failed') {
       targetStatus = 'failed';
     } else if (eventType === 'payment_intent.canceled') {
