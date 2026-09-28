@@ -216,9 +216,9 @@ export class CommercialCaptureService {
       return { eligible: false, reason: `INVALID_PAYMENT_STATUS: Payment operation status is '${opStatus}', expected 'authorized'` };
     }
 
-    // 8. Commercial Saga State must be ownership_confirmed
-    if (sagaState !== 'ownership_confirmed') {
-      return { eligible: false, reason: `INVALID_SAGA_STATE: Commercial saga state is '${sagaState}', expected 'ownership_confirmed'` };
+    // 8. Commercial Saga State must be ownership_confirmed or capture_pending
+    if (sagaState !== 'ownership_confirmed' && sagaState !== 'capture_pending') {
+      return { eligible: false, reason: `INVALID_SAGA_STATE: Commercial saga state is '${sagaState}', expected 'ownership_confirmed' or 'capture_pending'` };
     }
 
     // 9 & 10. Single-dispatch Lock Constraint (claimed_at and idempotency_key must be null)

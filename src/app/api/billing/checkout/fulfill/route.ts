@@ -101,10 +101,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 4. CRITICAL FEATURE GATE CHECK
+    // 4. CRITICAL DUAL FEATURE GATE CHECK
     const isPaymentEnabled = process.env.PHASE13_PAYMENT_ENABLED === 'true';
-    if (!isPaymentEnabled) {
-      // Gate is disabled: Return customer-safe processing DTO BEFORE consuming durable claims or calling capture
+    const isCaptureEnabled = process.env.PHASE13_STRIPE_CAPTURE_ENABLED === 'true';
+
+    if (!isPaymentEnabled || !isCaptureEnabled) {
+      // Gates disabled: Return customer-safe processing DTO BEFORE consuming durable claims or calling capture
       const currentState = (saga?.state || 'ownership_confirmed') as CommercialSagaState;
       return NextResponse.json({
         success: true,
@@ -114,13 +116,13 @@ export async function POST(req: NextRequest) {
       }, { status: 200 });
     }
 
-    // 5. Authoritative Shared Reconciliation Pathway (when gate enabled)
+    // 5. Production Orchestration Pathway for Real Capture Dispatch (when both gates enabled)
     const stripeMode = (process.env.STRIPE_EXPECTED_MODE || 'test') as 'test' | 'live';
-    const result = await CommercialCaptureReconciliationService.reconcilePaymentStateAndCompleteSaga(
+    const result = await CommercialCaptureReconciliationService.executeAuthoritativeCaptureDispatch(
       adminSupabase,
       {
         sagaId,
-        providerPaymentId,
+        organizationId: profile.organization_id,
         expectedMode: stripeMode,
       }
     );
@@ -143,3 +145,4 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+
