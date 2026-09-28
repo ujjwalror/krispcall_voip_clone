@@ -17,9 +17,11 @@ async function runPhase13_3_3a_WebhookTests() {
   console.log('RUNNING PHASE 13.3.3A STRIPE WEBHOOK VERIFICATION GATE');
   console.log('====================================================\n');
 
-  // Set mock environment variables for test execution
+  // Set test environment variables for unit test execution
   process.env.STRIPE_SECRET_KEY = 'sk_test_mock_secret_key_for_unit_tests';
-  process.env.STRIPE_WEBHOOK_SECRET = 'whsec_mock_webhook_secret_key';
+  process.env.STRIPE_WEBHOOK_SECRET = 'whsec_mock_webhook_secret_key_12345';
+
+  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2025-02-24.acacia' as any });
 
   // Create Mock DB Store
   const webhookEvents = new Map<string, any>();
@@ -111,6 +113,13 @@ async function runPhase13_3_3a_WebhookTests() {
     };
   }
 
+  function signPayload(payload: string): string {
+    return stripe.webhooks.generateTestHeaderString({
+      payload,
+      secret: process.env.STRIPE_WEBHOOK_SECRET!,
+    });
+  }
+
   // Set up mock payment operation
   const payOpId = 'pay_op_wh_1001';
   const piId = 'pi_wh_test_1001';
@@ -122,36 +131,43 @@ async function runPhase13_3_3a_WebhookTests() {
     organization_id: 'org_test_1001',
   });
 
-  // Mock Stripe client constructEvent method
-  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2025-02-24.acacia' as any });
-  let mockEventToConstruct: Stripe.Event | null = null;
-  let shouldFailConstruct = false;
+  // TEST 0: Middleware route exemption logic verification
+  {
+    function simulateMiddlewareCheck(method: string, pathname: string, user: any) {
+      if (
+        (method === 'POST' && pathname === '/api/webhooks/stripe') ||
+        pathname.startsWith('/api/twilio/voice/') ||
+        pathname.startsWith('/api/twilio/status') ||
+        pathname.startsWith('/api/twilio/recording') ||
+        pathname.startsWith('/api/extension') ||
+        pathname.startsWith('/api/invitations/verify') ||
+        pathname.startsWith('/api/invitations/accept')
+      ) {
+        return { action: 'next' };
+      }
 
-  stripe.webhooks.constructEvent = (payload: any, header: string, secret: string) => {
-    if (shouldFailConstruct || header === 'invalid_signature') {
-      throw new Error('No signatures found matching the expected signature for payload.');
-    }
-    if (mockEventToConstruct) return mockEventToConstruct;
-    return JSON.parse(typeof payload === 'string' ? payload : payload.toString());
-  };
+      const isAuthRoute = ['/login', '/signup', '/forgot-password', '/reset-password'].includes(pathname);
+      const isPublicRoute = isAuthRoute || pathname.startsWith('/auth/callback') || pathname.startsWith('/invite/accept');
 
-  // Override getStripeClient
-  const stripeClientModule = require('../src/lib/billing/providers/stripe/stripeClient');
-  stripeClientModule.getStripeClient = () => stripe;
-  stripeClientModule.verifyStripeWebhookSignature = (rawBody: any, signature: string) => {
-    if (shouldFailConstruct || signature === 'invalid_signature') {
-      throw new Error('No signatures found matching the expected signature for payload.');
+      if (!user && !isPublicRoute && pathname !== '/') {
+        return { action: 'redirect', redirectUrl: '/login' };
+      }
+
+      return { action: 'next' };
     }
-    if (mockEventToConstruct) return mockEventToConstruct;
-    return JSON.parse(typeof rawBody === 'string' ? rawBody : rawBody.toString());
-  };
+
+    assert(simulateMiddlewareCheck('POST', '/api/webhooks/stripe', null).action === 'next', 'Test 0a: POST /api/webhooks/stripe is exempted from login redirect');
+    assert(simulateMiddlewareCheck('GET', '/api/billing/checkout/session', null).redirectUrl === '/login', 'Test 0b: Protected API routes remain protected when unauthenticated');
+    assert(simulateMiddlewareCheck('GET', '/dashboard', null).redirectUrl === '/login', 'Test 0c: Protected application routes remain protected when unauthenticated');
+  }
 
   // TEST 1: Valid signed webhook delivery & durable receipt
   {
     const event = createMockStripeEvent('evt_test_001', 'payment_intent.amount_capturable_updated', piId);
-    mockEventToConstruct = event;
+    const rawBody = JSON.stringify(event);
+    const signature = signPayload(rawBody);
 
-    const res = await StripeWebhookHandler.handleWebhookEvent(mockSupabase, JSON.stringify(event), 't=123,v1=valid_sig');
+    const res = await StripeWebhookHandler.handleWebhookEvent(mockSupabase, rawBody, signature);
 
     assert(res.success === true, 'Test 1: Valid webhook handled successfully');
     assert(res.duplicate === false, 'Test 1: First delivery is not duplicate');
@@ -162,9 +178,10 @@ async function runPhase13_3_3a_WebhookTests() {
   // TEST 2: Duplicate webhook delivery idempotency
   {
     const event = createMockStripeEvent('evt_test_001', 'payment_intent.amount_capturable_updated', piId);
-    mockEventToConstruct = event;
+    const rawBody = JSON.stringify(event);
+    const signature = signPayload(rawBody);
 
-    const res = await StripeWebhookHandler.handleWebhookEvent(mockSupabase, JSON.stringify(event), 't=123,v1=valid_sig');
+    const res = await StripeWebhookHandler.handleWebhookEvent(mockSupabase, rawBody, signature);
 
     assert(res.success === true, 'Test 2: Duplicate delivery returns HTTP success');
     assert(res.duplicate === true, 'Test 2: Event marked as duplicate');
@@ -173,14 +190,13 @@ async function runPhase13_3_3a_WebhookTests() {
 
   // TEST 3: Invalid signature rejection
   {
-    shouldFailConstruct = true;
+    const rawBody = JSON.stringify(createMockStripeEvent('evt_bad', 'payment_intent.canceled', piId));
     try {
-      await StripeWebhookHandler.handleWebhookEvent(mockSupabase, '{"id":"evt_bad"}', 'invalid_signature');
+      await StripeWebhookHandler.handleWebhookEvent(mockSupabase, rawBody, 't=123,v1=invalid_signature');
       assert(false, 'Test 3: Invalid signature should throw error');
     } catch (err: any) {
       assert(err.message.includes('INVALID_WEBHOOK_SIGNATURE'), 'Test 3: Invalid signature rejected with INVALID_WEBHOOK_SIGNATURE');
     }
-    shouldFailConstruct = false;
   }
 
   // TEST 4: Out-of-order state regression protection
@@ -190,9 +206,10 @@ async function runPhase13_3_3a_WebhookTests() {
 
     // Send an out-of-order/older event (amount_capturable_updated -> authorized)
     const oldEvent = createMockStripeEvent('evt_test_002', 'payment_intent.amount_capturable_updated', piId);
-    mockEventToConstruct = oldEvent;
+    const rawBody = JSON.stringify(oldEvent);
+    const signature = signPayload(rawBody);
 
-    await StripeWebhookHandler.handleWebhookEvent(mockSupabase, JSON.stringify(oldEvent), 't=123,v1=valid_sig');
+    await StripeWebhookHandler.handleWebhookEvent(mockSupabase, rawBody, signature);
 
     // Canonical status MUST remain captured (no state regression to authorized)
     assert(paymentOps.get(payOpId).status === 'captured', 'Test 4: Captured payment status cannot be regressed to authorized by older webhook');
