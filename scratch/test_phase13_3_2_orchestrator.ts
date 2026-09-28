@@ -405,6 +405,7 @@ async function runPhase13_3_2_Tests() {
     const res = await CommercialSagaOrchestrator.executeCommercialSagaFulfillment(store.mockSupabase, fix.sagaId, orgId, {
       stripeClient: fix.mockStripeClient,
       providerAdapter: fix.mockProviderAdapter,
+      expectedStripeMode: 'test',
       skipPreCheckPricing: true,
       skipPreCheckSuppression: true,
       skipPreCheckLaunch: true,
@@ -420,6 +421,7 @@ async function runPhase13_3_2_Tests() {
     const res = await CommercialSagaOrchestrator.executeCommercialSagaFulfillment(store.mockSupabase, fix.sagaId, orgId, {
       stripeClient: fix.mockStripeClient,
       providerAdapter: fix.mockProviderAdapter,
+      expectedStripeMode: 'test',
       skipPreCheckPricing: true,
       skipPreCheckSuppression: true,
       skipPreCheckLaunch: true,
@@ -435,6 +437,7 @@ async function runPhase13_3_2_Tests() {
     const res = await CommercialSagaOrchestrator.executeCommercialSagaFulfillment(store.mockSupabase, fix.sagaId, orgId, {
       stripeClient: fix.mockStripeClient,
       providerAdapter: fix.mockProviderAdapter,
+      expectedStripeMode: 'test',
       skipPreCheckPricing: true,
       skipPreCheckSuppression: true,
       skipPreCheckLaunch: true,
@@ -443,8 +446,17 @@ async function runPhase13_3_2_Tests() {
     assert(res.success === false && res.stopReason === 'CURRENCY_MISMATCH', 'Test 8: Currency mismatch rejected');
   }
 
-  // TEST 9: Stripe mode mismatch -> fail closed
+  // TEST 9: Stripe mode verification (test & live combinations)
   {
+    // explicit test + livemode false -> valid
+    assert(CommercialSagaOrchestrator.verifyStripeMode({ livemode: false }, 'test') === true, 'Test 9a: Explicit test mode + livemode false = valid');
+    // explicit live + livemode true -> valid
+    assert(CommercialSagaOrchestrator.verifyStripeMode({ livemode: true }, 'live') === true, 'Test 9b: Explicit live mode + livemode true = valid');
+    // test + livemode true -> rejected
+    assert(CommercialSagaOrchestrator.verifyStripeMode({ livemode: true }, 'test') === false, 'Test 9c: Test mode + livemode true = rejected');
+    // live + livemode false -> rejected
+    assert(CommercialSagaOrchestrator.verifyStripeMode({ livemode: false }, 'live') === false, 'Test 9d: Live mode + livemode false = rejected');
+
     const store = createMockStore();
     const fix = setupFixture(store, { piLivemode: true });
     const res = await CommercialSagaOrchestrator.executeCommercialSagaFulfillment(store.mockSupabase, fix.sagaId, orgId, {
@@ -456,17 +468,50 @@ async function runPhase13_3_2_Tests() {
       skipPreCheckLaunch: true,
       skipPreCheckInventory: true,
     });
-    assert(res.success === false && res.stopReason === 'STRIPE_MODE_MISMATCH', 'Test 9: Stripe mode mismatch fails closed');
+    assert(res.success === false && res.stopReason === 'STRIPE_MODE_MISMATCH', 'Test 9e: Stripe mode mismatch fails closed in orchestrator');
   }
 
-  // TEST 10: Missing/invalid expected Stripe mode -> fail closed
+  // TEST 10: Missing/invalid expected Stripe mode -> fail closed & zero dispatch
   {
+    // Missing mode (unset env and no argument) throws MISSING_STRIPE_MODE_CONFIG
+    const oldEnv = process.env.STRIPE_EXPECTED_MODE;
+    delete process.env.STRIPE_EXPECTED_MODE;
     try {
-      CommercialSagaOrchestrator.getExpectedStripeMode('invalid' as any);
-      assert(false, 'Test 10: Invalid Stripe mode threw error');
+      CommercialSagaOrchestrator.getExpectedStripeMode();
+      assert(false, 'Test 10a: Missing Stripe mode should throw error');
     } catch (err: any) {
-      assert(err.message.includes('INVALID_STRIPE_MODE_CONFIG'), 'Test 10: Missing/invalid expected Stripe mode fails closed');
+      assert(err.message.includes('MISSING_STRIPE_MODE_CONFIG'), 'Test 10a: Missing mode throws MISSING_STRIPE_MODE_CONFIG');
     }
+
+    // Invalid mode throws INVALID_STRIPE_MODE_CONFIG
+    try {
+      CommercialSagaOrchestrator.getExpectedStripeMode('invalid_mode' as any);
+      assert(false, 'Test 10b: Invalid Stripe mode should throw error');
+    } catch (err: any) {
+      assert(err.message.includes('INVALID_STRIPE_MODE_CONFIG'), 'Test 10b: Invalid mode throws INVALID_STRIPE_MODE_CONFIG');
+    }
+
+    // Verify missing mode in orchestrator causes zero telecom dispatch
+    let postCalled = false;
+    const store = createMockStore();
+    const fix = setupFixture(store);
+    const mockAdapter: TelecomProviderAdapterMock = {
+      recheckNumberAvailability: async () => ({ available: true }),
+      executePurchasePost: async () => { postCalled = true; return { success: true, sid: 'PN123' }; },
+      lookupOwnedNumberByE164: async () => ({ found: false }),
+    };
+
+    const res = await CommercialSagaOrchestrator.executeCommercialSagaFulfillment(store.mockSupabase, fix.sagaId, orgId, {
+      stripeClient: fix.mockStripeClient,
+      providerAdapter: mockAdapter,
+      // expectedStripeMode intentionally omitted while env is unset
+    });
+
+    assert(res.success === false, 'Test 10c: Missing Stripe mode fails closed in orchestrator');
+    assert(res.stopReason === 'STRIPE_MODE_CONFIG_INVALID', 'Test 10c: Stop reason STRIPE_MODE_CONFIG_INVALID');
+    assert(postCalled === false, 'Test 10c: Zero provider dispatch executed on missing/invalid Stripe mode');
+
+    process.env.STRIPE_EXPECTED_MODE = oldEnv || 'test';
   }
 
   // TEST 11: Number no longer available -> no dispatch
@@ -667,7 +712,74 @@ async function runPhase13_3_2_Tests() {
     });
 
     const provOpCount2 = store.providerOps.size;
-    assert(provOpCount1 === provOpCount2 && provOpCount1 === 1, 'Test 21: Duplicate invocation does not create duplicate provider op');
+    assert(provOpCount1 === provOpCount2 && provOpCount1 === 1, 'Test 21a: Duplicate invocation does not create duplicate provider op');
+  }
+
+  // TEST 21b: Provider operation attachment race condition - matching idempotency key resumes safely
+  {
+    const store = createMockStore();
+    const fix = setupFixture(store);
+
+    // Simulate winning execution attaching prov_op_saga_saga_1001 first
+    const winnerProvId = 'prov_op_winner_1001';
+    store.providerOps.set(winnerProvId, {
+      id: winnerProvId,
+      organization_id: orgId,
+      operation_type: 'purchase_number',
+      provider: 'twilio',
+      status: 'pending',
+      phone_number_e164: defaultPhone,
+      idempotency_key: `prov_op_saga_${fix.sagaId}`,
+    });
+    store.sagas.get(fix.sagaId).provider_number_operation_id = winnerProvId;
+    store.sagas.get(fix.sagaId).state = 'provisioning_claimed';
+
+    const res = await CommercialSagaOrchestrator.executeCommercialSagaFulfillment(store.mockSupabase, fix.sagaId, orgId, {
+      stripeClient: fix.mockStripeClient,
+      providerAdapter: fix.mockProviderAdapter,
+      expectedStripeMode: 'test',
+      skipPreCheckPricing: true,
+      skipPreCheckSuppression: true,
+      skipPreCheckLaunch: true,
+      skipPreCheckInventory: true,
+      skipPreCheckRegulatory: true,
+    });
+
+    assert(res.success === true, 'Test 21b: Losing race resumes attached operation cleanly');
+    assert(res.saga.state === 'ownership_confirmed', 'Test 21b: Reaches ownership_confirmed without double attachment');
+  }
+
+  // TEST 21c: Provider operation attachment conflict - conflicting op attached fails closed
+  {
+    const store = createMockStore();
+    const fix = setupFixture(store);
+
+    // Simulate a conflicting provider op attached by another process
+    const conflictProvId = 'prov_op_conflicting_9999';
+    store.providerOps.set(conflictProvId, {
+      id: conflictProvId,
+      organization_id: wrongOrgId, // Tenant mismatch conflict
+      operation_type: 'purchase_number',
+      provider: 'twilio',
+      status: 'pending',
+      phone_number_e164: '+19998887777', // E.164 mismatch conflict
+      idempotency_key: 'prov_op_different_key',
+    });
+    store.sagas.get(fix.sagaId).provider_number_operation_id = conflictProvId;
+
+    const res = await CommercialSagaOrchestrator.executeCommercialSagaFulfillment(store.mockSupabase, fix.sagaId, orgId, {
+      stripeClient: fix.mockStripeClient,
+      providerAdapter: fix.mockProviderAdapter,
+      expectedStripeMode: 'test',
+      skipPreCheckPricing: true,
+      skipPreCheckSuppression: true,
+      skipPreCheckLaunch: true,
+      skipPreCheckInventory: true,
+      skipPreCheckRegulatory: true,
+    });
+
+    assert(res.success === false, 'Test 21c: Conflicting provider op attached fails closed');
+    assert(res.stopReason === 'PROVIDER_OP_CONFLICT', 'Test 21c: Stop reason PROVIDER_OP_CONFLICT');
   }
 
   // TEST 22: Concurrent execution -> one provisioning claim
@@ -915,10 +1027,10 @@ async function runPhase13_3_2_Tests() {
     const provOpId = 'prov_op_crash_1001';
     store.providerOps.set(provOpId, {
       id: provOpId,
-      organizationId: orgId,
-      phoneNumberE164: defaultPhone,
+      organization_id: orgId,
+      phone_number_e164: defaultPhone,
       status: 'succeeded',
-      providerResourceId: 'PNCrash123',
+      provider_resource_id: 'PNCrash123',
     });
     store.sagas.get(fix.sagaId).provider_number_operation_id = provOpId;
     store.sagas.get(fix.sagaId).state = 'provisioning_in_progress';
@@ -1049,31 +1161,40 @@ async function runPhase13_3_2_Tests() {
   // TEST 37: Capture-readiness false if provider op not succeeded
   {
     const saga = { state: 'ownership_confirmed', organization_id: orgId, phone_number_e164: defaultPhone };
-    const provOp = { status: 'in_progress' };
+    const provOp = { status: 'in_progress', provider_resource_id: 'PN123' };
     const phoneRow = { status: 'active', organization_id: orgId, phone_number: defaultPhone, provider_resource_id: 'PN123' };
     assert(isReadyForFinancialCapture(saga, null, provOp, phoneRow) === false, 'Test 37: Capture readiness false if provider op not succeeded');
   }
 
-  // TEST 38: Capture-readiness false if canonical ownership missing
+  // TEST 38: Capture-readiness false if canonical ownership missing or provider resource ID missing
   {
     const saga = { state: 'ownership_confirmed', organization_id: orgId, phone_number_e164: defaultPhone };
-    const provOp = { status: 'succeeded' };
-    assert(isReadyForFinancialCapture(saga, null, provOp, null) === false, 'Test 38: Capture readiness false if phone row missing');
+    const provOpWithSid = { status: 'succeeded', provider_resource_id: 'PN123' };
+    const provOpNoSid = { status: 'succeeded' };
+    const phoneRowWithSid = { status: 'active', organization_id: orgId, phone_number: defaultPhone, provider_resource_id: 'PN123' };
+    const phoneRowNoSid = { status: 'active', organization_id: orgId, phone_number: defaultPhone };
+
+    assert(isReadyForFinancialCapture(saga, null, provOpWithSid, null) === false, 'Test 38a: Capture readiness false if phone row missing');
+    assert(isReadyForFinancialCapture(saga, null, provOpNoSid, phoneRowWithSid) === false, 'Test 38b: Capture readiness false if providerOp lacks provider resource identity');
+    assert(isReadyForFinancialCapture(saga, null, provOpWithSid, phoneRowNoSid) === false, 'Test 38c: Capture readiness false if phoneRow lacks provider resource identity');
   }
 
-  // TEST 39: Capture-readiness false on E.164/org mismatch
+  // TEST 39: Capture-readiness false on E.164/org mismatch or SID mismatch
   {
     const saga = { state: 'ownership_confirmed', organization_id: orgId, phone_number_e164: defaultPhone };
-    const provOp = { status: 'succeeded' };
-    const phoneRow = { status: 'active', organization_id: wrongOrgId, phone_number: defaultPhone, provider_resource_id: 'PN123' };
-    assert(isReadyForFinancialCapture(saga, null, provOp, phoneRow) === false, 'Test 39: Capture readiness false on org mismatch');
+    const provOp = { status: 'succeeded', provider_resource_id: 'PN123' };
+    const phoneRowOrgMismatch = { status: 'active', organization_id: wrongOrgId, phone_number: defaultPhone, provider_resource_id: 'PN123' };
+    const phoneRowSidMismatch = { status: 'active', organization_id: orgId, phone_number: defaultPhone, provider_resource_id: 'PN999999' };
+
+    assert(isReadyForFinancialCapture(saga, null, provOp, phoneRowOrgMismatch) === false, 'Test 39a: Capture readiness false on org mismatch');
+    assert(isReadyForFinancialCapture(saga, null, provOp, phoneRowSidMismatch) === false, 'Test 39b: Capture readiness false on provider resource identity mismatch');
   }
 
   // TEST 40: Capture-readiness true only with complete authoritative ownership evidence
   {
     const saga = { state: 'ownership_confirmed', organization_id: orgId, phone_number_e164: defaultPhone };
-    const payOp = { status: 'authorized' };
-    const provOp = { status: 'succeeded' };
+    const payOp = { status: 'authorized', organization_id: orgId };
+    const provOp = { status: 'succeeded', organization_id: orgId, phone_number_e164: defaultPhone, provider_resource_id: 'PN123' };
     const phoneRow = { status: 'active', organization_id: orgId, phone_number: defaultPhone, provider_resource_id: 'PN123' };
     assert(isReadyForFinancialCapture(saga, payOp, provOp, phoneRow) === true, 'Test 40: Capture readiness true with complete ownership evidence');
   }

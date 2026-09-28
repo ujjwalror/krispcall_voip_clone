@@ -52,10 +52,13 @@ export interface OrchestrationResult {
 export class CommercialSagaOrchestrator {
   /**
    * Resolves expected Stripe mode from explicit config / environment.
-   * Fails closed if mode is missing or invalid.
+   * Fails closed if mode is missing or invalid. DOES NOT DEFAULT TO 'test'.
    */
   static getExpectedStripeMode(explicitMode?: 'test' | 'live'): 'test' | 'live' {
-    const rawMode = explicitMode || process.env.STRIPE_EXPECTED_MODE || 'test';
+    const rawMode = explicitMode !== undefined ? explicitMode : process.env.STRIPE_EXPECTED_MODE;
+    if (!rawMode || typeof rawMode !== 'string' || !rawMode.trim()) {
+      throw new Error('MISSING_STRIPE_MODE_CONFIG: Authoritative Stripe mode configuration (STRIPE_EXPECTED_MODE) is missing or unconfigured.');
+    }
     const mode = rawMode.toLowerCase().trim();
     if (mode !== 'test' && mode !== 'live') {
       throw new Error(`INVALID_STRIPE_MODE_CONFIG: Configured Stripe mode '${rawMode}' must be strictly 'test' or 'live'.`);
@@ -488,6 +491,18 @@ export class CommercialSagaOrchestrator {
           providerOp = null;
         }
       }
+
+      if (providerOp) {
+        if (providerOp.organization_id !== organizationId || providerOp.phone_number_e164 !== activeSaga.phone_number_e164) {
+          return {
+            success: false,
+            saga: activeSaga,
+            customerDTO: CommercialSagaStateMachine.mapStateToCustomerDTO(activeSaga.state as CommercialSagaState),
+            stopReason: 'PROVIDER_OP_CONFLICT',
+            error: { code: 'PROVIDER_OP_CONFLICT', message: 'Attached provider_number_operation conflicts with saga organization or phone number.' },
+          };
+        }
+      }
     }
 
     if (!providerOp) {
@@ -565,13 +580,46 @@ export class CommercialSagaOrchestrator {
         if (attachedSaga) {
           activeSaga = attachedSaga;
         } else {
-          // Reload saga to get existing attached ID if race occurred
+          // Zero-row conditional update: another concurrent execution attached a provider_number_operation_id
+          // Reload saga to inspect the winning attached operation
           const { data: reloadedSaga } = await (supabase as any)
             .from('commercial_number_purchase_sagas')
             .select('*')
             .eq('id', activeSaga.id)
             .single();
-          if (reloadedSaga) activeSaga = reloadedSaga;
+
+          if (reloadedSaga && reloadedSaga.provider_number_operation_id) {
+            activeSaga = reloadedSaga;
+            // Fetch the provider op attached by the winning execution
+            const { data: winnerOp } = await (supabase as any)
+              .from('provider_number_operations')
+              .select('*')
+              .eq('id', activeSaga.provider_number_operation_id)
+              .maybeSingle();
+
+            if (winnerOp) {
+              // Verify if winnerOp matches expected identity (same idempotency_key or ID)
+              if (winnerOp.id === providerOp.id || winnerOp.idempotency_key === provIdempotencyKey) {
+                providerOp = winnerOp; // Seamless resume from winning execution's operation
+              } else {
+                // Conflicting provider operation attached by concurrent process!
+                return {
+                  success: false,
+                  saga: activeSaga,
+                  customerDTO: CommercialSagaStateMachine.mapStateToCustomerDTO(activeSaga.state as CommercialSagaState),
+                  stopReason: 'PROVIDER_OP_CONFLICT',
+                  error: { code: 'PROVIDER_OP_CONFLICT', message: 'Conflicting provider_number_operation attached to saga by concurrent execution.' },
+                };
+              }
+            }
+          } else {
+            return {
+              success: false,
+              saga: activeSaga,
+              customerDTO: CommercialSagaStateMachine.mapStateToCustomerDTO(activeSaga.state as CommercialSagaState),
+              error: { code: 'PROVIDER_OP_ATTACHMENT_FAILED', message: 'Failed to attach provider_number_operation to saga.' },
+            };
+          }
         }
       }
     }
@@ -985,11 +1033,26 @@ export function isReadyForFinancialCapture(
   phoneRow?: any
 ): boolean {
   if (!saga || saga.state !== 'ownership_confirmed') return false;
-  if (!providerOp || providerOp.status !== 'succeeded') return false;
-  if (!phoneRow || phoneRow.status !== 'active') return false;
+  if (!providerOp || (providerOp.status !== 'succeeded' && providerOp.status !== 'reconciled_success')) return false;
+  if (!phoneRow || (phoneRow.status !== 'active' && phoneRow.status !== 'purchased')) return false;
+
+  // Tenant and E.164 match across all entities
   if (phoneRow.organization_id !== saga.organization_id) return false;
   if (phoneRow.phone_number !== saga.phone_number_e164) return false;
-  if (!phoneRow.provider_resource_id) return false;
+  if (paymentOp && paymentOp.organization_id !== saga.organization_id) return false;
+  if (providerOp.organization_id && providerOp.organization_id !== saga.organization_id) return false;
+  if (providerOp.phone_number_e164 && providerOp.phone_number_e164 !== saga.phone_number_e164) return false;
+
+  // Authoritative provider resource identity/SID MUST exist on both providerOp and phoneRow
+  const providerSid = providerOp.provider_resource_id || providerOp.providerResourceId || providerOp.provider_sid || providerOp.twilio_sid;
+  const phoneSid = phoneRow.provider_resource_id || phoneRow.providerResourceId || phoneRow.provider_sid || phoneRow.twilio_sid;
+
+  if (!providerSid || typeof providerSid !== 'string' || !providerSid.trim()) return false;
+  if (!phoneSid || typeof phoneSid !== 'string' || !phoneSid.trim()) return false;
+
+  // Provider resource identity mapping must match
+  if (providerSid.trim() !== phoneSid.trim()) return false;
+
   if (paymentOp && paymentOp.status !== 'authorized') return false;
   return true;
 }
