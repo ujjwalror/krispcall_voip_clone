@@ -169,12 +169,57 @@ export class CommercialCaptureReconciliationService {
 
     // Handle non-captured classifications safely
     if (classification !== 'CAPTURE_CONFIRMED') {
+      let updatedSaga = saga;
+
+      if (classification === 'DISPATCH_ALREADY_CLAIMED_RECONCILIATION_REQUIRED' ||
+          classification === 'PAYMENT_PROCESSING' ||
+          classification === 'PAYMENT_FAILED') {
+        // Safe durable transition to financial_reconciliation_required
+        if (saga.state === 'capture_pending') {
+          try {
+            const { data: recSaga } = await (supabase as any).rpc('mark_commercial_saga_financial_reconciliation', {
+              p_saga_id: saga.id,
+              p_organization_id: saga.organization_id || saga.organizationId,
+              p_reason: `Classification: ${classification}`,
+            });
+            if (recSaga) updatedSaga = recSaga;
+          } catch (e) {}
+        }
+
+        // Sync payment operation status if payment failed/canceled
+        if (paymentIntent.status === 'canceled' || paymentIntent.status === 'requires_payment_method') {
+          const targetStatus = paymentIntent.status === 'canceled' ? 'canceled' : 'failed';
+          try {
+            await (supabase as any)
+              .from('billing_payment_operations')
+              .update({ status: targetStatus, updated_at: new Date().toISOString() })
+              .eq('id', paymentOp.id);
+          } catch (e) {}
+        }
+      } else if (classification === 'AMOUNT_MISMATCH' ||
+                 classification === 'CURRENCY_MISMATCH' ||
+                 classification === 'MODE_MISMATCH' ||
+                 classification === 'PROVIDER_ID_MISMATCH' ||
+                 classification === 'MANUAL_REVIEW_REQUIRED') {
+        // Safe durable transition to manual_review_required
+        if (saga.state === 'capture_pending' || saga.state === 'financial_reconciliation_required') {
+          try {
+            const { data: revSaga } = await (supabase as any).rpc('mark_commercial_saga_manual_review', {
+              p_saga_id: saga.id,
+              p_organization_id: saga.organization_id || saga.organizationId,
+              p_reason: `Classification: ${classification}`,
+            });
+            if (revSaga) updatedSaga = revSaga;
+          } catch (e) {}
+        }
+      }
+
       return {
         success: false,
         classification,
-        saga,
+        saga: updatedSaga,
         paymentOp,
-        customerDTO: CommercialSagaStateMachine.mapStateToCustomerDTO(saga.state as CommercialSagaState),
+        customerDTO: CommercialSagaStateMachine.mapStateToCustomerDTO(updatedSaga.state as CommercialSagaState),
         message: `Payment status classified as ${classification}. Canonical capture skipped.`,
       };
     }
@@ -189,14 +234,24 @@ export class CommercialCaptureReconciliationService {
         dispatchIdempotencyKey === null || dispatchIdempotencyKey === undefined) {
       console.warn(`[CommercialCaptureReconciliationService] Anomaly: PaymentIntent ${paymentIntent.id} succeeded but dispatch claimed_at is null for operation ${paymentOp.id}.`);
       
-      // READ-ONLY / RECONCILIATION-ONLY ANOMALY BRANCH:
-      // ZERO database mutations executed. Canonical saga and payment records remain 100% untouched.
+      let updatedSaga = saga;
+      if (saga.state === 'capture_pending' || saga.state === 'financial_reconciliation_required') {
+        try {
+          const { data: revSaga } = await (supabase as any).rpc('mark_commercial_saga_manual_review', {
+            p_saga_id: saga.id,
+            p_organization_id: saga.organization_id || saga.organizationId,
+            p_reason: 'ANOMALY: PaymentIntent succeeded without recorded capture dispatch claim.',
+          });
+          if (revSaga) updatedSaga = revSaga;
+        } catch (e) {}
+      }
+
       return {
         success: false,
         classification: 'DISPATCH_NOT_CLAIMED_RECONCILIATION_REQUIRED',
-        saga,
+        saga: updatedSaga,
         paymentOp,
-        customerDTO: CommercialSagaStateMachine.mapStateToCustomerDTO((saga?.state || 'failed') as CommercialSagaState),
+        customerDTO: CommercialSagaStateMachine.mapStateToCustomerDTO((updatedSaga?.state || 'failed') as CommercialSagaState),
         error: { code: 'DISPATCH_NOT_CLAIMED', message: 'Authoritative payment succeeded without recorded capture dispatch claim.' },
       };
     }
@@ -274,17 +329,17 @@ export class CommercialCaptureReconciliationService {
     }
 
     // 7. Dual Commercial Completion Predicate Evaluation
-    if (saga && paymentOp && providerNumberOp && phoneRow) {
+    if (saga && paymentOp) {
       const completionCheck = CommercialCaptureService.isEligibleForSagaCompletion({
         saga,
         paymentOp,
         paymentIntent,
-        providerNumberOp,
-        phoneRow,
+        providerNumberOp: providerNumberOp || ({} as any),
+        phoneRow: phoneRow || ({} as any),
         expectedMode,
       });
 
-      if (completionCheck.eligible && saga.state === 'capture_pending') {
+      if (completionCheck.eligible && (saga.state === 'capture_pending' || saga.state === 'financial_reconciliation_required')) {
         try {
           const { data: completedSaga, error: completeRpcErr } = await (supabase as any).rpc('complete_commercial_saga_after_capture', {
             p_saga_id: saga.id,
@@ -297,6 +352,16 @@ export class CommercialCaptureReconciliationService {
         } catch (completeEx: any) {
           console.error('[CommercialCaptureReconciliationService] Exception completing saga:', completeEx.message);
         }
+      } else if (!completionCheck.eligible && (saga.state === 'capture_pending' || saga.state === 'financial_reconciliation_required')) {
+        // Stripe succeeded & payment captured, but telecom ownership invalid -> mark manual_review_required
+        try {
+          const { data: revSaga } = await (supabase as any).rpc('mark_commercial_saga_manual_review', {
+            p_saga_id: saga.id,
+            p_organization_id: saga.organization_id || saga.organizationId,
+            p_reason: `Telecom ownership unverified: ${completionCheck.reason}`,
+          });
+          if (revSaga) saga = revSaga;
+        } catch (e) {}
       }
     }
 

@@ -401,9 +401,9 @@ export class CommercialCaptureService {
       return { eligible: false, reason: 'MISSING_SAGA' };
     }
 
-    // A. Saga state MUST be capture_pending (the legal state required by complete_commercial_saga_after_capture)
-    if (saga.state !== 'capture_pending') {
-      return { eligible: false, reason: `INVALID_SAGA_STATE: Saga state is '${saga.state}', expected 'capture_pending'` };
+    // A. Saga state MUST be capture_pending or financial_reconciliation_required
+    if (saga.state !== 'capture_pending' && saga.state !== 'financial_reconciliation_required') {
+      return { eligible: false, reason: `INVALID_SAGA_STATE: Saga state is '${saga.state}', expected 'capture_pending' or 'financial_reconciliation_required'` };
     }
 
     // B. Payment Operation status MUST be captured
@@ -500,6 +500,10 @@ export class CommercialCaptureService {
       case 'canceled':
       case 'requires_payment_method':
         return 'PAYMENT_FAILED';
+
+      case 'requires_action':
+      case 'requires_confirmation':
+        return 'MANUAL_REVIEW_REQUIRED';
 
       default:
         return 'PAYMENT_NOT_CAPTURABLE';
