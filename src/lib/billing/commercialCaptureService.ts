@@ -356,7 +356,7 @@ export class CommercialCaptureService {
     const phoneOrg = phoneRow.organization_id || phoneRow.organizationId;
     const phoneE164 = phoneRow.phone_number || phoneRow.phone_number_e164 || phoneRow.phoneNumber;
     const phoneStatus = phoneRow.status;
-    const phoneSid = phoneRow.provider_resource_id || phoneRow.providerResourceId || phoneRow.provider_sid || phoneRow.twilio_sid;
+    const phoneSid = phoneRow.provider_resource_id || phoneRow.providerResourceId || phoneRow.provider_sid || phoneRow.twilio_sid || phoneRow.twilio_phone_number_sid;
 
     // 1. Organization Boundaries
     if (provOrg !== sagaOrg || phoneOrg !== sagaOrg) {

@@ -681,6 +681,37 @@ async function runTests() {
     assert(resD.classification === 'MANUAL_REVIEW_REQUIRED', 'Boundary D: Inconsistent fields fails closed to MANUAL_REVIEW_REQUIRED');
   }
 
+  // TERMINAL COMPLETED SAGA REPLAY: completed saga, captured payment, dispatch claimed, Stripe succeeded -> ZERO capture POSTs & terminal success DTO
+  {
+    const fix = getStandardFixtures({ sagaState: 'completed', opStatus: 'captured', dispatchClaimed: true });
+    fix.paymentIntent.status = 'succeeded';
+    fix.paymentIntent.amount_received = 1500;
+    fix.paymentIntent.amount_capturable = 0;
+
+    const mockDb = createMockSupabase(fix);
+    const mockStripe = createMockStripe({ [PI_ID]: fix.paymentIntent });
+
+    let captureCalls = 0;
+    const fakeDispatcher = async () => {
+      captureCalls++;
+      return { success: true, status: 'succeeded' };
+    };
+
+    const resReplay = await CommercialCaptureReconciliationService.executeAuthoritativeCaptureDispatch(mockDb, {
+      sagaId: SAGA_ID,
+      organizationId: ORG_ID,
+      expectedMode: 'test',
+      captureDispatcher: fakeDispatcher,
+      stripeOverride: mockStripe,
+    });
+
+    assert(captureCalls === 0, 'Terminal Replay: Completed saga produces ZERO capture calls');
+    assert(resReplay.success === true, 'Terminal Replay: Completed saga returns success=true');
+    assert(resReplay.classification === 'CAPTURE_CONFIRMED', 'Terminal Replay: Classification is CAPTURE_CONFIRMED');
+    assert(resReplay.customerDTO.state === 'completed', 'Terminal Replay: customerDTO state is completed');
+    assert(resReplay.customerDTO.isSuccess === true, 'Terminal Replay: customerDTO isSuccess is true');
+  }
+
   // PRE-DISPATCH RECOVERY CONCURRENCY: Two concurrent requests in State B (saga capture_pending, payment authorized, no claim)
   {
     const fix = getStandardFixtures({ sagaState: 'capture_pending', opStatus: 'authorized', dispatchClaimed: false });
