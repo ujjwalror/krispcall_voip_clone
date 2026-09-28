@@ -24,6 +24,7 @@ import {
   Trash2,
   Loader2,
   FileText,
+  CheckCircle,
 } from 'lucide-react';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { StripePaymentElementModal } from '@/components/billing/StripePaymentElementModal';
@@ -1506,6 +1507,10 @@ export default function NumberMarketplacePage() {
                 <div className="w-12 h-12 mx-auto rounded-full bg-emerald-50 dark:bg-emerald-950 flex items-center justify-center">
                   <Phone className="w-6 h-6 text-emerald-600 dark:text-emerald-400" />
                 </div>
+              ) : activeOperation.status === 'authorized' ? (
+                <div className="w-12 h-12 mx-auto rounded-full bg-emerald-50 dark:bg-emerald-950 flex items-center justify-center">
+                  <CheckCircle className="w-6 h-6 text-emerald-600 dark:text-emerald-400" />
+                </div>
               ) : (
                 <div className="w-12 h-12 mx-auto rounded-full bg-rose-50 dark:bg-rose-950 flex items-center justify-center">
                   <AlertTriangle className="w-6 h-6 text-rose-600 dark:text-rose-400" />
@@ -1519,9 +1524,11 @@ export default function NumberMarketplacePage() {
                 <p className="text-xs text-slate-500 dark:text-slate-400">
                   {activeOperation.status === 'succeeded'
                     ? 'Your number has been successfully assigned and activated for your workspace.'
+                    : activeOperation.status === 'authorized'
+                    ? 'Payment authorization successful. Your payment has not been captured yet. Number activation will begin only after checkout processing continues.'
                     : activeOperation.status === 'failed'
                     ? 'We were unable to complete the activation for this number.'
-                    : 'Our system is processing your number request. You may close this window while activation completes.'}
+                    : 'Our system is processing your request. You may close this window.'}
                 </p>
               </div>
             </div>
