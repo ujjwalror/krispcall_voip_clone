@@ -418,7 +418,7 @@ export class StripePaymentElementService {
       };
     }
 
-    const canonicalStatus = data.status as PaymentCanonicalStatus;
+    let canonicalStatus = data.status as PaymentCanonicalStatus;
     let clientSecret: string | null = null;
 
     if (data.provider_payment_id && !['canceled', 'failed', 'captured'].includes(canonicalStatus)) {
@@ -426,8 +426,31 @@ export class StripePaymentElementService {
         const stripe = getStripeClient();
         const pi = await stripe.paymentIntents.retrieve(data.provider_payment_id);
         clientSecret = pi.client_secret;
+
+        // Authoritative Stripe reconciliation if local DB is behind
+        let targetStatus: PaymentCanonicalStatus = canonicalStatus;
+        if (pi.status === 'requires_capture') {
+          targetStatus = 'authorized';
+        } else if (pi.status === 'succeeded') {
+          targetStatus = 'captured';
+        } else if (pi.status === 'canceled') {
+          targetStatus = 'canceled';
+        } else if (pi.status === 'requires_action') {
+          targetStatus = 'requires_customer_action';
+        }
+
+        if (targetStatus !== canonicalStatus && PaymentStateMachine.isTransitionAllowed(canonicalStatus, targetStatus)) {
+          await (supabase as any)
+            .from('billing_payment_operations')
+            .update({
+              status: targetStatus,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', data.id);
+          canonicalStatus = targetStatus;
+        }
       } catch (err: any) {
-        console.warn('[StripePaymentElementService] Failed to retrieve client_secret:', err.message);
+        console.warn('[StripePaymentElementService] Failed to retrieve client_secret or reconcile:', err.message);
       }
     }
 
