@@ -210,6 +210,11 @@ export class VoiceAuthorizationService {
         rateCardId: matchedRate.matchedRateCard.id,
         rateSnapshot: {
           rateMicro: matchedRate.retailRateMicro,
+          retailRateMicro: matchedRate.retailRateMicro,
+          billingIncrementSeconds: matchedRate.matchedRateCard.billingIncrementSeconds || 60,
+          minChargeableUnits: matchedRate.matchedRateCard.minChargeableUnits || 1,
+          unitType: matchedRate.matchedRateCard.unitType || 'minute',
+          currency: matchedRate.currency || 'USD',
           prefix: matchedRate.matchedPrefix,
           source: matchedRate.resolutionSource,
         },

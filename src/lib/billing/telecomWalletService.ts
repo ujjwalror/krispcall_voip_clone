@@ -60,13 +60,15 @@ export interface RateCalculationParams {
   durationSeconds: number;
   billingIncrementSeconds?: number;
   minChargeableUnits?: number;
+  unitType?: string;
 }
 
 export class TelecomWalletService {
   /**
-   * High-precision telecom retail rating utility.
+   * High-precision canonical telecom retail rating utility (Model A).
    * Converts sub-cent rate micro-units (where 1 cent = 10,000 micro-units, e.g. USD $0.0252/min = 25,200 micro-units)
    * into exact rounded minor units (cents).
+   * Integer-safe using BigInt intermediate precision to prevent floating-point loss or overflow.
    */
   static calculateRetailChargeMinor(params: RateCalculationParams): number {
     const {
@@ -74,6 +76,7 @@ export class TelecomWalletService {
       durationSeconds,
       billingIncrementSeconds = 60,
       minChargeableUnits = 1,
+      unitType = 'minute',
     } = params;
 
     if (!Number.isInteger(retailRateMicro) || retailRateMicro < 0) {
@@ -85,17 +88,46 @@ export class TelecomWalletService {
     if (!Number.isInteger(billingIncrementSeconds) || billingIncrementSeconds <= 0) {
       throw new Error('TelecomWalletService: billingIncrementSeconds must be a positive integer.');
     }
+    if (!Number.isInteger(minChargeableUnits) || minChargeableUnits < 0) {
+      throw new Error('TelecomWalletService: minChargeableUnits must be a non-negative integer.');
+    }
 
-    if (durationSeconds === 0) {
+    if (durationSeconds === 0 || retailRateMicro === 0) {
       return 0;
     }
 
-    const calculatedUnits = Math.ceil(durationSeconds / billingIncrementSeconds);
-    const billableUnits = Math.max(minChargeableUnits, calculatedUnits);
+    const rateMicroBig = BigInt(retailRateMicro);
+    const minUnitsBig = BigInt(minChargeableUnits);
 
-    const rawChargeMicro = billableUnits * retailRateMicro;
-    // Round UP to next minor unit (cent) so platform never under-charges customer
-    return Math.ceil(rawChargeMicro / 10000);
+    if (unitType === 'minute') {
+      const inc = billingIncrementSeconds;
+      const incrementsCount = Math.ceil(durationSeconds / inc);
+      const billableIncrements = Math.max(minChargeableUnits, incrementsCount);
+      const billableSeconds = billableIncrements * inc;
+
+      const billableSecondsBig = BigInt(billableSeconds);
+      // Integer ceiling division by 60 for per-minute rate: (billableSeconds * rateMicro + 59) / 60
+      const rawMicroBig = (billableSecondsBig * rateMicroBig + BigInt(59)) / BigInt(60);
+      // Integer ceiling division by 10,000 for cent conversion: (rawMicro + 9999) / 10000
+      const chargeMinorBig = (rawMicroBig + BigInt(9999)) / BigInt(10000);
+
+      const res = Number(chargeMinorBig);
+      if (res > Number.MAX_SAFE_INTEGER) {
+        throw new Error('TelecomWalletService: Calculated retail charge exceeds safe integer limits.');
+      }
+      return res;
+    } else {
+      // Messages / Events: unit-based rating
+      const billableUnits = Math.max(minChargeableUnits, Math.ceil(durationSeconds));
+      const rawMicroBig = BigInt(billableUnits) * rateMicroBig;
+      const chargeMinorBig = (rawMicroBig + BigInt(9999)) / BigInt(10000);
+
+      const res = Number(chargeMinorBig);
+      if (res > Number.MAX_SAFE_INTEGER) {
+        throw new Error('TelecomWalletService: Calculated retail charge exceeds safe integer limits.');
+      }
+      return res;
+    }
   }
 
   /**

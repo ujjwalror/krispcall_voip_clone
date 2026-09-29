@@ -1,6 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { TelecomRetailRateCard } from '../types';
 import { RateResolutionParams, RateResolutionResult } from './types';
+import { TelecomWalletService } from '../telecomWalletService';
 
 export class TelecomRatingService {
   /**
@@ -153,31 +154,18 @@ export class TelecomRatingService {
   /**
    * Pure mathematical helper to compute estimated exposure in minor units (cents)
    * using precision micro-unit rate (10,000 micro-units = 1 minor-unit / cent).
+   * Delegates directly to TelecomWalletService.calculateRetailChargeMinor for 100% rating equivalence.
    */
   public static calculateEstimatedExposureMinor(
     rateCard: TelecomRetailRateCard,
     durationSecondsOrUnits: number
   ): number {
-    if (durationSecondsOrUnits <= 0) {
-      return 0;
-    }
-
-    let chargeableUnits = 0;
-
-    if (rateCard.unitType === 'minute') {
-      const increment = Math.max(1, rateCard.billingIncrementSeconds || 60);
-      // Ceiling division for billing increment seconds (e.g. 65s with 60s increment = 2 increments)
-      const incrementsCount = Math.ceil(durationSecondsOrUnits / increment);
-      chargeableUnits = Math.max(rateCard.minChargeableUnits || 1, incrementsCount);
-    } else {
-      // Messages / Events
-      chargeableUnits = Math.max(rateCard.minChargeableUnits || 1, Math.ceil(durationSecondsOrUnits));
-    }
-
-    // 1 minor-unit (cent) = 10,000 micro-units
-    const totalMicro = chargeableUnits * rateCard.retailRateMicro;
-    const exposureMinor = Math.ceil(totalMicro / 10000);
-
-    return exposureMinor;
+    return TelecomWalletService.calculateRetailChargeMinor({
+      retailRateMicro: rateCard.retailRateMicro,
+      durationSeconds: durationSecondsOrUnits,
+      billingIncrementSeconds: rateCard.billingIncrementSeconds,
+      minChargeableUnits: rateCard.minChargeableUnits,
+      unitType: rateCard.unitType,
+    });
   }
 }

@@ -170,12 +170,62 @@ export async function POST(request: Request) {
         .eq('id', dbCallId);
     }
 
+    // Invariant: Enforce mode MUST provide a valid positive integer timeLimitSeconds.
+    // Zero / missing / non-integer timeLimitSeconds in enforce mode MUST fail closed with ZERO <Dial>.
+    const isEnforceMode = Boolean(authResult.reservationId);
+    const isValidTimeLimit =
+      typeof authResult.timeLimitSeconds === 'number' &&
+      Number.isInteger(authResult.timeLimitSeconds) &&
+      authResult.timeLimitSeconds > 0;
+
+    if (isEnforceMode && !isValidTimeLimit) {
+      console.error(
+        '[Twilio Outbound Webhook] Enforce mode authorization succeeded but timeLimitSeconds is missing or invalid:',
+        authResult.timeLimitSeconds
+      );
+
+      if (createdReservationId && targetOrgId && targetInternalUsageId) {
+        await VoiceAuthorizationService.compensatePreDispatchFailure(
+          adminSupabase,
+          targetOrgId,
+          targetInternalUsageId,
+          dbCallId
+        );
+      }
+
+      await (adminSupabase as any)
+        .from('calls')
+        .update({
+          status: 'failed',
+          ended_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', dbCallId);
+
+      const failResp = new twilio.twiml.VoiceResponse();
+      failResp.say(
+        { voice: 'alice' },
+        'We are unable to connect your call due to a system authorization configuration error. Please contact support.'
+      );
+      failResp.hangup();
+
+      return new NextResponse(failResp.toString(), {
+        status: 200,
+        headers: { 'Content-Type': 'text/xml' },
+      });
+    }
+
+    // Determine final bounded time limit
+    const finalTimeLimitSeconds = isValidTimeLimit
+      ? (authResult.timeLimitSeconds as number)
+      : (authResult.timeLimitSeconds || 3600);
+
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://krispcall-voip-clone-udlg.vercel.app';
     const voiceResponse = new twilio.twiml.VoiceResponse();
 
     const dialOptions: Record<string, any> = {
       callerId,
-      timeLimit: authResult.timeLimitSeconds || 300, // Bounded by authoritatively calculated duration N
+      timeLimit: finalTimeLimitSeconds,
     };
 
     if (shouldRecord) {

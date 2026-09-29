@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { validateTwilioRequest } from '@/lib/twilio/signature';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { TelecomDomainService } from '@/lib/billing/telecom/telecomDomainService';
+import { VoiceSettlementService } from '@/lib/billing/telecom/voiceSettlementService';
 
 /**
  * Twilio Call Status Callback Webhook Endpoint.
@@ -84,12 +85,12 @@ export async function POST(request: Request) {
     }
 
     // 4. Fetch existing call record to check direction, status & answered_at status
-    let existingCall: { id: string; direction: string; status: string; answered_at: string | null } | null = null;
+    let existingCall: { id: string; organization_id: string; direction: string; status: string; answered_at: string | null } | null = null;
 
     if (callSid) {
       const { data } = await (adminSupabase as any)
         .from('calls')
-        .select('id, direction, status, answered_at')
+        .select('id, organization_id, direction, status, answered_at')
         .eq('twilio_call_sid', callSid)
         .maybeSingle();
       existingCall = data;
@@ -97,7 +98,7 @@ export async function POST(request: Request) {
     if (!existingCall && dbCallId) {
       const { data } = await (adminSupabase as any)
         .from('calls')
-        .select('id, direction, status, answered_at')
+        .select('id, organization_id, direction, status, answered_at')
         .eq('id', dbCallId)
         .maybeSingle();
       existingCall = data;
@@ -298,7 +299,7 @@ export async function POST(request: Request) {
       `[Twilio Status Callback] Database update complete for CallSid "${callSid}" / dbCallId "${dbCallId}". Matched ${matchedRows} row(s). Updated status to "${dbStatus}".`
     );
 
-    // Release reservations when call reaches terminal status
+    // Release legacy agent call reservations when call reaches terminal status
     if (['completed', 'no-answer', 'busy', 'canceled', 'failed', 'missed'].includes(dbStatus)) {
       const targetCallId = dbCallId || existingCall?.id;
       if (targetCallId) {
@@ -306,6 +307,32 @@ export async function POST(request: Request) {
           .from('agent_call_reservations')
           .delete()
           .eq('call_id', targetCallId);
+      }
+    }
+
+    // Authoritative Prepaid Telecom Usage Settlement / Release for Outbound Calls
+    if (!isRecordInbound && ['completed', 'no-answer', 'busy', 'canceled', 'failed'].includes(dbStatus)) {
+      const targetCallId = dbCallId || existingCall?.id;
+      const targetOrgId = existingCall?.organization_id;
+
+      if (targetCallId && targetOrgId) {
+        try {
+          const settlementRes = await VoiceSettlementService.processChildStatusCallback(adminSupabase, {
+            organizationId: targetOrgId,
+            dbCallId: targetCallId,
+            callSid,
+            parentCallSid,
+            callStatus: dbStatus,
+            callDurationStr: dialCallDurationStr || callDurationStr,
+            payload: params,
+          });
+
+          console.log('[Twilio Status Callback] Outbound voice usage settlement result:', settlementRes);
+        } catch (settleErr: any) {
+          console.error('[Twilio Status Callback] Error executing outbound usage settlement:', settleErr.message || settleErr);
+        }
+      } else {
+        console.warn('[Twilio Status Callback] Could not resolve targetCallId or organization_id for settlement:', { targetCallId, targetOrgId });
       }
     }
 
