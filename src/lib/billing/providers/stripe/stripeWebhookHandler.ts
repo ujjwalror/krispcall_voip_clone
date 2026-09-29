@@ -4,6 +4,7 @@ import { verifyStripeWebhookSignature } from './stripeClient';
 import { PaymentStateMachine } from '../../paymentStateMachine';
 import { PaymentCanonicalStatus } from '../../types';
 import { CommercialCaptureReconciliationService } from '../../commercialCaptureReconciliationService';
+import { CommercialSubscriptionSyncService, SubscriptionSyncResult } from '../../commercialSubscriptionSyncService';
 
 export interface ProcessWebhookResult {
   success: boolean;
@@ -11,6 +12,7 @@ export interface ProcessWebhookResult {
   eventType: string;
   duplicate: boolean;
   message: string;
+  syncResult?: SubscriptionSyncResult;
 }
 
 export class StripeWebhookHandler {
@@ -21,7 +23,8 @@ export class StripeWebhookHandler {
   static async handleWebhookEvent(
     supabase: SupabaseClient,
     rawBody: string | Buffer,
-    signature: string
+    signature: string,
+    options?: { stripeOverride?: Stripe }
   ): Promise<ProcessWebhookResult> {
     // 1. Verify signature
     let event: Stripe.Event;
@@ -34,66 +37,182 @@ export class StripeWebhookHandler {
 
     const providerEventId = event.id;
     const eventType = event.type;
+    const isSubscriptionEvent = eventType.startsWith('customer.subscription.');
 
-    // 2. Check idempotent receipt in public.billing_webhook_events
-    const { data: existing, error: selectErr } = await (supabase as any)
-      .from('billing_webhook_events')
-      .select('id, status')
-      .eq('provider', 'stripe')
-      .eq('provider_event_id', providerEventId)
-      .maybeSingle();
+    // 2. Claim / Record Webhook Event safely
+    const nowIso = new Date().toISOString();
+    const staleThresholdMs = 5 * 60 * 1000; // 5 minutes conservative stale threshold
 
-    if (selectErr) {
-      console.error('[StripeWebhookHandler] DB read error:', selectErr.message);
-      throw new Error(`Database error verifying webhook idempotency: ${selectErr.message}`);
-    }
-
-    if (existing) {
-      return {
-        success: true,
-        eventId: providerEventId,
-        eventType,
-        duplicate: true,
-        message: 'Event already received and processed idempotently.',
-      };
-    }
-
-    // 3. Record new event in public.billing_webhook_events
-    const { error: insertErr } = await (supabase as any)
-      .from('billing_webhook_events')
-      .insert({
-        provider: 'stripe',
-        provider_event_id: providerEventId,
-        event_type: eventType,
-        payload: event as any,
-        status: 'completed',
-        processed_at: new Date().toISOString(),
+    // Try RPC claim_stripe_webhook_event_for_processing first
+    const { data: claimResult, error: rpcErr } = await (supabase as any)
+      .rpc('claim_stripe_webhook_event_for_processing', {
+        p_provider_event_id: providerEventId,
+        p_stale_threshold_seconds: 300,
       });
 
-    if (insertErr) {
-      // If concurrent insertion hit UNIQUE constraint, return duplicate success
-      if (insertErr.code === '23505') {
+    if (!rpcErr && claimResult) {
+      if (claimResult.claimed) {
+        // Exclusive claim obtained for existing pending/failed/stale event
+      } else if (claimResult.reason === 'not_found') {
+        // Brand new event: Insert initial record in public.billing_webhook_events
+        const initialStatus = isSubscriptionEvent ? 'processing' : 'completed';
+        const { error: insertErr } = await (supabase as any)
+          .from('billing_webhook_events')
+          .insert({
+            provider: 'stripe',
+            provider_event_id: providerEventId,
+            event_type: eventType,
+            payload: event as any,
+            status: initialStatus,
+            processing_started_at: isSubscriptionEvent ? nowIso : null,
+            processed_at: isSubscriptionEvent ? null : nowIso,
+          });
+
+        if (insertErr) {
+          if (insertErr.code === '23505') {
+            return {
+              success: true,
+              eventId: providerEventId,
+              eventType,
+              duplicate: true,
+              message: 'Concurrent webhook delivery handled idempotently.',
+            };
+          }
+          console.error('[StripeWebhookHandler] DB insert error:', insertErr.message);
+          throw new Error(`Database error saving webhook event: ${insertErr.message}`);
+        }
+
+        if (!isSubscriptionEvent) {
+          return {
+            success: true,
+            eventId: providerEventId,
+            eventType,
+            duplicate: false,
+            message: 'Event recorded successfully.',
+          };
+        }
+      } else {
         return {
           success: true,
           eventId: providerEventId,
           eventType,
           duplicate: true,
-          message: 'Concurrent webhook delivery handled idempotently.',
+          message: claimResult.reason === 'completed'
+            ? 'Event already received and processed idempotently.'
+            : 'Event delivery currently processing in parallel.',
         };
       }
-      console.error('[StripeWebhookHandler] DB insert error:', insertErr.message);
-      throw new Error(`Database error saving webhook event: ${insertErr.message}`);
+    } else {
+      // Fallback for mock DB / client query if RPC not present in schema
+      const { data: existing, error: selectErr } = await (supabase as any)
+        .from('billing_webhook_events')
+        .select('id, status, attempt_count, processing_started_at')
+        .eq('provider', 'stripe')
+        .eq('provider_event_id', providerEventId)
+        .maybeSingle();
+
+      if (selectErr) {
+        console.error('[StripeWebhookHandler] DB read error:', selectErr.message);
+        throw new Error(`Database error verifying webhook idempotency: ${selectErr.message}`);
+      }
+
+      if (existing) {
+        if (existing.status === 'completed') {
+          return {
+            success: true,
+            eventId: providerEventId,
+            eventType,
+            duplicate: true,
+            message: 'Event already received and processed idempotently.',
+          };
+        }
+
+        let reclaimQuery = (supabase as any)
+          .from('billing_webhook_events')
+          .update({
+            status: 'processing',
+            processing_started_at: nowIso,
+            attempt_count: (existing.attempt_count || 0) + 1,
+          })
+          .eq('id', existing.id);
+
+        if (existing.status === 'pending') {
+          reclaimQuery = reclaimQuery.eq('status', 'pending');
+        } else if (existing.status === 'failed') {
+          reclaimQuery = reclaimQuery.eq('status', 'failed');
+        } else if (existing.status === 'processing') {
+          const startedTime = new Date(existing.processing_started_at).getTime();
+          const isStale = Date.now() - startedTime >= staleThresholdMs;
+
+          if (!isStale) {
+            return {
+              success: true,
+              eventId: providerEventId,
+              eventType,
+              duplicate: true,
+              message: 'Event delivery currently processing in parallel.',
+            };
+          }
+          reclaimQuery = reclaimQuery.eq('status', 'processing').eq('processing_started_at', existing.processing_started_at);
+        }
+
+        const { data: reclaimed, error: reclaimErr } = await reclaimQuery.select('id').maybeSingle();
+
+        if (reclaimErr || !reclaimed) {
+          return {
+            success: true,
+            eventId: providerEventId,
+            eventType,
+            duplicate: true,
+            message: 'Event delivery currently processing in parallel.',
+          };
+        }
+      } else {
+        // Record new event in public.billing_webhook_events
+        const initialStatus = isSubscriptionEvent ? 'processing' : 'completed';
+
+        const { error: insertErr } = await (supabase as any)
+          .from('billing_webhook_events')
+          .insert({
+            provider: 'stripe',
+            provider_event_id: providerEventId,
+            event_type: eventType,
+            payload: event as any,
+            status: initialStatus,
+            processing_started_at: isSubscriptionEvent ? nowIso : null,
+            processed_at: isSubscriptionEvent ? null : nowIso,
+          });
+
+        if (insertErr) {
+          if (insertErr.code === '23505') {
+            return {
+              success: true,
+              eventId: providerEventId,
+              eventType,
+              duplicate: true,
+              message: 'Concurrent webhook delivery handled idempotently.',
+            };
+          }
+          console.error('[StripeWebhookHandler] DB insert error:', insertErr.message);
+          throw new Error(`Database error saving webhook event: ${insertErr.message}`);
+        }
+      }
     }
 
     // 4. Process state-changing event types safely
-    await this.dispatchWebhookEvent(supabase, event);
+    const syncRes = await this.dispatchWebhookEvent(supabase, event, options?.stripeOverride);
+
+    const isGateDisabled = syncRes?.classification === 'FEATURE_GATE_DISABLED';
 
     return {
       success: true,
       eventId: providerEventId,
       eventType,
       duplicate: false,
-      message: 'Event processed successfully.',
+      message: isGateDisabled
+        ? 'Webhook received and durably recorded as pending (subscription sync gate disabled).'
+        : 'Event processed successfully.',
+      syncResult: syncRes || undefined,
     };
   }
 
@@ -103,9 +222,64 @@ export class StripeWebhookHandler {
    */
   private static async dispatchWebhookEvent(
     supabase: SupabaseClient,
-    event: Stripe.Event
-  ): Promise<void> {
+    event: Stripe.Event,
+    stripeOverride?: Stripe
+  ): Promise<SubscriptionSyncResult | null> {
+    const providerEventId = event.id;
+
     switch (event.type) {
+      case 'customer.subscription.created':
+      case 'customer.subscription.updated':
+      case 'customer.subscription.deleted': {
+        const sub = event.data.object as Stripe.Subscription;
+        const subId = sub.id;
+
+        const syncResult = await CommercialSubscriptionSyncService.reconcileSubscriptionFromProvider(
+          supabase,
+          {
+            providerSubscriptionId: subId,
+            eventPayload: event,
+            stripeOverride,
+          }
+        );
+
+        const nowIso = new Date().toISOString();
+
+        if (syncResult.classification === 'FEATURE_GATE_DISABLED') {
+          // Durability fix: Do NOT mark completed when gate disabled.
+          // Revert/Set status to 'pending' with safe operational error log so it remains recoverable!
+          await (supabase as any)
+            .from('billing_webhook_events')
+            .update({
+              status: 'pending',
+              processing_started_at: null,
+              last_error: 'SUBSCRIPTION_SYNC_DISABLED',
+            })
+            .eq('provider', 'stripe')
+            .eq('provider_event_id', providerEventId);
+        } else if (syncResult.success) {
+          await (supabase as any)
+            .from('billing_webhook_events')
+            .update({
+              status: 'completed',
+              processed_at: nowIso,
+              last_error: null,
+            })
+            .eq('provider', 'stripe')
+            .eq('provider_event_id', providerEventId);
+        } else {
+          await (supabase as any)
+            .from('billing_webhook_events')
+            .update({
+              status: 'failed',
+              last_error: syncResult.error?.message || syncResult.message || `Subscription sync failed with classification: ${syncResult.classification}`,
+            })
+            .eq('provider', 'stripe')
+            .eq('provider_event_id', providerEventId);
+        }
+
+        return syncResult;
+      }
       case 'payment_intent.requires_action':
       case 'payment_intent.amount_capturable_updated':
       case 'payment_intent.succeeded':
@@ -113,17 +287,16 @@ export class StripeWebhookHandler {
       case 'payment_intent.canceled': {
         const paymentIntent = event.data.object as Stripe.PaymentIntent;
         await this.syncPaymentOperationState(supabase, paymentIntent, event.type);
-        break;
+        return null;
       }
       case 'invoice.paid':
       case 'invoice.payment_failed': {
         const invoice = event.data.object as Stripe.Invoice;
         await this.syncInvoiceState(supabase, invoice);
-        break;
+        return null;
       }
       default:
-        // Other webhook event types recorded in event ledger without side-effects
-        break;
+        return null;
     }
   }
 
@@ -148,7 +321,6 @@ export class StripeWebhookHandler {
       .maybeSingle();
 
     if (error || !op) {
-      // Operation not found or not created yet
       return;
     }
 
@@ -156,8 +328,6 @@ export class StripeWebhookHandler {
     let targetStatus: PaymentCanonicalStatus = currentStatus;
 
     if (eventType === 'payment_intent.succeeded') {
-      // MANDATORY CORRECTION 1: Webhook MUST NOT directly update status to captured from event.data.object alone.
-      // Route through Authoritative Shared Reconciliation Service (retrieves live PI & enforces capture_dispatch_claimed_at).
       const stripeMode = (process.env.STRIPE_EXPECTED_MODE || (pi.livemode ? 'live' : 'test')) as 'test' | 'live';
       const reconResult = await CommercialCaptureReconciliationService.reconcilePaymentStateAndCompleteSaga(
         supabase,
@@ -181,7 +351,6 @@ export class StripeWebhookHandler {
       targetStatus = 'canceled';
     }
 
-    // Validate transition
     if (PaymentStateMachine.isTransitionAllowed(currentStatus, targetStatus)) {
       await (supabase as any)
         .from('billing_payment_operations')
