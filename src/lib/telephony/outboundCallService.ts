@@ -156,6 +156,23 @@ export async function executeOutboundCallSetup(
       throw new OutboundCallError('This number is blocked. Unblock it before calling.', 403);
     }
 
+    // 5b. Advisory Preflight Credit Check (ADVISORY ONLY - No reservation, no ledger movement)
+    const enforcementMode = process.env.TELECOM_PREPAID_ENFORCEMENT_MODE || 'shadow_log';
+    if (enforcementMode === 'enforce') {
+      try {
+        const { TelecomWalletService } = await import('@/lib/billing/telecomWalletService');
+        const summary = await TelecomWalletService.getWalletSummary(adminSupabase, organizationId);
+        if (summary.availableBalanceMinor <= 0) {
+          throw new OutboundCallError('Your account has insufficient Credits to place this call. Please add Credits to continue.', 402);
+        }
+      } catch (preflightErr: any) {
+        if (preflightErr instanceof OutboundCallError) {
+          throw preflightErr;
+        }
+        console.warn('[Advisory Preflight] Error during advisory credit check:', preflightErr.message || preflightErr);
+      }
+    }
+
     // 6. Resolve & validate caller ID Business Number (Phase 7.4 Role-Based Access)
     const { data: userProfile } = await (adminSupabase as any)
       .from('profiles')

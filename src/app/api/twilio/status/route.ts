@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { validateTwilioRequest } from '@/lib/twilio/signature';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { TelecomDomainService } from '@/lib/billing/telecom/telecomDomainService';
 
 /**
  * Twilio Call Status Callback Webhook Endpoint.
@@ -46,30 +47,6 @@ export async function POST(request: Request) {
     const direction = params.Direction || params.direction || '';
     const dbCallId = params.dbCallId || params.db_call_id || searchParams.get('dbCallId') || '';
 
-    const sourceParam = searchParams.get('source') || (params.DialCallStatus ? 'dial-action' : (parentCallSid ? 'child-status' : 'parent-status'));
-    const xForwardedHost = request.headers.get('x-forwarded-host') || '';
-    const xForwardedProto = request.headers.get('x-forwarded-proto') || '';
-
-    // Step 3 & 4: Log detailed callback debug info for EVERY request BEFORE returning 403 or processing
-    console.log('[TWILIO CALLBACK DEBUG]', {
-      source: sourceParam,
-      pathname: parsedUrl.pathname,
-      search: parsedUrl.search,
-      dbCallId: dbCallId,
-      CallSid: callSid,
-      ParentCallSid: parentCallSid,
-      CallStatus: rawCallStatus,
-      DialCallSid: rawDialCallSid,
-      DialCallStatus: rawDialCallStatus,
-      DialCallDuration: dialCallDurationStr,
-      CallDuration: callDurationStr,
-      Direction: direction,
-      SequenceNumber: params.SequenceNumber || params.sequenceNumber || '',
-      'x-forwarded-host': xForwardedHost,
-      'x-forwarded-proto': xForwardedProto,
-      signatureValidationResult: isValidSignature,
-    });
-
     if (!isValidSignature) {
       console.warn('[Twilio Status Callback] Unauthorized status callback request.');
       return new NextResponse('<Response><Say>Unauthorized</Say></Response>', {
@@ -86,8 +63,27 @@ export async function POST(request: Request) {
       });
     }
 
-    // 4. Fetch existing call record to check direction, status & answered_at status
     const adminSupabase = createAdminClient();
+
+    // Ingest provider status event into telecom_provider_event_log (durable deduplication)
+    try {
+      const resourceId = rawDialCallSid || callSid;
+      const seqStr = params.SequenceNumber || params.sequenceNumber || null;
+      const seqNum = seqStr !== null ? parseInt(seqStr, 10) : null;
+
+      await TelecomDomainService.logProviderEvent(adminSupabase, {
+        provider: 'twilio',
+        eventId: params.EventSid || null,
+        providerResourceId: resourceId,
+        eventType: `call_status_${rawCallStatus || 'unknown'}`,
+        sequenceNumber: Number.isNaN(seqNum) ? null : seqNum,
+        payload: params,
+      });
+    } catch (evtErr: any) {
+      console.warn('[Twilio Status Callback] Non-fatal event log error:', evtErr.message || evtErr);
+    }
+
+    // 4. Fetch existing call record to check direction, status & answered_at status
     let existingCall: { id: string; direction: string; status: string; answered_at: string | null } | null = null;
 
     if (callSid) {
