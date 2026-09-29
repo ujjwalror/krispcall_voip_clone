@@ -1,15 +1,17 @@
 import 'server-only';
 import twilio from 'twilio';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { normalizeE164PhoneNumber } from '@/lib/utils';
 import { MessageStatus } from '@/lib/types/database.types';
+import { SmsAuthorizationService, SmsAuthorizationError } from '@/lib/billing/telecom/smsAuthorizationService';
 
 export interface SendOutboundSmsParams {
   userId: string;
   organizationId: string;
+  clientSendId?: string;
   fromNumber: string;
   toNumber: string;
   body: string;
+  mediaUrls?: string[];
   defaultCountry?: string;
 }
 
@@ -72,129 +74,56 @@ export function normalizeTwilioMessageStatus(providerStatus: string): MessageSta
     case 'received':
       return 'received';
     default:
-      return lower as MessageStatus || 'sent';
+      return (lower as MessageStatus) || 'sent';
   }
 }
 
 /**
- * Authoritative Server-Only SMS Domain Logic Service.
- * Handles validation, provider execution, persistence, and error safety.
+ * Authoritative Server-Only SMS/MMS Domain Logic Service.
+ * Integrates pre-send prepaid authorization, provider execution, atomic MessageSid linkage, and persistence.
  */
 export async function sendOutboundSms(
   params: SendOutboundSmsParams
 ): Promise<SendOutboundSmsResult> {
-  const { userId, organizationId, fromNumber, toNumber, body, defaultCountry } = params;
-
-  if (!userId || !organizationId) {
-    throw new SmsServiceError('Forbidden. Authenticated user profile or organization unconfigured.', 403);
-  }
-
-  // 1. Validate & sanitize message body
-  const cleanBody = (body || '').trim();
-  if (!cleanBody) {
-    throw new SmsServiceError('Message body cannot be empty.', 400);
-  }
-
-  const MAX_SMS_BODY_LENGTH = 1600;
-  if (cleanBody.length > MAX_SMS_BODY_LENGTH) {
-    throw new SmsServiceError(`Message body exceeds maximum limit of ${MAX_SMS_BODY_LENGTH} characters.`, 400);
-  }
-
-  // 2. Validate & normalize destination E.164 phone number
-  const destValidation = normalizeE164PhoneNumber(toNumber || '', defaultCountry);
-  if (!destValidation.isValid || !destValidation.normalized) {
-    throw new SmsServiceError(destValidation.error || 'Invalid destination phone number.', 400);
-  }
-
-  const normalizedTo = destValidation.normalized;
   const adminSupabase = createAdminClient();
+  const effectiveSendId = params.clientSendId || `send_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
-  // 3. Verify sender business phone number exists, is active, belongs to org, and has capabilities_sms = TRUE
-  const normalizedFromInput = (fromNumber || '').trim();
-  const fromValidation = normalizeE164PhoneNumber(normalizedFromInput, defaultCountry);
-  const normalizedFrom = fromValidation.normalized || normalizedFromInput;
-
-  const { data: phoneRow, error: phoneErr } = await (adminSupabase as any)
-    .from('phone_numbers')
-    .select('id, phone_number, active, organization_id, capabilities_sms, status')
-    .eq('organization_id', organizationId)
-    .eq('phone_number', normalizedFrom)
-    .eq('active', true)
-    .maybeSingle();
-
-  const isOperational = phoneRow && phoneRow.active === true && phoneRow.status === 'active';
-  if (phoneErr || !phoneRow || !isOperational) {
-    throw new SmsServiceError(
-      'The selected business phone number is not active or unconfigured for your organization.',
-      400
-    );
-  }
-
-  // Enforce SMS capability check
-  if (phoneRow.capabilities_sms === false) {
-    throw new SmsServiceError(
-      'The selected business phone number does not have SMS messaging capability enabled.',
-      400
-    );
-  }
-
-  // Phase 7.4 Role-Based Assignment Check for Manager / Agent
-  const { data: userProfile } = await (adminSupabase as any)
-    .from('profiles')
-    .select('role, active')
-    .eq('id', userId)
-    .maybeSingle();
-
-  if (!userProfile || userProfile.active === false) {
-    throw new SmsServiceError('Forbidden. Active user profile required.', 403);
-  }
-
-  const isOwnerOrAdmin = ['owner', 'admin'].includes(userProfile.role || '');
-  if (!isOwnerOrAdmin) {
-    const { data: assignment } = await (adminSupabase as any)
-      .from('user_phone_assignments')
-      .select('id')
-      .eq('phone_number_id', phoneRow.id)
-      .eq('user_id', userId)
-      .eq('organization_id', organizationId)
-      .maybeSingle();
-
-    if (!assignment) {
-      throw new SmsServiceError('No business number assigned to your user account.', 403);
+  // 1. Authoritative Pre-Send Prepaid Authorization
+  let authResult;
+  try {
+    authResult = await SmsAuthorizationService.authorizeOutboundMessage(adminSupabase, {
+      userId: params.userId,
+      organizationId: params.organizationId,
+      clientSendId: effectiveSendId,
+      fromNumber: params.fromNumber,
+      toNumber: params.toNumber,
+      body: params.body,
+      mediaUrls: params.mediaUrls,
+      defaultCountry: params.defaultCountry,
+    });
+  } catch (err: any) {
+    if (err instanceof SmsAuthorizationError) {
+      throw new SmsServiceError(err.message, err.statusCode);
     }
+    throw err;
   }
 
-  // 4. Blocked-number check for organization
-  const { data: blockedRecord } = await (adminSupabase as any)
-    .from('blocked_numbers')
-    .select('id')
-    .eq('organization_id', organizationId)
-    .eq('normalized_phone', normalizedTo)
-    .maybeSingle();
+  const {
+    normalizedFrom,
+    normalizedTo,
+    cleanBody,
+    cleanMediaUrls,
+    sessionId,
+    componentId,
+    serviceType,
+  } = authResult;
 
-  if (blockedRecord) {
-    throw new SmsServiceError('This recipient phone number is blocked. Unblock it before sending messages.', 403);
-  }
-
-  const { data: blockedContact } = await (adminSupabase as any)
-    .from('contacts')
-    .select('id')
-    .eq('organization_id', organizationId)
-    .eq('phone', normalizedTo)
-    .eq('is_blocked', true)
-    .is('archived_at', null)
-    .maybeSingle();
-
-  if (blockedContact) {
-    throw new SmsServiceError('This recipient phone number is blocked. Unblock it before sending messages.', 403);
-  }
-
-  // 5. Saved contact lookup for exact E.164 match
+  // 2. Saved contact lookup for E.164 match
   let contactId: string | null = null;
   const { data: matchedContact } = await (adminSupabase as any)
     .from('contacts')
     .select('id')
-    .eq('organization_id', organizationId)
+    .eq('organization_id', params.organizationId)
     .eq('phone', normalizedTo)
     .is('archived_at', null)
     .maybeSingle();
@@ -203,7 +132,7 @@ export async function sendOutboundSms(
     contactId = matchedContact.id;
   }
 
-  // 6. Resolve Twilio Server Credentials & Callback URL
+  // 3. Resolve Telephony Provider Credentials & Callback URL
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
 
@@ -213,48 +142,67 @@ export async function sendOutboundSms(
 
   const twilioClient = twilio(accountSid, authToken);
   const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://krispcall-voip-clone-udlg.vercel.app').replace(/\/$/, '');
-  const statusCallback = `${baseUrl}/api/twilio/messaging/status`;
+  const statusCallback = `${baseUrl}/api/twilio/messaging/status?organizationId=${encodeURIComponent(params.organizationId)}&clientSendId=${encodeURIComponent(effectiveSendId)}`;
 
-  // 7. Execute Twilio REST API SMS Send
+  // 4. Execute Twilio REST API SMS/MMS Send
   let twilioRes: any = null;
   try {
-    twilioRes = await twilioClient.messages.create({
+    const sendPayload: any = {
       from: normalizedFrom,
       to: normalizedTo,
-      body: cleanBody,
       statusCallback,
-    });
+    };
+
+    if (cleanBody) sendPayload.body = cleanBody;
+    if (cleanMediaUrls && cleanMediaUrls.length > 0) {
+      sendPayload.mediaUrl = cleanMediaUrls;
+    }
+
+    twilioRes = await twilioClient.messages.create(sendPayload);
   } catch (providerError: any) {
-    console.error('[SMS Service Provider Error]:', providerError.message || providerError);
-    throw new SmsServiceError(providerError.message || 'Twilio provider failed to transmit SMS.', 400);
+    console.error('[SMS Service Provider Definite Rejection Error]:', providerError.message || providerError);
+    throw new SmsServiceError(providerError.message || 'Twilio provider failed to transmit message.', 400);
   }
 
   const twilioMessageSid = twilioRes.sid;
   const initialStatus = normalizeTwilioMessageStatus(twilioRes.status || 'queued');
 
-  // 8. Persist Outbound Message into public.messages
+  // 5. ATOMIC MESSAGESID LINKAGE AT DATABASE LEVEL
+  try {
+    await (adminSupabase as any).rpc('link_telecom_message_provider_resource_atomic', {
+      p_organization_id: params.organizationId,
+      p_session_id: sessionId,
+      p_component_id: componentId,
+      p_provider_message_sid: twilioMessageSid,
+    });
+  } catch (linkErr: any) {
+    console.warn('[SMS Service] Non-fatal atomic MessageSid linkage RPC call:', linkErr.message || linkErr);
+  }
+
+  // 6. Persist Outbound Message into public.messages
   try {
     const { data: messageRecord, error: insertError } = await (adminSupabase as any)
       .from('messages')
       .insert({
-        organization_id: organizationId,
-        user_id: userId,
+        organization_id: params.organizationId,
+        user_id: params.userId,
         contact_id: contactId,
         from_number: normalizedFrom,
         to_number: normalizedTo,
-        body: cleanBody,
+        body: cleanBody || '[Media Attachment]',
         direction: 'outbound',
         status: initialStatus,
         twilio_message_sid: twilioMessageSid,
         sent_at: new Date().toISOString(),
         is_read: true,
+        media_urls: cleanMediaUrls.length > 0 ? cleanMediaUrls : null,
       })
       .select()
       .single();
 
     if (insertError || !messageRecord) {
       console.error('[SMS Service Persistence Failure] Twilio SID transmitted:', twilioMessageSid, 'Insert Error:', insertError);
-      throw new SmsServiceError('SMS was transmitted via provider, but recording message log failed.', 500);
+      throw new SmsServiceError('Message was transmitted via provider, but recording message log failed.', 500);
     }
 
     return {
@@ -267,6 +215,6 @@ export async function sendOutboundSms(
   } catch (persistenceError: any) {
     if (persistenceError instanceof SmsServiceError) throw persistenceError;
     console.error('[SMS Service Critical Persistence Error] Twilio SID transmitted:', twilioMessageSid, persistenceError);
-    throw new SmsServiceError('SMS transmitted, but failed to persist message database record.', 500);
+    throw new SmsServiceError('Message transmitted, but failed to persist message database record.', 500);
   }
 }

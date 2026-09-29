@@ -33,20 +33,26 @@ export async function POST(request: Request) {
       );
     }
 
-    // 3. Parse request payload
+    // 3. Parse request payload & client send identity
     const jsonBody = await request.json().catch(() => ({}));
     const fromNumber = jsonBody.fromNumber || jsonBody.from || '';
     const toNumber = jsonBody.toNumber || jsonBody.to || jsonBody.destination || '';
     const messageBody = jsonBody.body || jsonBody.message || '';
     const defaultCountry = jsonBody.defaultCountry || jsonBody.country || undefined;
 
-    // 4. Delegate to authoritative server-only SMS domain service
+    const headerSendId = request.headers.get('x-client-send-id') || request.headers.get('idempotency-key');
+    const clientSendId = jsonBody.clientSendId || jsonBody.idempotencyKey || headerSendId || undefined;
+    const mediaUrls = Array.isArray(jsonBody.mediaUrls) ? jsonBody.mediaUrls : jsonBody.mediaUrl ? [jsonBody.mediaUrl] : undefined;
+
+    // 4. Delegate to authoritative server-only SMS/MMS domain service
     const result = await sendOutboundSms({
       userId: user.id,
       organizationId: profile.organization_id,
+      clientSendId,
       fromNumber,
       toNumber,
       body: messageBody,
+      mediaUrls,
       defaultCountry,
     });
 
@@ -58,7 +64,7 @@ export async function POST(request: Request) {
 
     console.error('Error in POST /api/messages/send:', error.message || error);
     return NextResponse.json(
-      { error: 'Internal server error processing outbound SMS.' },
+      { error: 'Internal server error processing outbound message.' },
       { status: 500 }
     );
   }

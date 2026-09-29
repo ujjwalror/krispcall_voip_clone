@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server';
-import twilio from 'twilio';
 import { validateTwilioRequest } from '@/lib/twilio/signature';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { normalizeTwilioMessageStatus, shouldUpdateMessageStatus } from '@/lib/telephony/smsService';
+import { SmsSettlementService } from '@/lib/billing/telecom/smsSettlementService';
 
 /**
  * Delivery Status Callback Webhook Endpoint for Twilio Messaging.
  * Receives async updates (queued, sending, sent, delivered, undelivered, failed).
+ * Integrates atomic MessageSid linkage and prepaid settlement.
  */
 export async function POST(request: Request) {
   try {
@@ -44,6 +45,8 @@ export async function POST(request: Request) {
     const rawStatus = params.MessageStatus || params.SmsStatus || '';
     const errorCode = params.ErrorCode || params.errorCode || null;
     const errorMessage = params.ErrorMessage || params.errorMessage || null;
+    const providerSegments = params.NumSegments || params.num_segments ? parseInt(params.NumSegments || params.num_segments, 10) : null;
+    const providerPrice = params.Price || params.price || null;
 
     if (!messageSid || !rawStatus) {
       return NextResponse.json({ success: true, message: 'No MessageSid or status provided.' }, { status: 200 });
@@ -52,26 +55,47 @@ export async function POST(request: Request) {
     const normalizedStatus = normalizeTwilioMessageStatus(rawStatus);
     const adminSupabase = createAdminClient();
 
-    // 3. Locate database message record by twilio_message_sid
+    // 3. Locate database message record by twilio_message_sid or query params
     const { data: existingMsg, error: fetchErr } = await (adminSupabase as any)
       .from('messages')
-      .select('id, status, organization_id')
+      .select('id, status, organization_id, twilio_message_sid')
       .eq('twilio_message_sid', messageSid)
       .maybeSingle();
 
+    const organizationId = existingMsg?.organization_id || params.organizationId || searchParams.get('organizationId') || null;
+    const clientSendId = searchParams.get('clientSendId') || params.clientSendId || null;
+
+    // 4. Perform Prepaid Settlement & Atomic MessageSid Linkage
+    if (organizationId && clientSendId) {
+      try {
+        await SmsSettlementService.processMessageStatusCallback(adminSupabase, {
+          organizationId,
+          clientSendId,
+          messageSid,
+          status: normalizedStatus,
+          providerSegments,
+          providerPrice,
+          errorCode,
+          payload: params,
+        });
+      } catch (settleErr: any) {
+        console.error('[Twilio SMS Status Webhook] Settlement exception:', settleErr.message || settleErr);
+      }
+    }
+
     if (fetchErr || !existingMsg) {
-      console.warn(`[Twilio SMS Status Webhook] MessageSid "${messageSid}" not found in database. Ignoring update.`);
+      console.warn(`[Twilio SMS Status Webhook] MessageSid "${messageSid}" not found in database. Processing finished.`);
       return NextResponse.json({ success: true, message: 'Message SID unmapped.' }, { status: 200 });
     }
 
-    // 4. Status Transition Precedence Guard: Avoid overwriting terminal state with delayed out-of-order transient state
+    // 5. Status Transition Precedence Guard
     const currentStatus = existingMsg.status || 'queued';
     if (!shouldUpdateMessageStatus(currentStatus, normalizedStatus)) {
       console.log(`[Twilio SMS Status Webhook] Transition skipped for MessageSid "${messageSid}". Current: "${currentStatus}", Incoming: "${normalizedStatus}".`);
       return NextResponse.json({ success: true, message: 'Status transition skipped due to precedence rules.' }, { status: 200 });
     }
 
-    // 5. Update database record with new status & optional provider error codes
+    // 6. Update database record with new status & optional provider error codes
     const updatePayload: Record<string, any> = {
       status: normalizedStatus,
       updated_at: new Date().toISOString(),
