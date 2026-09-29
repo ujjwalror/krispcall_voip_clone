@@ -1,9 +1,10 @@
 // ============================================================================
 // PUBLIC SAAS PHASE 13.4.3B.2E — PROVIDER CALL CONTROL ADAPTER ABSTRACTION
 // Server-only abstraction for active call timeLimit updates and forced hangups.
-// Level 1 operates strictly in MOCK mode (server gate default FALSE).
 // Strategy tag: UNVERIFIED_FOR_ACTIVE_DIAL_EXTENSION
 // ============================================================================
+
+import twilio from 'twilio';
 
 export type ProviderResultClassification =
   | 'DEFINITE_SUCCESS'
@@ -17,6 +18,7 @@ export interface ActiveCallAllowanceParams {
   callSid: string;
   newTimeLimitSeconds: number;
   idempotencyKey: string;
+  remainingLeaseSeconds?: number;
 }
 
 export interface ActiveCallAllowanceResult {
@@ -37,10 +39,12 @@ export interface ActiveCallTerminateResult {
   success: boolean;
   isMock: boolean;
   reason?: string;
+  errorDetails?: string;
 }
 
 export interface ActiveCallFetchParams {
   callSid: string;
+  expectedTimeLimitSeconds?: number;
 }
 
 export interface ActiveCallFetchResult {
@@ -49,6 +53,7 @@ export interface ActiveCallFetchResult {
   timeLimitSeconds?: number;
   statusClassification: 'READBACK_CONFIRMED_SUCCESS' | 'READBACK_CONFIRMED_ABSENT_OR_UNCHANGED' | 'AMBIGUOUS_TIMEOUT_AFTER_DISPATCH';
   isMock: boolean;
+  errorDetails?: string;
 }
 
 export interface TwilioCallControlAdapter {
@@ -58,12 +63,53 @@ export interface TwilioCallControlAdapter {
 }
 
 /**
- * Server-only provider mutation gate check.
+ * Master Server-only Provider Mutation Gate.
  * Default is FALSE. Live mutations are prohibited unless explicitly enabled in authorized sandbox runs.
  */
 export function isProviderMutationGateEnabled(): boolean {
   const envVal = process.env.TELECOM_ACTIVE_CALL_PROVIDER_MUTATIONS_ENABLED || process.env.TELECOM_VOICE_MUTATION_ALLOW_UPDATE;
   return envVal === 'true' || envVal === '1';
+}
+
+/**
+ * Scoped Mutation Gate: Extension Allowance
+ */
+export function isExtendAllowanceScopeEnabled(): boolean {
+  const envVal = process.env.TELECOM_EXPERIMENT_SCOPE_EXTEND_ALLOWANCE;
+  return envVal === 'true' || envVal === '1';
+}
+
+/**
+ * Scoped Mutation Gate: Call Termination
+ */
+export function isTerminateCallScopeEnabled(): boolean {
+  const envVal = process.env.TELECOM_EXPERIMENT_SCOPE_TERMINATE_CALL;
+  return envVal === 'true' || envVal === '1';
+}
+
+/**
+ * Pre-dispatch Lease Safety Verification
+ */
+export function validatePreDispatchLeaseSafety(options: {
+  remainingLeaseSeconds: number;
+  requestTimeoutMs?: number;
+  readbackBudgetMs?: number;
+  terminationBudgetMs?: number;
+  safetyMarginMs?: number;
+}): { safe: boolean; requiredSafetySeconds: number; remainingLeaseSeconds: number } {
+  const reqMs = options.requestTimeoutMs ?? 10000;
+  const readMs = options.readbackBudgetMs ?? 5000;
+  const termMs = options.terminationBudgetMs ?? 5000;
+  const marginMs = options.safetyMarginMs ?? 10000;
+
+  const requiredSafetySeconds = Math.ceil((reqMs + readMs + termMs + marginMs) / 1000);
+  const safe = options.remainingLeaseSeconds >= requiredSafetySeconds;
+
+  return {
+    safe,
+    requiredSafetySeconds,
+    remainingLeaseSeconds: options.remainingLeaseSeconds,
+  };
 }
 
 /**
@@ -79,9 +125,6 @@ export class MockTwilioCallControlAdapter implements TwilioCallControlAdapter {
     this.defaultClassification = options.forcedResult || options.defaultClassification || 'DEFINITE_SUCCESS';
   }
 
-  /**
-   * Configure mock behavior for a specific callSid or default.
-   */
   setMockBehavior(callSid: string, classification: ProviderResultClassification) {
     this.mockBehaviors.set(callSid, classification);
   }
@@ -92,63 +135,57 @@ export class MockTwilioCallControlAdapter implements TwilioCallControlAdapter {
 
   async extendActiveCallAllowance(params: ActiveCallAllowanceParams): Promise<ActiveCallAllowanceResult> {
     this.dispatchCount++;
-    // Gate Enforcer: Always operate in MOCK mode if gate is false
-    const gateActive = isProviderMutationGateEnabled();
-    if (!gateActive) {
-      // Force mock execution
-      const configuredBehavior = this.mockBehaviors.get(params.callSid) || this.defaultClassification;
+    const configuredBehavior = this.mockBehaviors.get(params.callSid) || this.defaultClassification;
 
-      if (configuredBehavior === 'DEFINITE_SUCCESS') {
-        return {
-          success: true,
-          effectiveTimeLimitSeconds: params.newTimeLimitSeconds,
-          statusClassification: 'DEFINITE_SUCCESS',
-          isMock: true,
-          rawResponse: { callSid: params.callSid, timeLimit: params.newTimeLimitSeconds, status: 'in-progress' },
-        };
-      }
-
-      if (configuredBehavior === 'READBACK_CONFIRMED_SUCCESS') {
-        return {
-          success: true,
-          effectiveTimeLimitSeconds: params.newTimeLimitSeconds,
-          statusClassification: 'READBACK_CONFIRMED_SUCCESS',
-          isMock: true,
-        };
-      }
-
-      if (configuredBehavior === 'READBACK_CONFIRMED_ABSENT_OR_UNCHANGED') {
-        return {
-          success: false,
-          effectiveTimeLimitSeconds: 0,
-          statusClassification: 'READBACK_CONFIRMED_ABSENT_OR_UNCHANGED',
-          isMock: true,
-          errorDetails: 'Readback confirmed call duration unchanged',
-        };
-      }
-
-      if (configuredBehavior === 'DEFINITE_PROVIDER_REJECTION' || configuredBehavior === 'DEFINITE_PRE_DISPATCH_FAILURE') {
-        return {
-          success: false,
-          effectiveTimeLimitSeconds: 0,
-          statusClassification: configuredBehavior,
-          isMock: true,
-          errorDetails: 'Mock Provider Rejected Call Resource Update (400)',
-        };
-      }
-
-      if (configuredBehavior === 'AMBIGUOUS_TIMEOUT_AFTER_DISPATCH') {
-        return {
-          success: false,
-          effectiveTimeLimitSeconds: 0,
-          statusClassification: 'AMBIGUOUS_TIMEOUT_AFTER_DISPATCH',
-          isMock: true,
-          errorDetails: 'Mock Provider HTTP Gateway Timeout (504)',
-        };
-      }
+    if (configuredBehavior === 'DEFINITE_SUCCESS') {
+      return {
+        success: true,
+        effectiveTimeLimitSeconds: params.newTimeLimitSeconds,
+        statusClassification: 'DEFINITE_SUCCESS',
+        isMock: true,
+        rawResponse: { callSid: params.callSid, timeLimit: params.newTimeLimitSeconds, status: 'in-progress' },
+      };
     }
 
-    // Safety fallback: Never perform live mutations in Level 1
+    if (configuredBehavior === 'READBACK_CONFIRMED_SUCCESS') {
+      return {
+        success: true,
+        effectiveTimeLimitSeconds: params.newTimeLimitSeconds,
+        statusClassification: 'READBACK_CONFIRMED_SUCCESS',
+        isMock: true,
+      };
+    }
+
+    if (configuredBehavior === 'READBACK_CONFIRMED_ABSENT_OR_UNCHANGED') {
+      return {
+        success: false,
+        effectiveTimeLimitSeconds: 0,
+        statusClassification: 'READBACK_CONFIRMED_ABSENT_OR_UNCHANGED',
+        isMock: true,
+        errorDetails: 'Readback confirmed call duration unchanged',
+      };
+    }
+
+    if (configuredBehavior === 'DEFINITE_PROVIDER_REJECTION' || configuredBehavior === 'DEFINITE_PRE_DISPATCH_FAILURE') {
+      return {
+        success: false,
+        effectiveTimeLimitSeconds: 0,
+        statusClassification: configuredBehavior,
+        isMock: true,
+        errorDetails: 'Mock Provider Rejected Call Resource Update (400)',
+      };
+    }
+
+    if (configuredBehavior === 'AMBIGUOUS_TIMEOUT_AFTER_DISPATCH') {
+      return {
+        success: false,
+        effectiveTimeLimitSeconds: 0,
+        statusClassification: 'AMBIGUOUS_TIMEOUT_AFTER_DISPATCH',
+        isMock: true,
+        errorDetails: 'Mock Provider HTTP Gateway Timeout (504)',
+      };
+    }
+
     return {
       success: true,
       effectiveTimeLimitSeconds: params.newTimeLimitSeconds,
@@ -174,5 +211,189 @@ export class MockTwilioCallControlAdapter implements TwilioCallControlAdapter {
       statusClassification: configuredReadBack,
       isMock: true,
     };
+  }
+}
+
+/**
+ * Real Twilio Call Control Adapter implementation behind multi-gated safety.
+ * Strategy tag: UNVERIFIED_FOR_ACTIVE_DIAL_EXTENSION
+ */
+export class RealTwilioCallControlAdapter implements TwilioCallControlAdapter {
+  private client: twilio.Twilio | null = null;
+
+  constructor() {
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    if (accountSid && authToken) {
+      this.client = twilio(accountSid, authToken);
+    }
+  }
+
+  async extendActiveCallAllowance(params: ActiveCallAllowanceParams): Promise<ActiveCallAllowanceResult> {
+    // 1. MASTER GATE & SCOPED MUTATION GATE CHECK
+    if (!isProviderMutationGateEnabled()) {
+      return {
+        success: false,
+        effectiveTimeLimitSeconds: 0,
+        statusClassification: 'DEFINITE_PRE_DISPATCH_FAILURE',
+        isMock: false,
+        errorDetails: 'MASTER_MUTATION_GATE_DISABLED: TELECOM_ACTIVE_CALL_PROVIDER_MUTATIONS_ENABLED is false',
+      };
+    }
+
+    if (!isExtendAllowanceScopeEnabled()) {
+      return {
+        success: false,
+        effectiveTimeLimitSeconds: 0,
+        statusClassification: 'DEFINITE_PRE_DISPATCH_FAILURE',
+        isMock: false,
+        errorDetails: 'SCOPED_MUTATION_GATE_DISABLED: TELECOM_EXPERIMENT_SCOPE_EXTEND_ALLOWANCE is false',
+      };
+    }
+
+    // 2. PRE-DISPATCH LEASE SAFETY VALIDATION
+    if (params.remainingLeaseSeconds !== undefined) {
+      const leaseSafety = validatePreDispatchLeaseSafety({ remainingLeaseSeconds: params.remainingLeaseSeconds });
+      if (!leaseSafety.safe) {
+        return {
+          success: false,
+          effectiveTimeLimitSeconds: 0,
+          statusClassification: 'DEFINITE_PRE_DISPATCH_FAILURE',
+          isMock: false,
+          errorDetails: `INSUFFICIENT_LEASE_REMAINING: Lease remaining (${params.remainingLeaseSeconds}s) < required (${leaseSafety.requiredSafetySeconds}s)`,
+        };
+      }
+    }
+
+    if (!this.client) {
+      return {
+        success: false,
+        effectiveTimeLimitSeconds: 0,
+        statusClassification: 'DEFINITE_PRE_DISPATCH_FAILURE',
+        isMock: false,
+        errorDetails: 'TWILIO_CLIENT_NOT_INITIALIZED: Missing Account SID or Auth Token',
+      };
+    }
+
+    // 3. EXECUTE BOUNDED TWILIO REST API CALL (timeLimit update on active Call Resource)
+    try {
+      const timeoutMs = 10000; // 10s request timeout
+      const updatePromise = this.client.calls(params.callSid).update({
+        timeLimit: params.newTimeLimitSeconds,
+      });
+
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('TWILIO_API_TIMEOUT_10S')), timeoutMs)
+      );
+
+      const response: any = await Promise.race([updatePromise, timeoutPromise]);
+
+      return {
+        success: true,
+        effectiveTimeLimitSeconds: params.newTimeLimitSeconds,
+        statusClassification: 'DEFINITE_SUCCESS',
+        isMock: false,
+        rawResponse: { sid: response.sid, status: response.status, duration: response.duration },
+      };
+    } catch (err: any) {
+      console.warn(`[RealTwilioCallControlAdapter] Extension dispatch error for ${params.callSid}: ${err.message}`);
+
+      if (err.message.includes('TWILIO_API_TIMEOUT_10S') || err.status === 504 || err.code === 20404) {
+        return {
+          success: false,
+          effectiveTimeLimitSeconds: 0,
+          statusClassification: 'AMBIGUOUS_TIMEOUT_AFTER_DISPATCH',
+          isMock: false,
+          errorDetails: err.message,
+        };
+      }
+
+      return {
+        success: false,
+        effectiveTimeLimitSeconds: 0,
+        statusClassification: 'DEFINITE_PROVIDER_REJECTION',
+        isMock: false,
+        errorDetails: err.message,
+      };
+    }
+  }
+
+  async terminateActiveCall(params: ActiveCallTerminateParams): Promise<ActiveCallTerminateResult> {
+    if (!isProviderMutationGateEnabled()) {
+      return {
+        success: false,
+        isMock: false,
+        reason: 'MASTER_MUTATION_GATE_DISABLED',
+        errorDetails: 'TELECOM_ACTIVE_CALL_PROVIDER_MUTATIONS_ENABLED is false',
+      };
+    }
+
+    if (!isTerminateCallScopeEnabled()) {
+      return {
+        success: false,
+        isMock: false,
+        reason: 'SCOPED_MUTATION_GATE_DISABLED',
+        errorDetails: 'TELECOM_EXPERIMENT_SCOPE_TERMINATE_CALL is false',
+      };
+    }
+
+    if (!this.client) {
+      return {
+        success: false,
+        isMock: false,
+        reason: 'TWILIO_CLIENT_NOT_INITIALIZED',
+      };
+    }
+
+    try {
+      await this.client.calls(params.callSid).update({ status: 'completed' });
+      return {
+        success: true,
+        isMock: false,
+        reason: params.reason,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        isMock: false,
+        reason: 'TERMINATION_FAILED',
+        errorDetails: err.message,
+      };
+    }
+  }
+
+  async fetchActiveCallState(params: ActiveCallFetchParams): Promise<ActiveCallFetchResult> {
+    // Readback is read-only (no mutation gate required)
+    if (!this.client) {
+      return {
+        callSid: params.callSid,
+        status: 'unknown',
+        statusClassification: 'AMBIGUOUS_TIMEOUT_AFTER_DISPATCH',
+        isMock: false,
+        errorDetails: 'TWILIO_CLIENT_NOT_INITIALIZED',
+      };
+    }
+
+    try {
+      const call = await this.client.calls(params.callSid).fetch();
+      const currentDurationSec = parseInt(call.duration || '0', 10);
+      const isConfirmed = params.expectedTimeLimitSeconds ? currentDurationSec >= params.expectedTimeLimitSeconds : call.status === 'in-progress';
+
+      return {
+        callSid: params.callSid,
+        status: call.status,
+        timeLimitSeconds: currentDurationSec,
+        statusClassification: isConfirmed ? 'READBACK_CONFIRMED_SUCCESS' : 'READBACK_CONFIRMED_ABSENT_OR_UNCHANGED',
+        isMock: false,
+      };
+    } catch (err: any) {
+      return {
+        callSid: params.callSid,
+        status: 'unknown',
+        statusClassification: 'AMBIGUOUS_TIMEOUT_AFTER_DISPATCH',
+        isMock: false,
+        errorDetails: err.message,
+      };
+    }
   }
 }
