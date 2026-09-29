@@ -3,6 +3,7 @@ import { validateTwilioRequest } from '@/lib/twilio/signature';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { TelecomDomainService } from '@/lib/billing/telecom/telecomDomainService';
 import { VoiceSettlementService } from '@/lib/billing/telecom/voiceSettlementService';
+import { InboundVoiceSettlementService } from '@/lib/billing/telecom/inboundVoiceSettlementService';
 
 /**
  * Twilio Call Status Callback Webhook Endpoint.
@@ -333,6 +334,28 @@ export async function POST(request: Request) {
         }
       } else {
         console.warn('[Twilio Status Callback] Could not resolve targetCallId or organization_id for settlement:', { targetCallId, targetOrgId });
+      }
+    }
+
+    // Authoritative Prepaid Telecom Usage Settlement / Release for Inbound Calls
+    if (isRecordInbound && ['completed', 'no-answer', 'busy', 'canceled', 'failed'].includes(dbStatus)) {
+      if (callSid) {
+        try {
+          const inboundSettlementRes = await InboundVoiceSettlementService.processInboundCallStatusCallback(adminSupabase, {
+            callSid,
+            parentCallSid,
+            dialCallSid: rawDialCallSid,
+            callStatus: dbStatus,
+            dialCallStatus: rawDialCallStatus,
+            callDuration: dialCallDurationStr || callDurationStr,
+            dialCallDuration: dialCallDurationStr,
+            sequenceNumber: params.SequenceNumber || params.sequenceNumber,
+            providerPrice: params.Price || params.price,
+          });
+          console.log('[Twilio Status Callback] Inbound voice usage settlement result:', inboundSettlementRes);
+        } catch (inboundSettleErr: any) {
+          console.error('[Twilio Status Callback] Error executing inbound usage settlement:', inboundSettleErr.message || inboundSettleErr);
+        }
       }
     }
 

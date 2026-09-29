@@ -3,6 +3,7 @@ import twilio from 'twilio';
 import { validateTwilioRequest } from '@/lib/twilio/signature';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { normalizeE164PhoneNumber } from '@/lib/utils';
+import { InboundVoiceAuthorizationService } from '@/lib/billing/telecom/inboundVoiceAuthorizationService';
 
 /**
  * Inbound Voice TwiML Webhook Endpoint for Twilio Programmable Voice.
@@ -159,6 +160,31 @@ export async function POST(request: Request) {
           headers: { 'Content-Type': 'text/xml' },
         });
       }
+    }
+
+    // 1.5 Perform server-authoritative inbound prepaid authorization
+    try {
+      await InboundVoiceAuthorizationService.authorizeInboundCall(adminSupabase, {
+        callSid,
+        calledNumber: companyTo,
+        callerNumber: customerFrom,
+      });
+    } catch (authErr: any) {
+      console.warn('[TWILIO INBOUND PREPAID AUTHORIZATION REJECTED]', {
+        callSid,
+        companyTo,
+        error: authErr.message || authErr,
+        statusCode: authErr.statusCode || 400,
+      });
+
+      // On authorization failure (e.g. insufficient Credits in enforce mode or missing rate card),
+      // return <Response><Reject/></Response> immediately as the FIRST and ONLY call-handling verb.
+      const rejectTwiml = new twilio.twiml.VoiceResponse();
+      rejectTwiml.reject();
+      return new NextResponse(rejectTwiml.toString(), {
+        status: 200,
+        headers: { 'Content-Type': 'text/xml' },
+      });
     }
 
     // 2. Fetch organization settings if not loaded
