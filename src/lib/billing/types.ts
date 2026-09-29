@@ -44,8 +44,8 @@ export interface PaymentOperation {
   updatedAt: string;
 }
 
-export type CreditEntryType = 'grant' | 'consumption' | 'expiration' | 'adjustment';
-export type CreditReferenceType = 'payment_operation' | 'invoice' | 'admin_action' | 'promo';
+export type CreditEntryType = 'grant' | 'consumption' | 'expiration' | 'adjustment' | 'usage_reversal';
+export type CreditReferenceType = 'payment_operation' | 'invoice' | 'admin_action' | 'promo' | 'telecom_usage' | 'auto_recharge';
 
 export interface CreditLedgerEntry {
   id: string;
@@ -59,6 +59,65 @@ export interface CreditLedgerEntry {
   referenceId: string | null;
   createdBy: string | null;
   createdAt: string;
+}
+
+export type TelecomServiceType = 'voice_outbound' | 'voice_inbound' | 'sms_outbound' | 'sms_inbound' | 'mms_outbound' | 'mms_inbound' | 'other';
+export type TelecomDirection = 'inbound' | 'outbound';
+export type ReservationStatus = 'active' | 'settled' | 'released' | 'expired';
+
+export interface TelecomRetailRateCard {
+  id: string;
+  rateCode: string;
+  serviceType: TelecomServiceType;
+  direction: TelecomDirection;
+  destinationPattern: string;
+  destinationName: string;
+  retailRateMicro: number;
+  wholesaleCostMicro: number;
+  unitType: 'minute' | 'message' | 'event';
+  billingIncrementSeconds: number;
+  minChargeableUnits: number;
+  currency: string;
+  isActive: boolean;
+  effectiveStartAt: string;
+  effectiveEndAt: string | null;
+  metadata: Record<string, any>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TelecomUsageReservation {
+  id: string;
+  internalUsageId: string;
+  organizationId: string;
+  serviceType: TelecomServiceType;
+  direction: TelecomDirection;
+  provider: string;
+  providerResourceId: string | null;
+  rateCardId: string | null;
+  rateSnapshot: Record<string, any>;
+  amountReservedMinor: number;
+  currency: string;
+  status: ReservationStatus;
+  idempotencyKey: string;
+  expiresAt: string;
+  settledAt: string | null;
+  releasedAt: string | null;
+  settlementLedgerId: string | null;
+  actualProviderCostMinor: number | null;
+  actualCustomerChargeMinor: number | null;
+  actualGrossMarginMinor: number | null;
+  metadata: Record<string, any>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TelecomWalletSummary {
+  organizationId: string;
+  fundedBalanceMinor: number;
+  activeReservationsMinor: number;
+  availableBalanceMinor: number;
+  currency: string;
 }
 
 export type BillableResourceType = 'phone_number' | 'seat' | 'addon';
