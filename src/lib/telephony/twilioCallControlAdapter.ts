@@ -25,6 +25,8 @@ export interface ActiveCallAllowanceResult {
   success: boolean;
   effectiveTimeLimitSeconds: number;
   statusClassification: ProviderResultClassification;
+  providerAccepted: boolean;
+  dialExtensionEmpiricallyConfirmed: boolean;
   isMock: boolean;
   rawResponse?: any;
   errorDetails?: string;
@@ -45,6 +47,7 @@ export interface ActiveCallTerminateResult {
 export interface ActiveCallFetchParams {
   callSid: string;
   expectedTimeLimitSeconds?: number;
+  maxObservations?: number;
 }
 
 export interface ActiveCallFetchResult {
@@ -142,6 +145,8 @@ export class MockTwilioCallControlAdapter implements TwilioCallControlAdapter {
         success: true,
         effectiveTimeLimitSeconds: params.newTimeLimitSeconds,
         statusClassification: 'DEFINITE_SUCCESS',
+        providerAccepted: true,
+        dialExtensionEmpiricallyConfirmed: false,
         isMock: true,
         rawResponse: { callSid: params.callSid, timeLimit: params.newTimeLimitSeconds, status: 'in-progress' },
       };
@@ -152,6 +157,8 @@ export class MockTwilioCallControlAdapter implements TwilioCallControlAdapter {
         success: true,
         effectiveTimeLimitSeconds: params.newTimeLimitSeconds,
         statusClassification: 'READBACK_CONFIRMED_SUCCESS',
+        providerAccepted: true,
+        dialExtensionEmpiricallyConfirmed: false,
         isMock: true,
       };
     }
@@ -161,6 +168,8 @@ export class MockTwilioCallControlAdapter implements TwilioCallControlAdapter {
         success: false,
         effectiveTimeLimitSeconds: 0,
         statusClassification: 'READBACK_CONFIRMED_ABSENT_OR_UNCHANGED',
+        providerAccepted: false,
+        dialExtensionEmpiricallyConfirmed: false,
         isMock: true,
         errorDetails: 'Readback confirmed call duration unchanged',
       };
@@ -171,6 +180,8 @@ export class MockTwilioCallControlAdapter implements TwilioCallControlAdapter {
         success: false,
         effectiveTimeLimitSeconds: 0,
         statusClassification: configuredBehavior,
+        providerAccepted: false,
+        dialExtensionEmpiricallyConfirmed: false,
         isMock: true,
         errorDetails: 'Mock Provider Rejected Call Resource Update (400)',
       };
@@ -181,6 +192,8 @@ export class MockTwilioCallControlAdapter implements TwilioCallControlAdapter {
         success: false,
         effectiveTimeLimitSeconds: 0,
         statusClassification: 'AMBIGUOUS_TIMEOUT_AFTER_DISPATCH',
+        providerAccepted: false,
+        dialExtensionEmpiricallyConfirmed: false,
         isMock: true,
         errorDetails: 'Mock Provider HTTP Gateway Timeout (504)',
       };
@@ -190,6 +203,8 @@ export class MockTwilioCallControlAdapter implements TwilioCallControlAdapter {
       success: true,
       effectiveTimeLimitSeconds: params.newTimeLimitSeconds,
       statusClassification: 'DEFINITE_SUCCESS',
+      providerAccepted: true,
+      dialExtensionEmpiricallyConfirmed: false,
       isMock: true,
     };
   }
@@ -217,6 +232,7 @@ export class MockTwilioCallControlAdapter implements TwilioCallControlAdapter {
 /**
  * Real Twilio Call Control Adapter implementation behind multi-gated safety.
  * Strategy tag: UNVERIFIED_FOR_ACTIVE_DIAL_EXTENSION
+ * Disables SDK-level automatic retries (autoRetry: false, maxRetries: 0).
  */
 export class RealTwilioCallControlAdapter implements TwilioCallControlAdapter {
   private client: twilio.Twilio | null = null;
@@ -225,17 +241,24 @@ export class RealTwilioCallControlAdapter implements TwilioCallControlAdapter {
     const accountSid = process.env.TWILIO_ACCOUNT_SID;
     const authToken = process.env.TWILIO_AUTH_TOKEN;
     if (accountSid && authToken) {
-      this.client = twilio(accountSid, authToken);
+      // Disables transparent SDK-level mutation retries
+      this.client = twilio(accountSid, authToken, {
+        timeout: 10000,
+        autoRetry: false,
+        maxRetries: 0,
+      });
     }
   }
 
   async extendActiveCallAllowance(params: ActiveCallAllowanceParams): Promise<ActiveCallAllowanceResult> {
-    // 1. MASTER GATE & SCOPED MUTATION GATE CHECK
+    // 1. PRE-DISPATCH SAFETY & GATE CHECKS (Definite Pre-Dispatch Failures)
     if (!isProviderMutationGateEnabled()) {
       return {
         success: false,
         effectiveTimeLimitSeconds: 0,
         statusClassification: 'DEFINITE_PRE_DISPATCH_FAILURE',
+        providerAccepted: false,
+        dialExtensionEmpiricallyConfirmed: false,
         isMock: false,
         errorDetails: 'MASTER_MUTATION_GATE_DISABLED: TELECOM_ACTIVE_CALL_PROVIDER_MUTATIONS_ENABLED is false',
       };
@@ -246,12 +269,13 @@ export class RealTwilioCallControlAdapter implements TwilioCallControlAdapter {
         success: false,
         effectiveTimeLimitSeconds: 0,
         statusClassification: 'DEFINITE_PRE_DISPATCH_FAILURE',
+        providerAccepted: false,
+        dialExtensionEmpiricallyConfirmed: false,
         isMock: false,
         errorDetails: 'SCOPED_MUTATION_GATE_DISABLED: TELECOM_EXPERIMENT_SCOPE_EXTEND_ALLOWANCE is false',
       };
     }
 
-    // 2. PRE-DISPATCH LEASE SAFETY VALIDATION
     if (params.remainingLeaseSeconds !== undefined) {
       const leaseSafety = validatePreDispatchLeaseSafety({ remainingLeaseSeconds: params.remainingLeaseSeconds });
       if (!leaseSafety.safe) {
@@ -259,6 +283,8 @@ export class RealTwilioCallControlAdapter implements TwilioCallControlAdapter {
           success: false,
           effectiveTimeLimitSeconds: 0,
           statusClassification: 'DEFINITE_PRE_DISPATCH_FAILURE',
+          providerAccepted: false,
+          dialExtensionEmpiricallyConfirmed: false,
           isMock: false,
           errorDetails: `INSUFFICIENT_LEASE_REMAINING: Lease remaining (${params.remainingLeaseSeconds}s) < required (${leaseSafety.requiredSafetySeconds}s)`,
         };
@@ -270,12 +296,14 @@ export class RealTwilioCallControlAdapter implements TwilioCallControlAdapter {
         success: false,
         effectiveTimeLimitSeconds: 0,
         statusClassification: 'DEFINITE_PRE_DISPATCH_FAILURE',
+        providerAccepted: false,
+        dialExtensionEmpiricallyConfirmed: false,
         isMock: false,
         errorDetails: 'TWILIO_CLIENT_NOT_INITIALIZED: Missing Account SID or Auth Token',
       };
     }
 
-    // 3. EXECUTE BOUNDED TWILIO REST API CALL (timeLimit update on active Call Resource)
+    // 2. EXECUTE BOUNDED TWILIO REST API CALL (POST /Calls/{CallSid})
     try {
       const timeoutMs = 10000; // 10s request timeout
       const updatePromise = this.client.calls(params.callSid).update({
@@ -288,32 +316,42 @@ export class RealTwilioCallControlAdapter implements TwilioCallControlAdapter {
 
       const response: any = await Promise.race([updatePromise, timeoutPromise]);
 
+      // HTTP 200 OK proves provider accepted update request, but NOT empirical Dial extension verification
       return {
         success: true,
         effectiveTimeLimitSeconds: params.newTimeLimitSeconds,
         statusClassification: 'DEFINITE_SUCCESS',
+        providerAccepted: true,
+        dialExtensionEmpiricallyConfirmed: false, // Must be empirically observed in Level 2B bridge cross
         isMock: false,
         rawResponse: { sid: response.sid, status: response.status, duration: response.duration },
       };
     } catch (err: any) {
       console.warn(`[RealTwilioCallControlAdapter] Extension dispatch error for ${params.callSid}: ${err.message}`);
 
-      if (err.message.includes('TWILIO_API_TIMEOUT_10S') || err.status === 504 || err.code === 20404) {
+      // Explicit HTTP 4xx authoritatively rejected by Twilio API before socket mutation
+      if (err.status >= 400 && err.status < 500) {
         return {
           success: false,
           effectiveTimeLimitSeconds: 0,
-          statusClassification: 'AMBIGUOUS_TIMEOUT_AFTER_DISPATCH',
+          statusClassification: 'DEFINITE_PROVIDER_REJECTION',
+          providerAccepted: false,
+          dialExtensionEmpiricallyConfirmed: false,
           isMock: false,
-          errorDetails: err.message,
+          errorDetails: `HTTP_${err.status}_${err.message}`,
         };
       }
 
+      // Once request MAY have reached network socket (timeout, 5xx, ECONNRESET, AbortError, connection loss):
+      // MUST BE CLASSIFIED AS AMBIGUOUS_TIMEOUT_AFTER_DISPATCH. ZERO IMMEDIATE ROLLBACK.
       return {
         success: false,
         effectiveTimeLimitSeconds: 0,
-        statusClassification: 'DEFINITE_PROVIDER_REJECTION',
+        statusClassification: 'AMBIGUOUS_TIMEOUT_AFTER_DISPATCH',
+        providerAccepted: false,
+        dialExtensionEmpiricallyConfirmed: false,
         isMock: false,
-        errorDetails: err.message,
+        errorDetails: err.message || 'POST_DISPATCH_NETWORK_AMBIGUITY',
       };
     }
   }
@@ -363,7 +401,6 @@ export class RealTwilioCallControlAdapter implements TwilioCallControlAdapter {
   }
 
   async fetchActiveCallState(params: ActiveCallFetchParams): Promise<ActiveCallFetchResult> {
-    // Readback is read-only (no mutation gate required)
     if (!this.client) {
       return {
         callSid: params.callSid,
@@ -377,7 +414,22 @@ export class RealTwilioCallControlAdapter implements TwilioCallControlAdapter {
     try {
       const call = await this.client.calls(params.callSid).fetch();
       const currentDurationSec = parseInt(call.duration || '0', 10);
-      const isConfirmed = params.expectedTimeLimitSeconds ? currentDurationSec >= params.expectedTimeLimitSeconds : call.status === 'in-progress';
+
+      // Eventual-consistency handling: Single stale GET does NOT prove mutation absent if call is in-progress
+      if (params.expectedTimeLimitSeconds && currentDurationSec < params.expectedTimeLimitSeconds && call.status === 'in-progress') {
+        return {
+          callSid: params.callSid,
+          status: call.status,
+          timeLimitSeconds: currentDurationSec,
+          statusClassification: 'AMBIGUOUS_TIMEOUT_AFTER_DISPATCH', // Stale readback stays ambiguous pending further budget
+          isMock: false,
+          errorDetails: 'EVENTUAL_CONSISTENCY_READBACK_PENDING: Readback duration < expected boundary',
+        };
+      }
+
+      const isConfirmed = params.expectedTimeLimitSeconds
+        ? currentDurationSec >= params.expectedTimeLimitSeconds
+        : call.status === 'in-progress';
 
       return {
         callSid: params.callSid,

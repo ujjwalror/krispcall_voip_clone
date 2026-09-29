@@ -2,6 +2,7 @@
 // PUBLIC SAAS PHASE 13.4.3B.2E — LEVEL 2A READ-ONLY PREFLIGHT HARNESS
 // Read-only environment, credential, capacity, safety budget, and cost verification.
 // STRICT INVARIANT: ZERO REAL CALLS, ZERO MUTATIONS, ZERO DB WRITES.
+// NO EXAMPLE PRICE FALLBACKS (MUST PROVIDE VERIFIED WHOLESALE PRICING DATA).
 // ============================================================================
 
 import {
@@ -26,6 +27,8 @@ export interface Level2APreflightOptions {
   authToken?: string;
   controlledDestination?: string;
   ownedTestNumber?: string;
+  verifiedWholesaleRateCentsPerMinute?: number;
+  verifiedWholesaleBillingIncrementSeconds?: number;
   maxAuthorizedBudgetMinor?: number;
   experimentLeaseDurationSeconds?: number;
   initialTestLimitSeconds?: number;
@@ -99,7 +102,7 @@ export async function runLevel2APreflight(
   const extendScope = isExtendAllowanceScopeEnabled();
   const terminateScope = isTerminateCallScopeEnabled();
   checks.providerMutationGates = {
-    pass: true, // Read-only preflight reports gate status
+    pass: true, // Read-only preflight reports gate status without mutating
     details: `MasterGate=${masterGate}, ExtendScope=${extendScope}, TerminateScope=${terminateScope}`,
   };
 
@@ -124,25 +127,53 @@ export async function runLevel2APreflight(
   };
   if (!leaseSafety.safe) overallPass = false;
 
-  // 8. CONSERVATIVE MAXIMUM COST DERIVATION & BUDGET CHECK
-  // Estimate max cost: 90s max call duration = 2 billing minutes @ $0.02/min = $0.04 (4 cents)
-  const maxDurationMinutes = Math.ceil(extendedLimitSec / 60);
-  const estimatedMinuteRateMinor = 3; // 3 cents per minute conservative PSTN rate
-  const calculatedMaxCostMinor = maxDurationMinutes * estimatedMinuteRateMinor;
+  // 8. STRICT PROVIDER WHOLESALE COST & BILLING INCREMENT VERIFICATION
+  // NO EXAMPLE PRICE FALLBACKS PERMITTED. Must be explicitly verified from options or verified env.
+  const verifiedRateCentsPerMin =
+    options.verifiedWholesaleRateCentsPerMinute ??
+    (process.env.LEVEL2_VERIFIED_WHOLESALE_RATE_CENTS_PER_MIN
+      ? parseFloat(process.env.LEVEL2_VERIFIED_WHOLESALE_RATE_CENTS_PER_MIN)
+      : undefined);
+
+  const verifiedIncrementSec =
+    options.verifiedWholesaleBillingIncrementSeconds ??
+    (process.env.LEVEL2_VERIFIED_WHOLESALE_INCREMENT_SEC
+      ? parseInt(process.env.LEVEL2_VERIFIED_WHOLESALE_INCREMENT_SEC, 10)
+      : undefined);
+
+  let calculatedMaxCostMinor = 0;
   const authorizedBudgetMinor = options.maxAuthorizedBudgetMinor ?? (parseInt(process.env.LEVEL_2_MAX_PROVIDER_COST_MINOR || '10', 10));
 
-  const budgetPass = calculatedMaxCostMinor <= authorizedBudgetMinor;
-  checks.providerCostBudget = {
-    pass: budgetPass,
-    details: budgetPass
-      ? `Calculated max cost (${calculatedMaxCostMinor}c) <= authorized budget (${authorizedBudgetMinor}c).`
-      : `COST_EXCEEDS_BUDGET: Calculated max cost (${calculatedMaxCostMinor}c) > authorized budget (${authorizedBudgetMinor}c).`,
-  };
-  if (!budgetPass) overallPass = false;
+  if (verifiedRateCentsPerMin === undefined || verifiedIncrementSec === undefined || verifiedIncrementSec <= 0) {
+    checks.providerCostVerified = {
+      pass: false,
+      details: 'PROVIDER_COST_NOT_VERIFIED: No verified wholesale provider price or billing increment available. Example fallbacks forbidden.',
+    };
+    overallPass = false;
+  } else {
+    // Calculate cost based on conservative provider billing increments
+    const totalIntervals = Math.ceil(extendedLimitSec / verifiedIncrementSec);
+    const costPerIntervalCents = (verifiedRateCentsPerMin * verifiedIncrementSec) / 60;
+    calculatedMaxCostMinor = Math.ceil(totalIntervals * costPerIntervalCents);
+
+    checks.providerCostVerified = {
+      pass: true,
+      details: `Verified wholesale rate: ${verifiedRateCentsPerMin}c/min, increment: ${verifiedIncrementSec}s. Max cost: ${calculatedMaxCostMinor}c.`,
+    };
+
+    const budgetPass = calculatedMaxCostMinor <= authorizedBudgetMinor;
+    checks.providerCostBudget = {
+      pass: budgetPass,
+      details: budgetPass
+        ? `Calculated max cost (${calculatedMaxCostMinor}c) <= authorized budget (${authorizedBudgetMinor}c).`
+        : `COST_EXCEEDS_BUDGET: Calculated max cost (${calculatedMaxCostMinor}c) > authorized budget (${authorizedBudgetMinor}c).`,
+    };
+    if (!budgetPass) overallPass = false;
+  }
 
   const status = overallPass ? 'LEVEL_2A_PREFLIGHT_PASS' : 'LEVEL_2A_PREFLIGHT_FAIL';
   const summary = overallPass
-    ? `Level 2A Read-Only Preflight PASSED. All credentials, safety budgets (${expLeaseSec}s lease), and cost bounds (${calculatedMaxCostMinor}c <= ${authorizedBudgetMinor}c) verified.`
+    ? `Level 2A Read-Only Preflight PASSED. All credentials, safety budgets (${expLeaseSec}s lease), and verified cost bounds (${calculatedMaxCostMinor}c <= ${authorizedBudgetMinor}c) verified.`
     : `Level 2A Read-Only Preflight FAILED. Inspect checks object for details. Zero calls placed.`;
 
   return {
