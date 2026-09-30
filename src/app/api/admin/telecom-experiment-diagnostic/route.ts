@@ -70,7 +70,7 @@ export async function GET(request: NextRequest) {
     });
   } catch (error: any) {
     return NextResponse.json(
-      { error: 'Failed to retrieve experiment key version diagnostic.' },
+      { error: error?.message || 'Failed to retrieve experiment key version diagnostic.' },
       { status: 500 }
     );
   }
