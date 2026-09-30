@@ -1,5 +1,6 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 import { normalizeE164PhoneNumber } from '@/lib/utils';
+import { computeDestinationFingerprint } from '@/lib/telephony/experimentCrypto';
 
 export interface CreateOutboundCallParams {
   userId: string;
@@ -285,14 +286,15 @@ export async function executeOutboundCallSetup(
       throw new OutboundCallError('Failed to create database call log.', 500);
     }
 
-    // 8. Atomically consume any armed experiment authorization for this org & destination
+    // 8. Atomically consume any armed experiment authorization for this org & destination fingerprint
     try {
+      const destFingerprint = computeDestinationFingerprint(normalizedDestination);
       const { data: expConsumeResult } = await (adminSupabase as any).rpc(
         'consume_telecom_experiment_authorization_atomic',
         {
           p_organization_id: organizationId,
           p_call_id: callRecord.id,
-          p_destination_number: normalizedDestination,
+          p_destination_fingerprint: destFingerprint,
         }
       );
 
