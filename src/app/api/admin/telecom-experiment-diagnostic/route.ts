@@ -1,5 +1,6 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { createClient } from '@supabase/supabase-js';
 import { getExperimentKeyVersion } from '@/lib/telephony/experimentCrypto';
 
 /**
@@ -8,9 +9,22 @@ import { getExperimentKeyVersion } from '@/lib/telephony/experimentCrypto';
  * Strictly requires authenticated Owner or Admin role session.
  * Returns ONLY the 8-character non-secret key version.
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const supabase = await createServerSupabaseClient();
+    let supabase;
+    const authHeader = request.headers.get('authorization');
+    const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
+
+    if (bearerToken) {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+      const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+      supabase = createClient(supabaseUrl, supabaseAnonKey, {
+        global: { headers: { Authorization: `Bearer ${bearerToken}` } },
+        auth: { persistSession: false },
+      });
+    } else {
+      supabase = await createServerSupabaseClient();
+    }
 
     const {
       data: { user },
