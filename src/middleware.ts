@@ -36,7 +36,7 @@ export async function middleware(request: NextRequest) {
 
   const pathname = request.nextUrl.pathname;
 
-  // Exclude Stripe webhook endpoint, Twilio server webhooks, extension API endpoints, and public invitation verification/acceptance routes from browser authentication redirects
+  // Exclude Stripe webhook, Twilio server webhooks, extension API, diagnostic endpoint, and public invitation routes from browser authentication redirects
   if (
     (request.method === 'POST' && pathname === '/api/webhooks/stripe') ||
     pathname.startsWith('/api/twilio/voice/') ||
@@ -44,7 +44,8 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/api/twilio/recording') ||
     pathname.startsWith('/api/extension') ||
     pathname.startsWith('/api/invitations/verify') ||
-    pathname.startsWith('/api/invitations/accept')
+    pathname.startsWith('/api/invitations/accept') ||
+    pathname.startsWith('/api/admin/telecom-experiment-diagnostic')
   ) {
     return NextResponse.next();
   }
