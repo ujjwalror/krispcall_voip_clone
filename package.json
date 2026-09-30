@@ -9,6 +9,7 @@
     "start": "next start",
     "worker:telecom-voice-extension": "tsx src/workers/telecomVoiceExtensionWorker.ts",
     "worker:telecom-reconciliation": "tsx src/workers/telecomReconciliationWorker.ts",
+    "worker:telecom-termination": "tsx src/workers/telecomTerminationWorker.ts",
     "lint": "eslint"
   },
   "dependencies": {
