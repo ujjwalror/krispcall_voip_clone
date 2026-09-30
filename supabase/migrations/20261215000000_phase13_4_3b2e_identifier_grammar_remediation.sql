@@ -1,9 +1,9 @@
 -- supabase/migrations/20261215000000_phase13_4_3b2e_identifier_grammar_remediation.sql
--- Phase 13.4.3B.2E Identifier Grammar Remediation Migration
+-- Phase 13.4.3B.2E Identifier Grammar Remediation Migration (Corrected Signatures & Explicit REVOKE/GRANT Arguments)
 -- Additive migration updating validation regex for internal_usage_id in financial RPCs
 -- to allow canonical colon-delimited identifiers (e.g. "call:outbound:<dbCallId>")
--- with pattern ^[a-zA-Z0-9:_\-]+$ while preserving all search_path, SECURITY DEFINER,
--- RLS, length limits, idempotency, and service-role privilege restrictions.
+-- with pattern ^[a-zA-Z0-9:_\-]+$ while preserving exact production signatures,
+-- search_path, SECURITY DEFINER, RLS, length limits, idempotency, and service-role privileges.
 
 BEGIN;
 
@@ -17,7 +17,7 @@ CREATE OR REPLACE FUNCTION public.create_telecom_usage_reservation_atomic(
   p_idempotency_key TEXT,
   p_expires_in_seconds INT DEFAULT 1800,
   p_currency TEXT DEFAULT 'USD',
-  p_provider TEXT DEFAULT NULL,
+  p_provider TEXT DEFAULT 'twilio',
   p_provider_resource_id TEXT DEFAULT NULL,
   p_rate_card_id UUID DEFAULT NULL,
   p_rate_snapshot JSONB DEFAULT '{}'::jsonb,
@@ -32,11 +32,15 @@ DECLARE
   v_clean_usage_id TEXT;
   v_clean_idempotency TEXT;
   v_clean_currency TEXT;
+  v_clean_provider TEXT;
   v_existing_op public.telecom_financial_operation_idempotency;
+  v_existing_res public.telecom_usage_reservations;
   v_funded_balance BIGINT := 0;
+  v_wallet_currency TEXT := 'USD';
   v_active_reservations BIGINT := 0;
   v_available_balance BIGINT := 0;
-  v_res_id UUID;
+  v_is_restricted BOOLEAN := FALSE;
+  v_new_res public.telecom_usage_reservations;
   v_expires_at TIMESTAMPTZ;
   v_req_payload JSONB;
   v_resp_payload JSONB;
@@ -44,6 +48,7 @@ BEGIN
   v_clean_usage_id := pg_catalog.btrim(COALESCE(p_internal_usage_id, ''));
   v_clean_idempotency := pg_catalog.btrim(COALESCE(p_idempotency_key, ''));
   v_clean_currency := pg_catalog.upper(pg_catalog.btrim(COALESCE(p_currency, 'USD')));
+  v_clean_provider := pg_catalog.lower(pg_catalog.btrim(COALESCE(p_provider, 'twilio')));
 
   IF p_organization_id IS NULL THEN
     RAISE EXCEPTION 'INVALID_ARGUMENT: p_organization_id is required.';
@@ -69,6 +74,13 @@ BEGIN
 
   PERFORM id FROM public.organizations WHERE id = p_organization_id FOR UPDATE;
 
+  SELECT is_restricted INTO v_is_restricted
+  FROM public.organizations WHERE id = p_organization_id;
+
+  IF v_is_restricted IS TRUE THEN
+    RAISE EXCEPTION 'ORGANIZATION_RESTRICTED: Organization % is suspended or restricted.', p_organization_id USING ERRCODE = '23514';
+  END IF;
+
   SELECT * INTO v_existing_op
   FROM public.telecom_financial_operation_idempotency
   WHERE organization_id = p_organization_id
@@ -83,20 +95,39 @@ BEGIN
     RETURN v_existing_op.response_payload || jsonb_build_object('is_duplicate', true);
   END IF;
 
+  SELECT * INTO v_existing_res
+  FROM public.telecom_usage_reservations
+  WHERE organization_id = p_organization_id
+    AND internal_usage_id = v_clean_usage_id
+    AND status = 'active';
+
+  IF v_existing_res.id IS NOT NULL THEN
+    RAISE EXCEPTION 'ACTIVE_RESERVATION_EXISTS: Active reservation % already exists for internal usage %',
+      v_existing_res.id, v_clean_usage_id USING ERRCODE = '23505';
+  END IF;
+
   v_req_payload := jsonb_build_object(
     'organization_id', p_organization_id,
     'internal_usage_id', v_clean_usage_id,
     'service_type', p_service_type,
     'direction', p_direction,
     'amount_reserved_minor', p_amount_reserved_minor,
-    'currency', v_clean_currency
+    'currency', v_clean_currency,
+    'provider', v_clean_provider
   );
 
-  SELECT balance_after_minor INTO v_funded_balance
+  SELECT balance_after_minor, currency INTO v_funded_balance, v_wallet_currency
   FROM public.billing_credit_ledger
   WHERE organization_id = p_organization_id
   ORDER BY created_at DESC, id DESC LIMIT 1;
+
   v_funded_balance := COALESCE(v_funded_balance, 0);
+  v_wallet_currency := COALESCE(v_wallet_currency, 'USD');
+
+  IF v_clean_currency <> v_wallet_currency THEN
+    RAISE EXCEPTION 'CURRENCY_MISMATCH: Reservation currency % does not match wallet currency %',
+      v_clean_currency, v_wallet_currency;
+  END IF;
 
   SELECT COALESCE(SUM(amount_reserved_minor), 0) INTO v_active_reservations
   FROM public.telecom_usage_reservations
@@ -116,11 +147,12 @@ BEGIN
     provider_resource_id, rate_card_id, rate_snapshot, amount_reserved_minor,
     currency, status, idempotency_key, expires_at, metadata
   ) VALUES (
-    p_organization_id, v_clean_usage_id, p_service_type, p_direction, p_provider,
+    p_organization_id, v_clean_usage_id, p_service_type, p_direction, v_clean_provider,
     p_provider_resource_id, p_rate_card_id, COALESCE(p_rate_snapshot, '{}'::jsonb), p_amount_reserved_minor,
     v_clean_currency, 'active', v_clean_idempotency, v_expires_at, COALESCE(p_metadata, '{}'::jsonb)
-  ) RETURNING id INTO v_res_id;
+  ) RETURNING * INTO v_new_res;
 
+  v_res_id := v_new_res.id;
   v_active_reservations := v_active_reservations + p_amount_reserved_minor;
 
   v_resp_payload := jsonb_build_object(
@@ -145,8 +177,8 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.create_telecom_usage_reservation_atomic FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.create_telecom_usage_reservation_atomic TO service_role;
+REVOKE ALL ON FUNCTION public.create_telecom_usage_reservation_atomic(UUID, TEXT, TEXT, TEXT, BIGINT, TEXT, INT, TEXT, TEXT, TEXT, UUID, JSONB, JSONB) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.create_telecom_usage_reservation_atomic(UUID, TEXT, TEXT, TEXT, BIGINT, TEXT, INT, TEXT, TEXT, TEXT, UUID, JSONB, JSONB) TO service_role;
 
 -- 2. Redefine extend_telecom_usage_reservation_atomic
 CREATE OR REPLACE FUNCTION public.extend_telecom_usage_reservation_atomic(
@@ -279,17 +311,18 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.extend_telecom_usage_reservation_atomic FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.extend_telecom_usage_reservation_atomic TO service_role;
+REVOKE ALL ON FUNCTION public.extend_telecom_usage_reservation_atomic(UUID, TEXT, BIGINT, TEXT, INT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.extend_telecom_usage_reservation_atomic(UUID, TEXT, BIGINT, TEXT, INT) TO service_role;
 
--- 3. Redefine settle_telecom_usage_reservation_atomic
+-- 3. Redefine settle_telecom_usage_reservation_atomic (Matching exact 7-parameter production signature)
 CREATE OR REPLACE FUNCTION public.settle_telecom_usage_reservation_atomic(
   p_organization_id UUID,
   p_internal_usage_id TEXT,
-  p_actual_customer_charge_minor BIGINT,
+  p_actual_retail_charge_minor BIGINT,
   p_idempotency_key TEXT,
-  p_actual_provider_cost_minor BIGINT DEFAULT NULL,
-  p_settlement_description TEXT DEFAULT 'Telecom usage settlement'
+  p_provider_wholesale_cost_minor BIGINT DEFAULT NULL,
+  p_provider_resource_id TEXT DEFAULT NULL,
+  p_description TEXT DEFAULT 'Telecom usage settlement'
 )
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -302,7 +335,7 @@ DECLARE
   v_existing_op public.telecom_financial_operation_idempotency;
   v_res public.telecom_usage_reservations;
   v_funded_balance BIGINT := 0;
-  v_new_funded_balance BIGINT := 0;
+  v_new_funded BIGINT := 0;
   v_active_reservations BIGINT := 0;
   v_ledger_id UUID;
   v_margin BIGINT := NULL;
@@ -321,8 +354,8 @@ BEGIN
   IF length(v_clean_idempotency) = 0 OR length(v_clean_idempotency) > 128 OR v_clean_idempotency !~ '^[a-zA-Z0-9:_\-]+$' THEN
     RAISE EXCEPTION 'INVALID_IDEMPOTENCY_KEY: Must be non-blank alphanumeric string max 128 chars.';
   END IF;
-  IF p_actual_customer_charge_minor < 0 THEN
-    RAISE EXCEPTION 'INVALID_CUSTOMER_CHARGE: p_actual_customer_charge_minor cannot be negative.';
+  IF p_actual_retail_charge_minor < 0 THEN
+    RAISE EXCEPTION 'INVALID_CUSTOMER_CHARGE: p_actual_retail_charge_minor cannot be negative.';
   END IF;
 
   PERFORM id FROM public.organizations WHERE id = p_organization_id FOR UPDATE;
@@ -334,7 +367,7 @@ BEGIN
     AND idempotency_key = v_clean_idempotency;
 
   IF v_existing_op.id IS NOT NULL THEN
-    IF v_existing_op.request_payload->>'actual_customer_charge_minor' <> p_actual_customer_charge_minor::TEXT OR
+    IF v_existing_op.request_payload->>'actual_retail_charge_minor' <> p_actual_retail_charge_minor::TEXT OR
        v_existing_op.request_payload->>'internal_usage_id' <> v_clean_usage_id THEN
       RAISE EXCEPTION 'IDEMPOTENCY_CONFLICT: Payload parameters conflict for settlement %', v_clean_idempotency;
     END IF;
@@ -352,16 +385,17 @@ BEGIN
     RAISE EXCEPTION 'ACTIVE_RESERVATION_NOT_FOUND: No active reservation found for internal usage %', v_clean_usage_id;
   END IF;
 
-  IF p_actual_customer_charge_minor > v_res.amount_reserved_minor THEN
+  IF p_actual_retail_charge_minor > v_res.amount_reserved_minor THEN
     RAISE EXCEPTION 'SETTLEMENT_EXCEEDS_RESERVATION: Settlement charge % exceeds reserved exposure %',
-      p_actual_customer_charge_minor, v_res.amount_reserved_minor USING ERRCODE = '23514';
+      p_actual_retail_charge_minor, v_res.amount_reserved_minor USING ERRCODE = '23514';
   END IF;
 
   v_req_payload := jsonb_build_object(
     'organization_id', p_organization_id,
     'internal_usage_id', v_clean_usage_id,
-    'actual_customer_charge_minor', p_actual_customer_charge_minor,
-    'actual_provider_cost_minor', p_actual_provider_cost_minor,
+    'actual_retail_charge_minor', p_actual_retail_charge_minor,
+    'provider_wholesale_cost_minor', p_provider_wholesale_cost_minor,
+    'provider_resource_id', p_provider_resource_id,
     'amount_reserved_minor', v_res.amount_reserved_minor
   );
 
@@ -371,32 +405,33 @@ BEGIN
   ORDER BY created_at DESC, id DESC LIMIT 1;
   v_funded_balance := COALESCE(v_funded_balance, 0);
 
-  IF p_actual_customer_charge_minor > 0 THEN
-    v_new_funded_balance := v_funded_balance - p_actual_customer_charge_minor;
+  IF p_actual_retail_charge_minor > 0 THEN
+    v_new_funded := v_funded_balance - p_actual_retail_charge_minor;
     INSERT INTO public.billing_credit_ledger (
       organization_id, entry_type, amount_minor, balance_after_minor, currency,
       description, reference_type, reference_id
     ) VALUES (
-      p_organization_id, 'telecom_usage', -p_actual_customer_charge_minor, v_new_funded_balance,
-      v_res.currency, COALESCE(p_settlement_description, 'Telecom usage settlement'),
+      p_organization_id, 'telecom_usage', -p_actual_retail_charge_minor, v_new_funded,
+      v_res.currency, COALESCE(p_description, 'Telecom usage settlement'),
       'telecom_reservation', v_res.id::text
     ) RETURNING id INTO v_ledger_id;
   ELSE
-    v_new_funded_balance := v_funded_balance;
+    v_new_funded := v_funded_balance;
     v_ledger_id := NULL;
   END IF;
 
-  IF p_actual_provider_cost_minor IS NOT NULL THEN
-    v_margin := p_actual_customer_charge_minor - p_actual_provider_cost_minor;
+  IF p_provider_wholesale_cost_minor IS NOT NULL THEN
+    v_margin := p_actual_retail_charge_minor - p_provider_wholesale_cost_minor;
   END IF;
 
   UPDATE public.telecom_usage_reservations
   SET status = 'settled',
       settled_at = pg_catalog.now(),
       settlement_ledger_id = v_ledger_id,
-      actual_customer_charge_minor = p_actual_customer_charge_minor,
-      actual_provider_cost_minor = p_actual_provider_cost_minor,
+      actual_customer_charge_minor = p_actual_retail_charge_minor,
+      actual_provider_cost_minor = p_provider_wholesale_cost_minor,
       actual_gross_margin_minor = v_margin,
+      provider_resource_id = COALESCE(p_provider_resource_id, provider_resource_id),
       updated_at = pg_catalog.now()
   WHERE id = v_res.id;
 
@@ -411,12 +446,12 @@ BEGIN
     'ledger_id', v_ledger_id,
     'internal_usage_id', v_clean_usage_id,
     'amount_reserved_minor', v_res.amount_reserved_minor,
-    'actual_customer_charge_minor', p_actual_customer_charge_minor,
-    'actual_provider_cost_minor', p_actual_provider_cost_minor,
+    'actual_customer_charge_minor', p_actual_retail_charge_minor,
+    'actual_provider_cost_minor', p_provider_wholesale_cost_minor,
     'actual_gross_margin_minor', v_margin,
-    'funded_balance_minor', v_new_funded_balance,
+    'funded_balance_minor', v_new_funded,
     'active_reservations_minor', v_active_reservations,
-    'available_balance_minor', GREATEST(0, v_new_funded_balance - v_active_reservations)
+    'available_balance_minor', GREATEST(0, v_new_funded - v_active_reservations)
   );
 
   INSERT INTO public.telecom_financial_operation_idempotency (
@@ -429,15 +464,15 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.settle_telecom_usage_reservation_atomic FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.settle_telecom_usage_reservation_atomic TO service_role;
+REVOKE ALL ON FUNCTION public.settle_telecom_usage_reservation_atomic(UUID, TEXT, BIGINT, TEXT, BIGINT, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.settle_telecom_usage_reservation_atomic(UUID, TEXT, BIGINT, TEXT, BIGINT, TEXT, TEXT) TO service_role;
 
 -- 4. Redefine release_telecom_usage_reservation_atomic
 CREATE OR REPLACE FUNCTION public.release_telecom_usage_reservation_atomic(
   p_organization_id UUID,
   p_internal_usage_id TEXT,
-  p_idempotency_key TEXT,
-  p_release_reason TEXT DEFAULT 'Unused reservation released'
+  p_reason TEXT DEFAULT 'Normal release',
+  p_idempotency_key TEXT DEFAULT NULL
 )
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -463,20 +498,22 @@ BEGIN
   IF length(v_clean_usage_id) = 0 OR length(v_clean_usage_id) > 128 OR v_clean_usage_id !~ '^[a-zA-Z0-9:_\-]+$' THEN
     RAISE EXCEPTION 'INVALID_INTERNAL_USAGE_ID: Must be non-blank alphanumeric string max 128 chars.';
   END IF;
-  IF length(v_clean_idempotency) = 0 OR length(v_clean_idempotency) > 128 OR v_clean_idempotency !~ '^[a-zA-Z0-9:_\-]+$' THEN
+  IF length(v_clean_idempotency) > 0 AND (length(v_clean_idempotency) > 128 OR v_clean_idempotency !~ '^[a-zA-Z0-9:_\-]+$') THEN
     RAISE EXCEPTION 'INVALID_IDEMPOTENCY_KEY: Must be non-blank alphanumeric string max 128 chars.';
   END IF;
 
   PERFORM id FROM public.organizations WHERE id = p_organization_id FOR UPDATE;
 
-  SELECT * INTO v_existing_op
-  FROM public.telecom_financial_operation_idempotency
-  WHERE organization_id = p_organization_id
-    AND operation_type = 'reservation_release'
-    AND idempotency_key = v_clean_idempotency;
+  IF length(v_clean_idempotency) > 0 THEN
+    SELECT * INTO v_existing_op
+    FROM public.telecom_financial_operation_idempotency
+    WHERE organization_id = p_organization_id
+      AND operation_type = 'reservation_release'
+      AND idempotency_key = v_clean_idempotency;
 
-  IF v_existing_op.id IS NOT NULL THEN
-    RETURN v_existing_op.response_payload || jsonb_build_object('is_duplicate', true);
+    IF v_existing_op.id IS NOT NULL THEN
+      RETURN v_existing_op.response_payload || jsonb_build_object('is_duplicate', true);
+    END IF;
   END IF;
 
   SELECT * INTO v_res
@@ -494,7 +531,7 @@ BEGIN
     'organization_id', p_organization_id,
     'internal_usage_id', v_clean_usage_id,
     'released_amount_minor', v_res.amount_reserved_minor,
-    'release_reason', p_release_reason
+    'release_reason', p_reason
   );
 
   UPDATE public.telecom_usage_reservations
@@ -524,18 +561,20 @@ BEGIN
     'available_balance_minor', GREATEST(0, v_funded_balance - v_active_reservations)
   );
 
-  INSERT INTO public.telecom_financial_operation_idempotency (
-    organization_id, operation_type, idempotency_key, internal_usage_id, request_payload, response_payload
-  ) VALUES (
-    p_organization_id, 'reservation_release', v_clean_idempotency, v_clean_usage_id, v_req_payload, v_resp_payload
-  );
+  IF length(v_clean_idempotency) > 0 THEN
+    INSERT INTO public.telecom_financial_operation_idempotency (
+      organization_id, operation_type, idempotency_key, internal_usage_id, request_payload, response_payload
+    ) VALUES (
+      p_organization_id, 'reservation_release', v_clean_idempotency, v_clean_usage_id, v_req_payload, v_resp_payload
+    );
+  END IF;
 
   RETURN v_resp_payload;
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.release_telecom_usage_reservation_atomic FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.release_telecom_usage_reservation_atomic TO service_role;
+REVOKE ALL ON FUNCTION public.release_telecom_usage_reservation_atomic(UUID, TEXT, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.release_telecom_usage_reservation_atomic(UUID, TEXT, TEXT, TEXT) TO service_role;
 
 -- 5. Redefine reverse_telecom_usage_atomic
 CREATE OR REPLACE FUNCTION public.reverse_telecom_usage_atomic(
@@ -543,7 +582,7 @@ CREATE OR REPLACE FUNCTION public.reverse_telecom_usage_atomic(
   p_internal_usage_id TEXT,
   p_reversal_amount_minor BIGINT,
   p_idempotency_key TEXT,
-  p_reversal_reason TEXT DEFAULT 'Telecom usage reversal / refund'
+  p_description TEXT DEFAULT 'Telecom usage reversal'
 )
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -555,8 +594,11 @@ DECLARE
   v_clean_idempotency TEXT;
   v_existing_op public.telecom_financial_operation_idempotency;
   v_res public.telecom_usage_reservations;
+  v_settled_charge BIGINT := 0;
+  v_total_reversed BIGINT := 0;
+  v_remaining_reversible BIGINT := 0;
   v_funded_balance BIGINT := 0;
-  v_new_funded_balance BIGINT := 0;
+  v_new_funded BIGINT := 0;
   v_active_reservations BIGINT := 0;
   v_ledger_id UUID;
   v_req_payload JSONB;
@@ -601,16 +643,26 @@ BEGIN
     RAISE EXCEPTION 'SETTLED_RESERVATION_NOT_FOUND: No settled reservation found for internal usage %', v_clean_usage_id;
   END IF;
 
-  IF p_reversal_amount_minor > COALESCE(v_res.actual_customer_charge_minor, 0) THEN
-    RAISE EXCEPTION 'REVERSAL_EXCEEDS_CHARGE: Reversal % exceeds settled charge %',
-      p_reversal_amount_minor, COALESCE(v_res.actual_customer_charge_minor, 0) USING ERRCODE = '23514';
+  v_settled_charge := COALESCE(v_res.actual_customer_charge_minor, 0);
+
+  SELECT COALESCE(SUM((response_payload->>'reversal_amount_minor')::BIGINT), 0) INTO v_total_reversed
+  FROM public.telecom_financial_operation_idempotency
+  WHERE organization_id = p_organization_id
+    AND operation_type = 'usage_reversal'
+    AND internal_usage_id = v_clean_usage_id;
+
+  v_remaining_reversible := v_settled_charge - v_total_reversed;
+
+  IF p_reversal_amount_minor > v_remaining_reversible THEN
+    RAISE EXCEPTION 'REVERSAL_EXCEEDS_CHARGE: Requested reversal % exceeds remaining reversible balance %',
+      p_reversal_amount_minor, v_remaining_reversible USING ERRCODE = '23514';
   END IF;
 
   v_req_payload := jsonb_build_object(
     'organization_id', p_organization_id,
     'internal_usage_id', v_clean_usage_id,
     'reversal_amount_minor', p_reversal_amount_minor,
-    'reversal_reason', p_reversal_reason
+    'reversal_reason', COALESCE(p_description, 'Telecom usage reversal')
   );
 
   SELECT balance_after_minor INTO v_funded_balance
@@ -619,14 +671,14 @@ BEGIN
   ORDER BY created_at DESC, id DESC LIMIT 1;
   v_funded_balance := COALESCE(v_funded_balance, 0);
 
-  v_new_funded_balance := v_funded_balance + p_reversal_amount_minor;
+  v_new_funded := v_funded_balance + p_reversal_amount_minor;
 
   INSERT INTO public.billing_credit_ledger (
     organization_id, entry_type, amount_minor, balance_after_minor, currency,
     description, reference_type, reference_id
   ) VALUES (
-    p_organization_id, 'usage_reversal', p_reversal_amount_minor, v_new_funded_balance,
-    v_res.currency, COALESCE(p_reversal_reason, 'Telecom usage reversal'),
+    p_organization_id, 'usage_reversal', p_reversal_amount_minor, v_new_funded,
+    v_res.currency, COALESCE(p_description, 'Telecom usage reversal'),
     'telecom_reservation', v_res.id::text
   ) RETURNING id INTO v_ledger_id;
 
@@ -641,9 +693,9 @@ BEGIN
     'ledger_id', v_ledger_id,
     'internal_usage_id', v_clean_usage_id,
     'reversal_amount_minor', p_reversal_amount_minor,
-    'funded_balance_minor', v_new_funded_balance,
+    'funded_balance_minor', v_new_funded,
     'active_reservations_minor', v_active_reservations,
-    'available_balance_minor', GREATEST(0, v_new_funded_balance - v_active_reservations)
+    'available_balance_minor', GREATEST(0, v_new_funded - v_active_reservations)
   );
 
   INSERT INTO public.telecom_financial_operation_idempotency (
@@ -656,7 +708,7 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.reverse_telecom_usage_atomic FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.reverse_telecom_usage_atomic TO service_role;
+REVOKE ALL ON FUNCTION public.reverse_telecom_usage_atomic(UUID, TEXT, BIGINT, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.reverse_telecom_usage_atomic(UUID, TEXT, BIGINT, TEXT, TEXT) TO service_role;
 
 COMMIT;
