@@ -234,23 +234,52 @@ export class VoiceAuthorizationService {
       }
 
       // Step D: Transition experiment authorization CLAIMED -> CONSUMED ONLY after initial financial protection succeeds
-      try {
-        const { computeDestinationFingerprint } = await import('@/lib/telephony/experimentCrypto');
-        const destFingerprint = computeDestinationFingerprint(toNumber);
-        const { data: expConsumeResult } = await (client as any).rpc(
-          'consume_telecom_experiment_authorization_atomic',
-          {
-            p_organization_id: organizationId,
-            p_call_id: dbCallId,
-            p_destination_fingerprint: destFingerprint,
-          }
-        );
+      if (policyConfigOverrides) {
+        try {
+          const { computeDestinationFingerprint } = await import('@/lib/telephony/experimentCrypto');
+          const destFingerprint = computeDestinationFingerprint(toNumber);
+          const { data: expConsumeResult, error: consumeErr } = await (client as any).rpc(
+            'consume_telecom_experiment_authorization_atomic',
+            {
+              p_organization_id: organizationId,
+              p_call_id: dbCallId,
+              p_destination_fingerprint: destFingerprint,
+            }
+          );
 
-        if (expConsumeResult?.consumed) {
+          if (consumeErr || !expConsumeResult?.consumed) {
+            console.error('[VoiceAuthorizationService] Experiment authorization consumption failed post-reservation:', consumeErr || expConsumeResult);
+            // Safe pre-dispatch failure compensation: release reservation hold
+            await VoiceAuthorizationService.compensatePreDispatchFailure(
+              client,
+              organizationId,
+              internalUsageId,
+              dbCallId
+            );
+
+            return {
+              authorized: false,
+              failureReason: 'EXPERIMENT_CONSUMPTION_FAILED',
+              customerMessage: 'Controlled experiment authorization consumption failed. Call terminated before PSTN dispatch.',
+            };
+          }
+
           console.log('[VoiceAuthorizationService] Controlled experiment authorization transitioned CLAIMED -> CONSUMED:', expConsumeResult);
+        } catch (expConsumeErr: any) {
+          console.error('[VoiceAuthorizationService] Exception during experiment authorization consumption:', expConsumeErr.message || expConsumeErr);
+          await VoiceAuthorizationService.compensatePreDispatchFailure(
+            client,
+            organizationId,
+            internalUsageId,
+            dbCallId
+          );
+
+          return {
+            authorized: false,
+            failureReason: 'EXPERIMENT_CONSUMPTION_FAILED',
+            customerMessage: 'Controlled experiment authorization consumption failed. Call terminated before PSTN dispatch.',
+          };
         }
-      } catch (expConsumeErr: any) {
-        console.warn('[VoiceAuthorizationService] Experiment authorization consumption check error:', expConsumeErr.message || expConsumeErr);
       }
 
       return {

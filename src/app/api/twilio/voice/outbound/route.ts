@@ -125,26 +125,65 @@ export async function POST(request: Request) {
       });
     }
 
-    // 3b. Check for consumed server-authoritative experiment policy override for this exact call
+    // 3b. Check for server-authoritative experiment policy override for this exact call (status = 'claimed')
     let policyConfigOverrides: Partial<ExposurePolicyConfig> | undefined = undefined;
+    let isControlledExperiment = false;
 
     try {
+      const { computeDestinationFingerprint } = await import('@/lib/telephony/experimentCrypto');
+      const destFingerprint = computeDestinationFingerprint(validation.normalized);
+
       const { data: expAuthRow } = await (adminSupabase as any)
         .from('telecom_experiment_authorizations')
-        .select('initial_exposure_seconds, max_initial_exposure_seconds, enforcement_mode')
+        .select('id, initial_exposure_seconds, max_initial_exposure_seconds, enforcement_mode, expires_at, claim_expires_at, destination_fingerprint')
         .eq('bound_call_id', dbCallId)
         .eq('organization_id', dbCallRec.organization_id)
-        .eq('status', 'consumed')
+        .eq('destination_fingerprint', destFingerprint)
+        .in('status', ['claimed', 'consumed'])
         .maybeSingle();
 
       if (expAuthRow) {
+        const nowMs = Date.now();
+        const isParentValid = expAuthRow.expires_at && new Date(expAuthRow.expires_at).getTime() > nowMs;
+        const isClaimValid = expAuthRow.status === 'consumed' || (expAuthRow.claim_expires_at && new Date(expAuthRow.claim_expires_at).getTime() > nowMs);
+
+        if (!isParentValid || !isClaimValid) {
+          console.error('[Twilio Outbound Webhook] Controlled experiment authorization claim is stale or expired. Failing closed with ZERO <Dial>:', {
+            dbCallId,
+            authId: expAuthRow.id,
+            status: expAuthRow.status,
+            isParentValid,
+            isClaimValid,
+          });
+
+          await (adminSupabase as any)
+            .from('calls')
+            .update({
+              status: 'failed',
+              ended_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', dbCallId);
+
+          const errResp = new twilio.twiml.VoiceResponse();
+          errResp.say({ voice: 'alice' }, 'Controlled experiment authorization has expired or is invalid. Call cannot be connected.');
+          errResp.hangup();
+          return new NextResponse(errResp.toString(), {
+            status: 200,
+            headers: { 'Content-Type': 'text/xml' },
+          });
+        }
+
+        isControlledExperiment = true;
         policyConfigOverrides = {
           initialExposureSeconds: expAuthRow.initial_exposure_seconds,
           maxInitialExposureSeconds: expAuthRow.max_initial_exposure_seconds,
-          enforcementMode: expAuthRow.enforcement_mode as any,
+          enforcementMode: 'enforce',
         };
-        console.log('[Twilio Outbound Webhook] Trusted server experiment policy override active for call:', {
+
+        console.log('[Twilio Outbound Webhook] Controlled experiment policy override ACTIVE for call:', {
           dbCallId,
+          authId: expAuthRow.id,
           policyConfigOverrides,
         });
       }
@@ -163,6 +202,35 @@ export async function POST(request: Request) {
     });
 
     createdReservationId = authResult.reservationId;
+
+    // Fail-Closed Invariant: Controlled experiment MUST NOT degrade to default shadow_log or unreserved <Dial>
+    if (isControlledExperiment && (!authResult.authorized || !authResult.reservationId)) {
+      console.error('[Twilio Outbound Webhook] Controlled experiment financial authorization or reservation hold FAILED. Failing closed with ZERO <Dial>:', {
+        dbCallId,
+        failureReason: authResult.failureReason,
+      });
+
+      await (adminSupabase as any)
+        .from('calls')
+        .update({
+          status: 'failed',
+          ended_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', dbCallId);
+
+      const failResponse = new twilio.twiml.VoiceResponse();
+      failResponse.say(
+        { voice: 'alice' },
+        'Controlled experiment pre-exposure credit reservation failed. Call terminated before PSTN dispatch.'
+      );
+      failResponse.hangup();
+
+      return new NextResponse(failResponse.toString(), {
+        status: 200,
+        headers: { 'Content-Type': 'text/xml' },
+      });
+    }
 
     // Financial Invariant: AUTHORIZATION FAILURE -> ZERO <Dial> -> ZERO PSTN exposure
     if (!authResult.authorized) {
