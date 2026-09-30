@@ -240,7 +240,12 @@ export class RealTwilioCallControlAdapter implements TwilioCallControlAdapter {
   constructor() {
     const accountSid = process.env.TWILIO_ACCOUNT_SID;
     const authToken = process.env.TWILIO_AUTH_TOKEN;
-    if (accountSid && authToken) {
+    const apiKeySid = process.env.TWILIO_API_KEY_SID;
+    const apiKeySecret = process.env.TWILIO_API_KEY_SECRET;
+
+    if (accountSid && apiKeySid && apiKeySecret) {
+      this.client = twilio(apiKeySid, apiKeySecret, { accountSid, timeout: 10000, autoRetry: false, maxRetries: 0 });
+    } else if (accountSid && authToken) {
       // Disables transparent SDK-level mutation retries
       this.client = twilio(accountSid, authToken, {
         timeout: 10000,

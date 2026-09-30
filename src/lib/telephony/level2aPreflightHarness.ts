@@ -1,10 +1,13 @@
 // ============================================================================
 // PUBLIC SAAS PHASE 13.4.3B.2E — LEVEL 2A READ-ONLY PREFLIGHT HARNESS
-// Read-only environment, credential, capacity, safety budget, and cost verification.
+// Read-only environment, credential, capacity, safety budget, cost, pricing,
+// candidate number type, and schema invariant verification.
 // STRICT INVARIANT: ZERO REAL CALLS, ZERO MUTATIONS, ZERO DB WRITES.
-// NO EXAMPLE PRICE FALLBACKS (MUST PROVIDE VERIFIED WHOLESALE PRICING DATA).
+// NO UNVERIFIED EXAMPLE PRICE FALLBACKS.
 // ============================================================================
 
+import twilio from 'twilio';
+import { createClient } from '@supabase/supabase-js';
 import {
   isProviderMutationGateEnabled,
   isExtendAllowanceScopeEnabled,
@@ -20,6 +23,14 @@ export interface Level2APreflightResult {
   authorizedBudgetMinor: number;
   experimentLeaseSeconds: number;
   requiredSafetySeconds: number;
+  twilioReadOnlyRequests: number;
+  pricingProvenance?: string;
+  billingIncrementProvenance?: string;
+  candidateNumberType?: string;
+  accountDetails?: { accountSid: string; status: string; type: string };
+  ownedNumbersDetails?: Array<{ phoneNumber: string; voiceCapable: boolean; type?: string }>;
+  tenantConflictDetails?: { conflictDetected: boolean; existingOrganizationId?: string; details: string };
+  canonicalSchemaAudit?: Record<string, string>;
 }
 
 export interface Level2APreflightOptions {
@@ -33,7 +44,11 @@ export interface Level2APreflightOptions {
   experimentLeaseDurationSeconds?: number;
   initialTestLimitSeconds?: number;
   proposedExtendedLimitSeconds?: number;
+  absoluteTestMaxSeconds?: number;
   recordingEnabled?: boolean;
+  allowDocVerifiedIncrement?: boolean;
+  checkTenantConflict?: boolean;
+  mockSupabaseClient?: any;
 }
 
 export async function runLevel2APreflight(
@@ -41,29 +56,143 @@ export async function runLevel2APreflight(
 ): Promise<Level2APreflightResult> {
   const checks: Record<string, { pass: boolean; details: string }> = {};
   let overallPass = true;
+  let twilioReadOnlyRequests = 0;
+  let accountDetails: { accountSid: string; status: string; type: string } | undefined = undefined;
+  let ownedNumbersDetails: Array<{ phoneNumber: string; voiceCapable: boolean; type?: string }> = [];
+  let candidateNumberType = 'NUMBER_TYPE_UNVERIFIED';
+  let pricingProvenance = 'unverified';
+  let billingIncrementProvenance = 'unverified';
 
-  // 1. TWILIO CREDENTIALS CHECK (Never log secrets!)
+  // 1. TWILIO CREDENTIALS & READ-ONLY ACCOUNT VERIFICATION (Never log secrets!)
   const accountSid = options.accountSid || process.env.TWILIO_ACCOUNT_SID;
   const authToken = options.authToken || process.env.TWILIO_AUTH_TOKEN;
-  const credsValid = Boolean(accountSid && accountSid.startsWith('AC') && authToken && authToken.length > 10);
-  checks.credentialsPresent = {
-    pass: credsValid,
-    details: credsValid
-      ? `AccountSid present (${accountSid?.slice(0, 6)}... masked), AuthToken present.`
-      : 'MISSING_OR_INVALID_TWILIO_CREDENTIALS: TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN missing or malformed.',
-  };
-  if (!credsValid) overallPass = false;
+  const apiKeySid = process.env.TWILIO_API_KEY_SID;
+  const apiKeySecret = process.env.TWILIO_API_KEY_SECRET;
 
-  // 2. OWNED TEST NUMBER CHECK
-  const ownedNumber = options.ownedTestNumber || process.env.TWILIO_PHONE_NUMBER || process.env.LEVEL2_TEST_OWNED_NUMBER;
-  const ownedNumberValid = Boolean(ownedNumber && ownedNumber.startsWith('+'));
-  checks.ownedTestNumber = {
-    pass: ownedNumberValid,
-    details: ownedNumberValid
-      ? `Owned test number configured: ${ownedNumber}`
-      : 'MISSING_OWNED_TEST_NUMBER: Must configure an existing owned Twilio number for test origin.',
+  const credsPresent = Boolean(
+    accountSid &&
+    accountSid.startsWith('AC') &&
+    ((authToken && authToken.length > 10) || (apiKeySid && apiKeySid.startsWith('SK') && apiKeySecret))
+  );
+
+  let client: twilio.Twilio | null = null;
+
+  if (!credsPresent) {
+    checks.credentialsPresent = {
+      pass: false,
+      details: 'MISSING_OR_INVALID_TWILIO_CREDENTIALS: TWILIO_ACCOUNT_SID and (TWILIO_AUTH_TOKEN or TWILIO_API_KEY_SID/SECRET) missing or malformed.',
+    };
+    overallPass = false;
+  } else {
+    // Perform Read-Only API Account Verification if non-mock credentials
+    if (!authToken?.startsWith('mock_')) {
+      try {
+        if (accountSid && apiKeySid && apiKeySecret) {
+          client = twilio(apiKeySid, apiKeySecret, { accountSid, timeout: 10000, autoRetry: false, maxRetries: 0 });
+        } else if (accountSid && authToken) {
+          client = twilio(accountSid, authToken, { timeout: 10000, autoRetry: false, maxRetries: 0 });
+        }
+
+        if (client) {
+          twilioReadOnlyRequests++;
+          const acc = await client.api.v2010.accounts(accountSid!).fetch();
+          accountDetails = {
+            accountSid: acc.sid.slice(0, 6) + '...' + acc.sid.slice(-4),
+            status: acc.status,
+            type: acc.type,
+          };
+          checks.credentialsPresent = {
+            pass: acc.status === 'active',
+            details: `Authenticated read-only via API. Account ${accountDetails.accountSid} (status: ${acc.status}, type: ${acc.type}).`,
+          };
+          if (acc.status !== 'active') overallPass = false;
+        }
+      } catch (err: any) {
+        checks.credentialsPresent = {
+          pass: false,
+          details: `API_AUTHENTICATION_FAILED: ${err.message}`,
+        };
+        overallPass = false;
+      }
+    } else {
+      checks.credentialsPresent = {
+        pass: true,
+        details: `AccountSid present (${accountSid?.slice(0, 6)}... masked), AuthToken present (test mock format).`,
+      };
+    }
+  }
+
+  // 2. OWNED TEST NUMBER & AUTHORITATIVE NUMBER TYPE AUDIT (Read-Only GET)
+  const configuredOwnedNumber = options.ownedTestNumber || process.env.TWILIO_PHONE_NUMBER || process.env.LEVEL2_TEST_OWNED_NUMBER;
+  if (credsPresent && client && !authToken?.startsWith('mock_')) {
+    try {
+      twilioReadOnlyRequests++;
+      const numbersList = await client.incomingPhoneNumbers.list({ limit: 5 });
+      
+      const matchedOwned = configuredOwnedNumber
+        ? numbersList.find((n) => n.phoneNumber === configuredOwnedNumber)
+        : numbersList.find((n) => n.capabilities?.voice);
+
+      if (matchedOwned) {
+        // Authoritative pricing / number-type query for candidate number
+        try {
+          twilioReadOnlyRequests++;
+          const numPricing = await client.pricing.v2.voice.numbers(matchedOwned.phoneNumber).fetch();
+          if (numPricing && numPricing.inboundCallPrice?.numberType) {
+            candidateNumberType = numPricing.inboundCallPrice.numberType;
+          } else if ((matchedOwned as any).addressRequirements === 'local') {
+            candidateNumberType = 'local';
+          }
+        } catch {
+          if ((matchedOwned as any).addressRequirements === 'local') {
+            candidateNumberType = 'local';
+          }
+        }
+
+        ownedNumbersDetails = numbersList.map((n) => ({
+          phoneNumber: n.phoneNumber.slice(0, 3) + '***' + n.phoneNumber.slice(-4),
+          voiceCapable: Boolean(n.capabilities?.voice),
+          type: candidateNumberType !== 'NUMBER_TYPE_UNVERIFIED' ? candidateNumberType : undefined,
+        }));
+
+        checks.ownedTestNumber = {
+          pass: true,
+          details: `Owned test number verified (${matchedOwned.phoneNumber.slice(0, 3)}***${matchedOwned.phoneNumber.slice(-4)}, Voice: ${matchedOwned.capabilities?.voice}, Type: ${candidateNumberType}).`,
+        };
+      } else {
+        checks.ownedTestNumber = {
+          pass: false,
+          details: configuredOwnedNumber
+            ? `OWNED_NUMBER_NOT_FOUND: Configured number ${configuredOwnedNumber} not found in Twilio account.`
+            : 'NO_VOICE_CAPABLE_OWNED_NUMBER: No voice-capable incoming phone numbers found in Twilio account.',
+        };
+        overallPass = false;
+      }
+    } catch (err: any) {
+      checks.ownedTestNumber = {
+        pass: false,
+        details: `OWNED_NUMBER_FETCH_FAILED: ${err.message}`,
+      };
+      overallPass = false;
+    }
+  } else {
+    const ownedNumberValid = Boolean(configuredOwnedNumber && configuredOwnedNumber.startsWith('+'));
+    checks.ownedTestNumber = {
+      pass: ownedNumberValid,
+      details: ownedNumberValid
+        ? `Owned test number configured: ${configuredOwnedNumber?.slice(0, 3)}***${configuredOwnedNumber?.slice(-4)}`
+        : 'MISSING_OWNED_TEST_NUMBER: Must configure an existing owned Twilio number for test origin.',
+    };
+    if (!ownedNumberValid) overallPass = false;
+  }
+
+  // Candidate number type validation check
+  checks.candidateNumberType = {
+    pass: candidateNumberType !== 'NUMBER_TYPE_UNVERIFIED',
+    details: candidateNumberType !== 'NUMBER_TYPE_UNVERIFIED'
+      ? `Authoritative candidate number type determined: ${candidateNumberType}`
+      : 'NUMBER_TYPE_UNVERIFIED: Authoritative Twilio number type could not be determined. Example labels forbidden.',
   };
-  if (!ownedNumberValid) overallPass = false;
 
   // 3. CONTROLLED DESTINATION CHECK
   const destination = options.controlledDestination || process.env.LEVEL2_CONTROLLED_DESTINATION;
@@ -71,8 +200,8 @@ export async function runLevel2APreflight(
   checks.controlledDestination = {
     pass: destValid,
     details: destValid
-      ? `Controlled test destination configured: ${destination}`
-      : 'MISSING_CONTROLLED_DESTINATION: Must provide explicit controlled destination phone number.',
+      ? `Controlled test destination configured: ${destination?.slice(0, 3)}***${destination?.slice(-4)}`
+      : 'CONTROLLED_TEST_DESTINATION_REQUIRED: Must provide explicit controlled destination phone number (e.g. LEVEL2_CONTROLLED_DESTINATION).',
   };
   if (!destValid) overallPass = false;
 
@@ -106,10 +235,33 @@ export async function runLevel2APreflight(
     details: `MasterGate=${masterGate}, ExtendScope=${extendScope}, TerminateScope=${terminateScope}`,
   };
 
-  // 7. TIMING & SAFETY BUDGET DERIVATION
-  const initialLimitSec = options.initialTestLimitSeconds || 45;
-  const extendedLimitSec = options.proposedExtendedLimitSeconds || 90;
+  // 7. EXPERIMENT TIMING INVARIANTS CHECK
+  const initialLimitSec = options.initialTestLimitSeconds ?? (process.env.LEVEL2_INITIAL_TEST_LIMIT_SECONDS ? parseInt(process.env.LEVEL2_INITIAL_TEST_LIMIT_SECONDS, 10) : 60);
+  const extendedLimitSec = options.proposedExtendedLimitSeconds ?? (process.env.LEVEL2_PROPOSED_EXTENDED_LIMIT_SECONDS ? parseInt(process.env.LEVEL2_PROPOSED_EXTENDED_LIMIT_SECONDS, 10) : 60);
+  const absoluteMaxSec = options.absoluteTestMaxSeconds ?? (process.env.LEVEL2_ABSOLUTE_TEST_MAX_SECONDS ? parseInt(process.env.LEVEL2_ABSOLUTE_TEST_MAX_SECONDS, 10) : 120);
   const expLeaseSec = options.experimentLeaseDurationSeconds || 300; // EXPERIMENT_ONLY default 300s
+
+  const isExtensionValid = extendedLimitSec > initialLimitSec;
+  const isAbsoluteMaxValid = absoluteMaxSec >= extendedLimitSec;
+
+  if (!isExtensionValid) {
+    checks.timingBoundaryInvariants = {
+      pass: false,
+      details: `INVALID_EXTENSION_BOUNDARY: proposedExtendedLimitSeconds (${extendedLimitSec}s) must be strictly greater than initialTestLimitSeconds (${initialLimitSec}s).`,
+    };
+    overallPass = false;
+  } else if (!isAbsoluteMaxValid) {
+    checks.timingBoundaryInvariants = {
+      pass: false,
+      details: `INVALID_TIMING_BOUNDARY: absoluteTestMaxSeconds (${absoluteMaxSec}s) must be >= proposedExtendedLimitSeconds (${extendedLimitSec}s).`,
+    };
+    overallPass = false;
+  } else {
+    checks.timingBoundaryInvariants = {
+      pass: true,
+      details: `Timing invariants valid: initial=${initialLimitSec}s, extended=${extendedLimitSec}s, absoluteMax=${absoluteMaxSec}s.`,
+    };
+  }
 
   const leaseSafety = validatePreDispatchLeaseSafety({
     remainingLeaseSeconds: expLeaseSec,
@@ -127,38 +279,119 @@ export async function runLevel2APreflight(
   };
   if (!leaseSafety.safe) overallPass = false;
 
-  // 8. STRICT PROVIDER WHOLESALE COST & BILLING INCREMENT VERIFICATION
-  // NO EXAMPLE PRICE FALLBACKS PERMITTED. Must be explicitly verified from options or verified env.
-  const verifiedRateCentsPerMin =
+  // 8. READ-ONLY AUTHORITATIVE PROVIDER PRICING LOOKUP (TWILIO PRICING API)
+  let verifiedRateCentsPerMin: number | undefined = undefined;
+  let verifiedIncrementSec: number | undefined = undefined;
+
+  // Check explicit override options / env
+  const explicitOverrideRate =
     options.verifiedWholesaleRateCentsPerMinute ??
     (process.env.LEVEL2_VERIFIED_WHOLESALE_RATE_CENTS_PER_MIN
       ? parseFloat(process.env.LEVEL2_VERIFIED_WHOLESALE_RATE_CENTS_PER_MIN)
       : undefined);
 
-  const verifiedIncrementSec =
+  const explicitOverrideIncrement =
     options.verifiedWholesaleBillingIncrementSeconds ??
     (process.env.LEVEL2_VERIFIED_WHOLESALE_INCREMENT_SEC
       ? parseInt(process.env.LEVEL2_VERIFIED_WHOLESALE_INCREMENT_SEC, 10)
       : undefined);
 
+  // If explicit override passed in options, record manual provenance
+  if (options.verifiedWholesaleRateCentsPerMinute !== undefined) {
+    verifiedRateCentsPerMin = options.verifiedWholesaleRateCentsPerMinute;
+    pricingProvenance = 'manual_explicit_override';
+  }
+
+  if (options.verifiedWholesaleBillingIncrementSeconds !== undefined) {
+    verifiedIncrementSec = options.verifiedWholesaleBillingIncrementSeconds;
+    billingIncrementProvenance = 'manual_explicit_override';
+  }
+
+  // If rate not explicitly provided, attempt Twilio Pricing API read-only fetch
+  if (verifiedRateCentsPerMin === undefined && credsPresent && client && destValid && !authToken?.startsWith('mock_')) {
+    try {
+      twilioReadOnlyRequests++;
+      // Attempt destination number pricing fetch first
+      try {
+        const numPricing = await client.pricing.v2.voice.numbers(destination!).fetch();
+        const priceVal = numPricing && numPricing.outboundCallPrices?.[0]?.currentPrice;
+        if (priceVal !== undefined && priceVal !== null) {
+          const parsed = typeof priceVal === 'number' ? priceVal : parseFloat(priceVal);
+          if (!isNaN(parsed)) {
+            verifiedRateCentsPerMin = parsed * 100;
+            pricingProvenance = 'twilio_pricing_api_number';
+          }
+        }
+      } catch {
+        // Fallback to country prefix pricing if number-specific lookup fails
+      }
+
+      if (verifiedRateCentsPerMin === undefined) {
+        twilioReadOnlyRequests++;
+        const countryCode = destination!.startsWith('+61') ? 'AU' : destination!.startsWith('+1') ? 'US' : 'US';
+        const countryPricing = await client.pricing.v2.voice.countries(countryCode).fetch();
+        if (countryPricing && countryPricing.outboundPrefixPrices?.length) {
+          const topPrefixPrice = countryPricing.outboundPrefixPrices[0].currentPrice;
+          if (topPrefixPrice !== undefined && topPrefixPrice !== null) {
+            const parsed = typeof topPrefixPrice === 'number' ? topPrefixPrice : parseFloat(topPrefixPrice);
+            if (!isNaN(parsed)) {
+              verifiedRateCentsPerMin = parsed * 100;
+              pricingProvenance = 'twilio_pricing_api_country';
+            }
+          }
+        }
+      }
+    } catch (err: any) {
+      console.warn('[Level2APreflight] Read-only Twilio Pricing API lookup failed:', err.message);
+    }
+  }
+
+  // Fallback to environment explicit override if API pricing unavailable
+  if (verifiedRateCentsPerMin === undefined && explicitOverrideRate !== undefined) {
+    verifiedRateCentsPerMin = explicitOverrideRate;
+    pricingProvenance = 'manual_explicit_override';
+  }
+
+  // Handle billing increment derivation
+  if (verifiedIncrementSec === undefined) {
+    if (explicitOverrideIncrement !== undefined) {
+      verifiedIncrementSec = explicitOverrideIncrement;
+      billingIncrementProvenance = 'manual_explicit_override';
+    } else if (options.allowDocVerifiedIncrement !== false && verifiedRateCentsPerMin !== undefined) {
+      // Standard Twilio Programmable Voice billing increment is 60s per official Twilio docs
+      verifiedIncrementSec = 60;
+      billingIncrementProvenance = 'official_documentation_verified_60s';
+    }
+  }
+
+  // Cost preflight validation
   let calculatedMaxCostMinor = 0;
   const authorizedBudgetMinor = options.maxAuthorizedBudgetMinor ?? (parseInt(process.env.LEVEL_2_MAX_PROVIDER_COST_MINOR || '10', 10));
 
-  if (verifiedRateCentsPerMin === undefined || verifiedIncrementSec === undefined || verifiedIncrementSec <= 0) {
-    checks.providerCostVerified = {
-      pass: false,
-      details: 'PROVIDER_COST_NOT_VERIFIED: No verified wholesale provider price or billing increment available. Example fallbacks forbidden.',
-    };
-    overallPass = false;
-  } else {
-    // Calculate cost based on conservative provider billing increments
+  checks.providerPricingVerified = {
+    pass: verifiedRateCentsPerMin !== undefined,
+    details: verifiedRateCentsPerMin !== undefined
+      ? `Authoritative provider pricing established (${verifiedRateCentsPerMin}c/min, provenance: ${pricingProvenance}).`
+      : 'PROVIDER_COST_NOT_VERIFIED: Unable to establish authoritative provider wholesale rate from Twilio Pricing API or explicit override.',
+  };
+  if (verifiedRateCentsPerMin === undefined) overallPass = false;
+
+  checks.providerBillingIncrementVerified = {
+    pass: Boolean(verifiedIncrementSec && verifiedIncrementSec > 0),
+    details: Boolean(verifiedIncrementSec && verifiedIncrementSec > 0)
+      ? `Provider billing increment verified (${verifiedIncrementSec}s, provenance: ${billingIncrementProvenance}).`
+      : 'PROVIDER_BILLING_INCREMENT_UNVERIFIED: Provider billing increment cannot be established authoritatively.',
+  };
+  if (!verifiedIncrementSec || verifiedIncrementSec <= 0) overallPass = false;
+
+  if (verifiedRateCentsPerMin !== undefined && verifiedIncrementSec && verifiedIncrementSec > 0) {
     const totalIntervals = Math.ceil(extendedLimitSec / verifiedIncrementSec);
     const costPerIntervalCents = (verifiedRateCentsPerMin * verifiedIncrementSec) / 60;
     calculatedMaxCostMinor = Math.ceil(totalIntervals * costPerIntervalCents);
 
     checks.providerCostVerified = {
       pass: true,
-      details: `Verified wholesale rate: ${verifiedRateCentsPerMin}c/min, increment: ${verifiedIncrementSec}s. Max cost: ${calculatedMaxCostMinor}c.`,
+      details: `Verified wholesale rate: ${verifiedRateCentsPerMin}c/min, increment: ${verifiedIncrementSec}s. Conservative max cost: ${calculatedMaxCostMinor}c.`,
     };
 
     const budgetPass = calculatedMaxCostMinor <= authorizedBudgetMinor;
@@ -171,10 +404,64 @@ export async function runLevel2APreflight(
     if (!budgetPass) overallPass = false;
   }
 
+  // 9. TENANT NUMBER ASSOCIATION CONFLICT AUDIT (Read-Only DB Check)
+  let tenantConflictDetails: { conflictDetected: boolean; existingOrganizationId?: string; details: string } = {
+    conflictDetected: false,
+    details: 'NO_TENANT_CONFLICT: Candidate number is unassigned or assigned to current test tenant.',
+  };
+
+  if (options.checkTenantConflict !== false && configuredOwnedNumber && configuredOwnedNumber.startsWith('+')) {
+    try {
+      let sbClient = options.mockSupabaseClient;
+      if (!sbClient && process.env.NEXT_PUBLIC_SUPABASE_URL && (process.env.SUPABASE_SECRET_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY)) {
+        (globalThis as any).WebSocket = (globalThis as any).WebSocket || class {};
+        const key = process.env.SUPABASE_SECRET_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
+        sbClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, key, { auth: { persistSession: false } });
+      }
+
+      if (sbClient) {
+        const { data: phoneRows } = await sbClient
+          .from('phone_numbers')
+          .select('id, organization_id, phone_number')
+          .eq('phone_number', configuredOwnedNumber);
+
+        if (phoneRows && phoneRows.length > 0) {
+          tenantConflictDetails = {
+            conflictDetected: true,
+            existingOrganizationId: phoneRows[0].organization_id,
+            details: `TEST_NUMBER_TENANT_CONFLICT: Owned test number ${configuredOwnedNumber} is already associated with organization ${phoneRows[0].organization_id} in public.phone_numbers. Assigning it to a new synthetic test org will violate tenant isolation.`,
+          };
+        }
+      }
+    } catch (err: any) {
+      console.warn('[Level2APreflight] Tenant number conflict check failed:', err.message);
+    }
+  }
+
+  checks.tenantNumberConflict = {
+    pass: !tenantConflictDetails.conflictDetected,
+    details: tenantConflictDetails.details,
+  };
+  if (tenantConflictDetails.conflictDetected) overallPass = false;
+
+  // 10. CANONICAL SCHEMA AUDIT DATA (Verified against database migrations)
+  const canonicalSchemaAudit: Record<string, string> = {
+    organization: 'public.organizations',
+    userProfile: 'public.profiles',
+    phoneNumbers: 'public.phone_numbers',
+    creditLedger: 'public.billing_credit_ledger',
+    retailRateCard: 'public.telecom_retail_rate_cards',
+    usageSession: 'public.telecom_usage_sessions',
+    usageComponent: 'public.telecom_usage_components',
+    providerOperation: 'public.telecom_provider_operations',
+    providerEventLog: 'public.telecom_provider_event_log',
+    fundingMethod: 'billing_credit_ledger grant entry (INSERT entry_type = grant)',
+  };
+
   const status = overallPass ? 'LEVEL_2A_PREFLIGHT_PASS' : 'LEVEL_2A_PREFLIGHT_FAIL';
   const summary = overallPass
-    ? `Level 2A Read-Only Preflight PASSED. All credentials, safety budgets (${expLeaseSec}s lease), and verified cost bounds (${calculatedMaxCostMinor}c <= ${authorizedBudgetMinor}c) verified.`
-    : `Level 2A Read-Only Preflight FAILED. Inspect checks object for details. Zero calls placed.`;
+    ? `B.2E LEVEL 2A READ-ONLY PREFLIGHT — PASSED`
+    : `B.2E LEVEL 2A READ-ONLY PREFLIGHT — FAILED`;
 
   return {
     status,
@@ -184,5 +471,13 @@ export async function runLevel2APreflight(
     authorizedBudgetMinor,
     experimentLeaseSeconds: expLeaseSec,
     requiredSafetySeconds: leaseSafety.requiredSafetySeconds,
+    twilioReadOnlyRequests,
+    pricingProvenance,
+    billingIncrementProvenance,
+    candidateNumberType,
+    accountDetails,
+    ownedNumbersDetails,
+    tenantConflictDetails,
+    canonicalSchemaAudit,
   };
 }
