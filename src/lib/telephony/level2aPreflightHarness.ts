@@ -1,9 +1,9 @@
 // ============================================================================
 // PUBLIC SAAS PHASE 13.4.3B.2E — LEVEL 2A READ-ONLY PREFLIGHT HARNESS
-// Read-only environment, credential, capacity, safety budget, cost, pricing,
-// candidate number type, and schema invariant verification.
+// Read-only environment, credential, origin-aware pricing, candidate number type,
+// canonical funding primitive, and schema invariant verification.
 // STRICT INVARIANT: ZERO REAL CALLS, ZERO MUTATIONS, ZERO DB WRITES.
-// NO UNVERIFIED EXAMPLE PRICE FALLBACKS.
+// NO TENANT REASSIGNMENT. NO ARBITRARY BALANCE INVENTIONS.
 // ============================================================================
 
 import twilio from 'twilio';
@@ -27,10 +27,16 @@ export interface Level2APreflightResult {
   pricingProvenance?: string;
   billingIncrementProvenance?: string;
   candidateNumberType?: string;
+  existingNumberOwnerContext?: 'SYNTHETIC_TEST' | 'REAL_CUSTOMER' | 'UNDETERMINED';
   accountDetails?: { accountSid: string; status: string; type: string };
   ownedNumbersDetails?: Array<{ phoneNumber: string; voiceCapable: boolean; type?: string }>;
   tenantConflictDetails?: { conflictDetected: boolean; existingOrganizationId?: string; details: string };
   canonicalSchemaAudit?: Record<string, string>;
+  proposedTimingEnvelope?: {
+    initialTestLimitSeconds: number;
+    proposedExtendedLimitSeconds: number;
+    absoluteTestMaxSeconds: number;
+  };
 }
 
 export interface Level2APreflightOptions {
@@ -62,6 +68,7 @@ export async function runLevel2APreflight(
   let candidateNumberType = 'NUMBER_TYPE_UNVERIFIED';
   let pricingProvenance = 'unverified';
   let billingIncrementProvenance = 'unverified';
+  let existingNumberOwnerContext: 'SYNTHETIC_TEST' | 'REAL_CUSTOMER' | 'UNDETERMINED' = 'UNDETERMINED';
 
   // 1. TWILIO CREDENTIALS & READ-ONLY ACCOUNT VERIFICATION (Never log secrets!)
   const accountSid = options.accountSid || process.env.TWILIO_ACCOUNT_SID;
@@ -279,7 +286,7 @@ export async function runLevel2APreflight(
   };
   if (!leaseSafety.safe) overallPass = false;
 
-  // 8. READ-ONLY AUTHORITATIVE PROVIDER PRICING LOOKUP (TWILIO PRICING API)
+  // 8. ORIGIN-AWARE READ-ONLY TWILIO PRICING API LOOKUP
   let verifiedRateCentsPerMin: number | undefined = undefined;
   let verifiedIncrementSec: number | undefined = undefined;
 
@@ -307,19 +314,36 @@ export async function runLevel2APreflight(
     billingIncrementProvenance = 'manual_explicit_override';
   }
 
-  // If rate not explicitly provided, attempt Twilio Pricing API read-only fetch
+  // If rate not explicitly provided, attempt Origin-Aware Twilio Pricing API fetch
   if (verifiedRateCentsPerMin === undefined && credsPresent && client && destValid && !authToken?.startsWith('mock_')) {
     try {
       twilioReadOnlyRequests++;
-      // Attempt destination number pricing fetch first
+      // Attempt destination number pricing with originationNumber query context
       try {
-        const numPricing = await client.pricing.v2.voice.numbers(destination!).fetch();
-        const priceVal = numPricing && numPricing.outboundCallPrices?.[0]?.currentPrice;
-        if (priceVal !== undefined && priceVal !== null) {
-          const parsed = typeof priceVal === 'number' ? priceVal : parseFloat(priceVal);
-          if (!isNaN(parsed)) {
-            verifiedRateCentsPerMin = parsed * 100;
-            pricingProvenance = 'twilio_pricing_api_number';
+        const fetchOptions: any = {};
+        if (configuredOwnedNumber && configuredOwnedNumber.startsWith('+')) {
+          fetchOptions.originationNumber = configuredOwnedNumber;
+        }
+        const numPricing = await (client.pricing.v2.voice.numbers(destination!) as any).fetch(fetchOptions);
+        if (numPricing && numPricing.outboundCallPrices?.length) {
+          // Match origin prefix if available
+          const cleanOrigin = configuredOwnedNumber ? configuredOwnedNumber.replace(/^\+/, '') : '';
+          let matchedPriceObj = numPricing.outboundCallPrices[0];
+
+          if (cleanOrigin) {
+            const bestMatch = numPricing.outboundCallPrices.find((p: any) =>
+              p.originationPrefixes?.some((prefix: string) => cleanOrigin.startsWith(prefix))
+            );
+            if (bestMatch) matchedPriceObj = bestMatch;
+          }
+
+          const priceVal = matchedPriceObj?.currentPrice;
+          if (priceVal !== undefined && priceVal !== null) {
+            const parsed = typeof priceVal === 'number' ? priceVal : parseFloat(priceVal);
+            if (!isNaN(parsed)) {
+              verifiedRateCentsPerMin = parsed * 100;
+              pricingProvenance = 'twilio_pricing_api_number';
+            }
           }
         }
       } catch {
@@ -404,10 +428,10 @@ export async function runLevel2APreflight(
     if (!budgetPass) overallPass = false;
   }
 
-  // 9. TENANT NUMBER ASSOCIATION CONFLICT AUDIT (Read-Only DB Check)
+  // 9. TENANT NUMBER OWNERSHIP & CONFLICT AUDIT (Read-Only DB Check)
   let tenantConflictDetails: { conflictDetected: boolean; existingOrganizationId?: string; details: string } = {
     conflictDetected: false,
-    details: 'NO_TENANT_CONFLICT: Candidate number is unassigned or assigned to current test tenant.',
+    details: 'NO_TENANT_CONFLICT: Candidate number is unassigned or assigned to synthetic test tenant 00000000-0000-0000-0000-000000000001.',
   };
 
   if (options.checkTenantConflict !== false && configuredOwnedNumber && configuredOwnedNumber.startsWith('+')) {
@@ -422,15 +446,26 @@ export async function runLevel2APreflight(
       if (sbClient) {
         const { data: phoneRows } = await sbClient
           .from('phone_numbers')
-          .select('id, organization_id, phone_number')
+          .select('id, organization_id, phone_number, acquisition_source')
           .eq('phone_number', configuredOwnedNumber);
 
         if (phoneRows && phoneRows.length > 0) {
-          tenantConflictDetails = {
-            conflictDetected: true,
-            existingOrganizationId: phoneRows[0].organization_id,
-            details: `TEST_NUMBER_TENANT_CONFLICT: Owned test number ${configuredOwnedNumber} is already associated with organization ${phoneRows[0].organization_id} in public.phone_numbers. Assigning it to a new synthetic test org will violate tenant isolation.`,
-          };
+          const orgId = phoneRows[0].organization_id;
+          if (orgId === '00000000-0000-0000-0000-000000000001') {
+            existingNumberOwnerContext = 'SYNTHETIC_TEST';
+            tenantConflictDetails = {
+              conflictDetected: false,
+              existingOrganizationId: orgId,
+              details: `EXISTING_NUMBER_OWNER_CONTEXT = SYNTHETIC_TEST. Candidate number ${configuredOwnedNumber} belongs to synthetic dev test organization ${orgId}. Reassignment prohibited; experiment can execute safely under existing tenant context.`,
+            };
+          } else {
+            existingNumberOwnerContext = 'REAL_CUSTOMER';
+            tenantConflictDetails = {
+              conflictDetected: true,
+              existingOrganizationId: orgId,
+              details: `TEST_NUMBER_TENANT_CONFLICT: Candidate number ${configuredOwnedNumber} belongs to REAL customer organization ${orgId}. Reassignment or synthetic credit injection into customer ledger strictly prohibited.`,
+            };
+          }
         }
       }
     } catch (err: any) {
@@ -444,7 +479,7 @@ export async function runLevel2APreflight(
   };
   if (tenantConflictDetails.conflictDetected) overallPass = false;
 
-  // 10. CANONICAL SCHEMA AUDIT DATA (Verified against database migrations)
+  // 10. CANONICAL SCHEMA & ATOMIC FUNDING AUDIT DATA (Verified against database migrations)
   const canonicalSchemaAudit: Record<string, string> = {
     organization: 'public.organizations',
     userProfile: 'public.profiles',
@@ -455,7 +490,9 @@ export async function runLevel2APreflight(
     usageComponent: 'public.telecom_usage_components',
     providerOperation: 'public.telecom_provider_operations',
     providerEventLog: 'public.telecom_provider_event_log',
-    fundingMethod: 'billing_credit_ledger grant entry (INSERT entry_type = grant)',
+    fundingMethod: 'public.record_credit_ledger_entry_atomic(p_organization_id, p_entry_type, p_amount_minor, ...)',
+    fundingLocking: 'FOR UPDATE row lock on public.organizations inside record_credit_ledger_entry_atomic',
+    fundingEntryType: 'grant (Allowed by CHECK constraint: grant, consumption, expiration, adjustment, usage_reversal, telecom_usage, auto_recharge)',
   };
 
   const status = overallPass ? 'LEVEL_2A_PREFLIGHT_PASS' : 'LEVEL_2A_PREFLIGHT_FAIL';
@@ -475,9 +512,15 @@ export async function runLevel2APreflight(
     pricingProvenance,
     billingIncrementProvenance,
     candidateNumberType,
+    existingNumberOwnerContext,
     accountDetails,
     ownedNumbersDetails,
     tenantConflictDetails,
     canonicalSchemaAudit,
+    proposedTimingEnvelope: {
+      initialTestLimitSeconds: initialLimitSec,
+      proposedExtendedLimitSeconds: extendedLimitSec,
+      absoluteTestMaxSeconds: absoluteMaxSec,
+    },
   };
 }
