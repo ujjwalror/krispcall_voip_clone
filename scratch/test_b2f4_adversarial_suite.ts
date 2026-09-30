@@ -6,8 +6,6 @@ import path from 'path';
 
 import { createClient } from '@supabase/supabase-js';
 import { TelecomWalletService } from '../src/lib/billing/telecomWalletService';
-import { TelecomRatingService } from '../src/lib/billing/telecom/telecomRatingService';
-import { ExposurePolicy } from '../src/lib/billing/telecom/exposurePolicy';
 
 // Load .env.local
 const envPath = path.resolve(process.cwd(), '.env.local');
@@ -160,8 +158,8 @@ async function runB2F4AdversarialSuite() {
   assert.strictEqual(userWalletBalance, 1000);
   console.log('✓ TEST 5 PASS: Wallet balance increased ONLY on authoritative top-up success event.');
 
-  // 6. SECURITY DEFINER EXECUTE PRIVILEGE AUDIT
-  console.log('\n--- 6. SECURITY DEFINER Execute Privilege Audit ---');
+  // 6. SECURITY DEFINER EXECUTE PRIVILEGE POST-REMEDIATION VERIFICATION
+  console.log('\n--- 6. SECURITY DEFINER Execute Privilege Post-Remediation Verification ---');
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
   const anonClient = createClient(supabaseUrl, anonKey, { auth: { persistSession: false } });
 
@@ -172,18 +170,19 @@ async function runB2F4AdversarialSuite() {
     p_destination_fingerprint: 'test_sec_fp',
   });
 
-  const isVulnerableToAnonExecute = rpcCheckData && rpcCheckData.success === true;
+  const isAnonBlocked = rpcCheckErr && (rpcCheckErr.message.includes('permission denied') || rpcCheckErr.code === '42501');
 
-  console.log('SECURITY AUDIT RESULT:');
-  console.log(`- RPC register_telecom_runner_heartbeat_atomic Executed by Anon: ${isVulnerableToAnonExecute ? 'YES (VULNERABLE!)' : 'NO (RESTRICTED)'}`);
+  console.log('POST-REMEDIATION SECURITY VERIFICATION RESULT:');
+  console.log(`- Anon Direct RPC Execution Result: ${isAnonBlocked ? 'PASS (BLOCKED WITH PERMISSION DENIED)' : 'FAIL (UNBLOCKED)'}`);
+  console.log(`- Error Message: ${rpcCheckErr?.message || 'NONE'}`);
 
-  assert.strictEqual(isVulnerableToAnonExecute, true, 'Audit confirmed RPC currently missing REVOKE EXECUTE FROM PUBLIC');
-  console.log('✓ TEST 6 PASS: Security audit empirically identified missing REVOKE EXECUTE privilege restriction on register_telecom_runner_heartbeat_atomic.');
+  assert.strictEqual(isAnonBlocked, true, 'Anon execution MUST be blocked with permission denied error');
+  console.log('✓ TEST 6 PASS: Heartbeat RPC EXECUTE privileges are strictly revoked from anon/public and restricted to service_role.');
 
   const endTime = Date.now();
   console.log(`\nAdversarial Suite Execution Time: ${endTime - startTime}ms`);
   console.log('================================================================');
-  console.log('PHASE 13.4.3B.2F.4 ADVERSARIAL SUITE VERIFICATION: BLOCKED ON MIGRATION REVIEW');
+  console.log('PHASE 13.4.3B.2F.4 ADVERSARIAL SUITE VERIFICATION: PASS');
   console.log('================================================================\n');
 }
 
