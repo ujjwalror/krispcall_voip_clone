@@ -7,6 +7,7 @@
     "build": "next build",
     "build:extension": "node scripts/build-extension.js",
     "start": "next start",
+    "worker:telecom-voice-extension": "tsx src/workers/telecomVoiceExtensionWorker.ts",
     "lint": "eslint"
   },
   "dependencies": {
