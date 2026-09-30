@@ -285,7 +285,30 @@ export async function executeOutboundCallSetup(
       throw new OutboundCallError('Failed to create database call log.', 500);
     }
 
-    // 8. Update reservation to link call_id
+    // 8. Atomically consume any armed experiment authorization for this org & destination
+    try {
+      const { data: expConsumeResult } = await (adminSupabase as any).rpc(
+        'consume_telecom_experiment_authorization_atomic',
+        {
+          p_organization_id: organizationId,
+          p_call_id: callRecord.id,
+          p_destination_number: normalizedDestination,
+        }
+      );
+
+      if (expConsumeResult?.consumed) {
+        console.log('[Outbound Call Setup] Controlled experiment authorization consumed for call:', {
+          callId: callRecord.id,
+          authorizationId: expConsumeResult.authorization_id,
+          initialExposureSeconds: expConsumeResult.initial_exposure_seconds,
+          enforcementMode: expConsumeResult.enforcement_mode,
+        });
+      }
+    } catch (expErr: any) {
+      console.warn('[Outbound Call Setup] Experiment authorization consumption check error:', expErr.message || expErr);
+    }
+
+    // 9. Update reservation to link call_id
     await (adminSupabase as any)
       .from('agent_call_reservations')
       .update({ call_id: callRecord.id })

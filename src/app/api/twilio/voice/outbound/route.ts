@@ -4,6 +4,7 @@ import { normalizeE164PhoneNumber } from '@/lib/utils';
 import { validateTwilioRequest } from '@/lib/twilio/signature';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { VoiceAuthorizationService } from '@/lib/billing/telecom/voiceAuthorizationService';
+import { ExposurePolicyConfig } from '@/lib/billing/telecom/exposurePolicy';
 
 /**
  * Outbound Voice TwiML Webhook Endpoint for Twilio Programmable Voice.
@@ -124,6 +125,33 @@ export async function POST(request: Request) {
       });
     }
 
+    // 3b. Check for consumed server-authoritative experiment policy override for this exact call
+    let policyConfigOverrides: Partial<ExposurePolicyConfig> | undefined = undefined;
+
+    try {
+      const { data: expAuthRow } = await (adminSupabase as any)
+        .from('telecom_experiment_authorizations')
+        .select('initial_exposure_seconds, max_initial_exposure_seconds, enforcement_mode')
+        .eq('bound_call_id', dbCallId)
+        .eq('organization_id', dbCallRec.organization_id)
+        .eq('status', 'consumed')
+        .maybeSingle();
+
+      if (expAuthRow) {
+        policyConfigOverrides = {
+          initialExposureSeconds: expAuthRow.initial_exposure_seconds,
+          maxInitialExposureSeconds: expAuthRow.max_initial_exposure_seconds,
+          enforcementMode: expAuthRow.enforcement_mode as any,
+        };
+        console.log('[Twilio Outbound Webhook] Trusted server experiment policy override active for call:', {
+          dbCallId,
+          policyConfigOverrides,
+        });
+      }
+    } catch (expCheckErr: any) {
+      console.warn('[Twilio Outbound Webhook] Error querying experiment authorization:', expCheckErr.message || expCheckErr);
+    }
+
     // 4. AUTHORITATIVE PRE-EXPOSURE FINANCIAL AUTHORIZATION
     const authResult = await VoiceAuthorizationService.authorizeOutboundVoice(adminSupabase, {
       organizationId: dbCallRec.organization_id,
@@ -131,6 +159,7 @@ export async function POST(request: Request) {
       userId: dbCallRec.user_id,
       fromNumber: callerId,
       toNumber: validation.normalized,
+      policyConfigOverrides,
     });
 
     createdReservationId = authResult.reservationId;
