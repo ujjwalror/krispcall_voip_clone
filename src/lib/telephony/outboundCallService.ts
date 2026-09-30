@@ -286,28 +286,30 @@ export async function executeOutboundCallSetup(
       throw new OutboundCallError('Failed to create database call log.', 500);
     }
 
-    // 8. Atomically consume any armed experiment authorization for this org & destination fingerprint
+    // 8. Atomically claim any armed experiment authorization for this org & destination fingerprint (60s lease)
     try {
       const destFingerprint = computeDestinationFingerprint(normalizedDestination);
-      const { data: expConsumeResult } = await (adminSupabase as any).rpc(
-        'consume_telecom_experiment_authorization_atomic',
+      const { data: expClaimResult } = await (adminSupabase as any).rpc(
+        'claim_telecom_experiment_authorization_atomic',
         {
           p_organization_id: organizationId,
           p_call_id: callRecord.id,
           p_destination_fingerprint: destFingerprint,
+          p_claim_lease_seconds: 60,
         }
       );
 
-      if (expConsumeResult?.consumed) {
-        console.log('[Outbound Call Setup] Controlled experiment authorization consumed for call:', {
+      if (expClaimResult?.claimed) {
+        console.log('[Outbound Call Setup] Controlled experiment authorization CLAIMED for call:', {
           callId: callRecord.id,
-          authorizationId: expConsumeResult.authorization_id,
-          initialExposureSeconds: expConsumeResult.initial_exposure_seconds,
-          enforcementMode: expConsumeResult.enforcement_mode,
+          authorizationId: expClaimResult.authorization_id,
+          initialExposureSeconds: expClaimResult.initial_exposure_seconds,
+          enforcementMode: expClaimResult.enforcement_mode,
+          claimExpiresAt: expClaimResult.claim_expires_at,
         });
       }
     } catch (expErr: any) {
-      console.warn('[Outbound Call Setup] Experiment authorization consumption check error:', expErr.message || expErr);
+      console.warn('[Outbound Call Setup] Experiment authorization claim check error:', expErr.message || expErr);
     }
 
     // 9. Update reservation to link call_id
