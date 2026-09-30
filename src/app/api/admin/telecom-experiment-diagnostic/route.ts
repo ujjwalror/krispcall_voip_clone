@@ -24,11 +24,11 @@ export async function GET() {
       );
     }
 
-    // Role-based privilege authorization
+    // Role-based privilege authorization against profiles table
     const { data: profileData, error: profileError } = await supabase
-      .from('user_profiles')
+      .from('profiles')
       .select('organization_id, role')
-      .eq('user_id', user.id)
+      .eq('id', user.id)
       .single();
 
     const profile = profileData as { organization_id?: string; role?: string } | null;
