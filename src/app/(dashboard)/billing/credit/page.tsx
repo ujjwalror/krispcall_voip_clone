@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
-import { Zap, Lock, Bell, RefreshCw, Shield, Info, AlertTriangle, Loader2 } from 'lucide-react';
+import { Zap, Lock, Bell, RefreshCw, Shield, Info, AlertTriangle, Loader2, History, ChevronLeft, ChevronRight } from 'lucide-react';
 import { formatMinorUnitsToCurrency } from '@/lib/billing/currencyFormatter';
 
 interface CreditSummaryData {
@@ -13,23 +13,45 @@ interface CreditSummaryData {
   currency: string;
 }
 
+interface TransactionItem {
+  id: string;
+  occurredAt: string;
+  category: string;
+  description: string;
+  amountMinor: number;
+  formattedAmount: string;
+  balanceAfterMinor: number;
+  formattedBalanceAfter: string;
+  currency: string;
+}
+
+interface PaginationMeta {
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+}
+
 export default function BillingCreditPage() {
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState<boolean>(true);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
   const [summary, setSummary] = useState<CreditSummaryData | null>(null);
 
+  const [historyLoading, setHistoryLoading] = useState<boolean>(true);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [transactions, setTransactions] = useState<TransactionItem[]>([]);
+  const [pagination, setPagination] = useState<PaginationMeta>({ total: 0, limit: 10, offset: 0, hasMore: false });
+
+  // Fetch summary
   useEffect(() => {
     let isMounted = true;
-
     async function fetchSummary() {
       try {
-        setLoading(true);
-        setError(null);
+        setSummaryLoading(true);
+        setSummaryError(null);
         const res = await fetch('/api/billing/credit/summary', {
           method: 'GET',
-          headers: {
-            'Cache-Control': 'no-cache',
-          },
+          headers: { 'Cache-Control': 'no-cache' },
         });
 
         if (!res.ok) {
@@ -44,25 +66,66 @@ export default function BillingCreditPage() {
       } catch (err: any) {
         if (isMounted) {
           console.error('[BillingCreditPage] Error loading credit summary:', err.message || err);
-          setError('Credits balance temporarily unavailable.');
+          setSummaryError('Credits balance temporarily unavailable.');
         }
       } finally {
         if (isMounted) {
-          setLoading(false);
+          setSummaryLoading(false);
         }
       }
     }
 
     fetchSummary();
+    return () => { isMounted = false; };
+  }, []);
 
-    return () => {
-      isMounted = false;
-    };
+  // Fetch transaction history
+  const fetchHistory = async (offset: number = 0) => {
+    try {
+      setHistoryLoading(true);
+      setHistoryError(null);
+      const res = await fetch(`/api/billing/credit/history?limit=10&offset=${offset}`, {
+        method: 'GET',
+        headers: { 'Cache-Control': 'no-cache' },
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.message || 'Transaction history is temporarily unavailable.');
+      }
+
+      const data = await res.json();
+      setTransactions(data.transactions || []);
+      setPagination(data.pagination || { total: 0, limit: 10, offset: 0, hasMore: false });
+    } catch (err: any) {
+      console.error('[BillingCreditPage] Error loading transaction history:', err.message || err);
+      setHistoryError('Transaction history is temporarily unavailable.');
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchHistory(0);
   }, []);
 
   const displayBalance = summary
     ? summary.formattedBalance || formatMinorUnitsToCurrency(summary.availableCreditsMinor, summary.currency)
     : '$0.00 USD';
+
+  const formatDate = (isoString: string) => {
+    try {
+      return new Date(isoString).toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+    } catch {
+      return isoString;
+    }
+  };
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto pb-12">
@@ -96,15 +159,15 @@ export default function BillingCreditPage() {
           </div>
         </CardHeader>
         <div className="p-4 pt-0 space-y-4">
-          {loading ? (
+          {summaryLoading ? (
             <div className="flex items-center gap-2 text-slate-500 py-2">
               <Loader2 className="w-4 h-4 animate-spin text-amber-500" />
               <span className="text-xs">Loading available balance...</span>
             </div>
-          ) : error ? (
+          ) : summaryError ? (
             <div className="flex items-center gap-2 text-amber-800 dark:text-amber-200 py-2 text-xs">
               <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
-              <span>{error}</span>
+              <span>{summaryError}</span>
             </div>
           ) : (
             <div className="text-2xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight">
@@ -197,6 +260,99 @@ export default function BillingCreditPage() {
           </div>
         </Card>
       </div>
+
+      {/* Transaction History Section */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between pb-3">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <History className="w-4 h-4 text-amber-500" />
+            <span>Transaction History</span>
+          </CardTitle>
+          {pagination.total > 0 && (
+            <span className="text-xs text-slate-500 dark:text-slate-400">
+              Showing {pagination.offset + 1}-{Math.min(pagination.offset + pagination.limit, pagination.total)} of {pagination.total}
+            </span>
+          )}
+        </CardHeader>
+
+        <div className="p-4 pt-0">
+          {historyLoading ? (
+            <div className="flex items-center gap-2 text-slate-500 py-6 justify-center">
+              <Loader2 className="w-4 h-4 animate-spin text-amber-500" />
+              <span className="text-xs">Loading transaction history...</span>
+            </div>
+          ) : historyError ? (
+            <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400 py-6 justify-center text-xs">
+              <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+              <span>{historyError}</span>
+            </div>
+          ) : transactions.length === 0 ? (
+            <div className="text-center py-8 text-xs text-slate-500 dark:text-slate-400 border border-dashed border-slate-200 dark:border-slate-800 rounded-lg">
+              No Credits transactions yet.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 font-medium">
+                    <th className="pb-2.5 font-medium">Date</th>
+                    <th className="pb-2.5 font-medium">Category</th>
+                    <th className="pb-2.5 font-medium">Description</th>
+                    <th className="pb-2.5 font-medium text-right">Amount</th>
+                    <th className="pb-2.5 font-medium text-right">Balance</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
+                  {transactions.map((tx) => (
+                    <tr key={tx.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30 transition-colors">
+                      <td className="py-3 text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                        {formatDate(tx.occurredAt)}
+                      </td>
+                      <td className="py-3 whitespace-nowrap">
+                        <Badge
+                          variant={tx.amountMinor > 0 ? 'emerald' : 'neutral'}
+                          className="text-[10px] capitalize font-semibold"
+                        >
+                          {tx.category}
+                        </Badge>
+                      </td>
+                      <td className="py-3 text-slate-800 dark:text-slate-200 max-w-xs truncate">
+                        {tx.description}
+                      </td>
+                      <td className={`py-3 text-right font-semibold whitespace-nowrap ${tx.amountMinor > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-900 dark:text-slate-100'}`}>
+                        {tx.formattedAmount}
+                      </td>
+                      <td className="py-3 text-right text-slate-600 dark:text-slate-400 font-mono whitespace-nowrap">
+                        {tx.formattedBalanceAfter}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {/* Pagination Controls */}
+              <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-800/60">
+                <button
+                  disabled={pagination.offset === 0}
+                  onClick={() => fetchHistory(Math.max(0, pagination.offset - pagination.limit))}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-200 dark:border-slate-800 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 hover:bg-slate-50 dark:hover:bg-slate-900"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                  <span>Previous</span>
+                </button>
+                <button
+                  disabled={!pagination.hasMore}
+                  onClick={() => fetchHistory(pagination.offset + pagination.limit)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-200 dark:border-slate-800 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 hover:bg-slate-50 dark:hover:bg-slate-900"
+                >
+                  <span>Next</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </Card>
     </div>
   );
 }
