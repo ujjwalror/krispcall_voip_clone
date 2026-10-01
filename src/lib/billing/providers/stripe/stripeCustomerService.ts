@@ -1,5 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
+import Stripe from 'stripe';
 import { getStripeClient } from './stripeClient';
+import { ProviderAccountResolver } from '../providerAccountResolver';
 
 export class StripeCustomerService {
   /**
@@ -12,21 +14,29 @@ export class StripeCustomerService {
     supabase: SupabaseClient,
     organizationId: string,
     orgName?: string,
-    email?: string
+    email?: string,
+    options?: { stripeOverride?: Stripe }
   ): Promise<string> {
     if (!organizationId) {
       throw new Error('StripeCustomerService: organizationId is required.');
     }
 
+    const providerAccount = await ProviderAccountResolver.resolveActiveAccount(supabase, 'stripe', 'test');
+
     // 1. Check existing mapping in public.billing_provider_customers
-    const { data: existing, error: selectErr } = await (supabase as any)
+    let query = (supabase as any)
       .from('billing_provider_customers')
       .select('provider_customer_id')
       .eq('organization_id', organizationId)
-      .eq('provider', 'stripe')
-      .maybeSingle();
+      .eq('provider', 'stripe');
 
-    if (selectErr) {
+    if (providerAccount?.id) {
+      query = query.eq('provider_account_id', providerAccount.id);
+    }
+
+    const { data: existing, error: selectErr } = await query.maybeSingle();
+
+    if (selectErr && selectErr.code !== '42703') { // Ignore missing column error if pre-migration DB
       console.error('[StripeCustomerService] Select error:', selectErr.message);
       throw new Error(`StripeCustomerService database error: ${selectErr.message}`);
     }
@@ -36,7 +46,7 @@ export class StripeCustomerService {
     }
 
     // 2. Lazily create customer in Stripe API with deterministic idempotency key
-    const stripe = getStripeClient();
+    const stripe = options?.stripeOverride || getStripeClient();
     const customer = await stripe.customers.create(
       {
         name: orgName || `Organization ${organizationId}`,
@@ -51,13 +61,24 @@ export class StripeCustomerService {
     );
 
     // 3. Persist mapping in billing_provider_customers
-    const { error: insertErr } = await (supabase as any)
+    const insertPayload: any = {
+      organization_id: organizationId,
+      provider: 'stripe',
+      provider_customer_id: customer.id,
+      provider_account_id: providerAccount.id,
+    };
+
+    let { error: insertErr } = await (supabase as any)
       .from('billing_provider_customers')
-      .insert({
-        organization_id: organizationId,
-        provider: 'stripe',
-        provider_customer_id: customer.id,
-      });
+      .insert(insertPayload);
+
+    if (insertErr && (insertErr.code === '42703' || insertErr.code === 'PGRST204' || insertErr.message?.includes('Could not find'))) {
+      delete insertPayload.provider_account_id;
+      const retry = await (supabase as any)
+        .from('billing_provider_customers')
+        .insert(insertPayload);
+      insertErr = retry.error;
+    }
 
     if (insertErr) {
       if (insertErr.code === '23505') {
@@ -87,14 +108,21 @@ export class StripeCustomerService {
     supabase: SupabaseClient,
     organizationId: string
   ): Promise<string | null> {
-    const { data, error } = await (supabase as any)
+    const providerAccount = await ProviderAccountResolver.resolveActiveAccount(supabase, 'stripe', 'test');
+
+    let query = (supabase as any)
       .from('billing_provider_customers')
       .select('provider_customer_id')
       .eq('organization_id', organizationId)
-      .eq('provider', 'stripe')
-      .maybeSingle();
+      .eq('provider', 'stripe');
 
-    if (error) {
+    if (providerAccount?.id) {
+      query = query.eq('provider_account_id', providerAccount.id);
+    }
+
+    const { data, error } = await query.maybeSingle();
+
+    if (error && error.code !== '42703') {
       console.error('[StripeCustomerService] Lookup error:', error.message);
       throw new Error(`StripeCustomerService lookup error: ${error.message}`);
     }

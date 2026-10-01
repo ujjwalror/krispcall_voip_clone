@@ -7,6 +7,9 @@ import { CommercialCaptureReconciliationService } from '../../commercialCaptureR
 import { CommercialSubscriptionSyncService, SubscriptionSyncResult } from '../../commercialSubscriptionSyncService';
 import { StripeInvoiceSyncService, InvoiceSyncResult } from '../../stripeInvoiceSyncService';
 import { CreditTopupWebhookService } from '../../creditTopupWebhookService';
+import { CreditTopupRefundService } from '../../creditTopupRefundService';
+import { CreditTopupDisputeService } from '../../creditTopupDisputeService';
+import { ProviderAccountResolver } from '../providerAccountResolver';
 
 export interface ProcessWebhookResult {
   success: boolean;
@@ -46,11 +49,14 @@ export class StripeWebhookHandler {
     const isSubscriptionEvent = eventType.startsWith('customer.subscription.');
     const isInvoiceEvent = eventType.startsWith('invoice.');
     const isPaymentIntentEvent = eventType.startsWith('payment_intent.');
-    const isAsyncProcessedEvent = isSubscriptionEvent || isInvoiceEvent || isPaymentIntentEvent;
+    const isRefundEvent = eventType.startsWith('refund.') || eventType === 'charge.refunded';
+    const isDisputeEvent = eventType.startsWith('charge.dispute.');
+    const isAsyncProcessedEvent = isSubscriptionEvent || isInvoiceEvent || isPaymentIntentEvent || isRefundEvent || isDisputeEvent;
 
     // 2. Claim / Record Webhook Event safely
     const nowIso = new Date().toISOString();
     const staleThresholdMs = 5 * 60 * 1000; // 5 minutes conservative stale threshold
+    const providerAccountId = await ProviderAccountResolver.resolveActiveAccount(supabase);
 
     // Try RPC claim_stripe_webhook_event_for_processing first
     const { data: claimResult, error: rpcErr } = await (supabase as any)
@@ -65,17 +71,28 @@ export class StripeWebhookHandler {
       } else if (claimResult.reason === 'not_found') {
         // Brand new event: Insert initial record in public.billing_webhook_events
         const initialStatus = isAsyncProcessedEvent ? 'processing' : 'completed';
-        const { error: insertErr } = await (supabase as any)
+        const insertPayload: any = {
+          provider: 'stripe',
+          provider_event_id: providerEventId,
+          event_type: eventType,
+          payload: event as any,
+          status: initialStatus,
+          processing_started_at: isAsyncProcessedEvent ? nowIso : null,
+          processed_at: isAsyncProcessedEvent ? null : nowIso,
+        };
+        if (providerAccountId) {
+          insertPayload.provider_account_id = providerAccountId;
+        }
+
+        let { error: insertErr } = await (supabase as any)
           .from('billing_webhook_events')
-          .insert({
-            provider: 'stripe',
-            provider_event_id: providerEventId,
-            event_type: eventType,
-            payload: event as any,
-            status: initialStatus,
-            processing_started_at: isAsyncProcessedEvent ? nowIso : null,
-            processed_at: isAsyncProcessedEvent ? null : nowIso,
-          });
+          .insert(insertPayload);
+
+        if (insertErr && (insertErr.code === '42703' || insertErr.code === 'PGRST204' || insertErr.message?.includes('Could not find')) && insertPayload.provider_account_id) {
+          delete insertPayload.provider_account_id;
+          const retry = await (supabase as any).from('billing_webhook_events').insert(insertPayload);
+          insertErr = retry.error;
+        }
 
         if (insertErr) {
           if (insertErr.code === '23505') {
@@ -179,18 +196,28 @@ export class StripeWebhookHandler {
       } else {
         // Record new event in public.billing_webhook_events
         const initialStatus = isAsyncProcessedEvent ? 'processing' : 'completed';
+        const insertPayload: any = {
+          provider: 'stripe',
+          provider_event_id: providerEventId,
+          event_type: eventType,
+          payload: event as any,
+          status: initialStatus,
+          processing_started_at: isAsyncProcessedEvent ? nowIso : null,
+          processed_at: isAsyncProcessedEvent ? null : nowIso,
+        };
+        if (providerAccountId) {
+          insertPayload.provider_account_id = providerAccountId;
+        }
 
-        const { error: insertErr } = await (supabase as any)
+        let { error: insertErr } = await (supabase as any)
           .from('billing_webhook_events')
-          .insert({
-            provider: 'stripe',
-            provider_event_id: providerEventId,
-            event_type: eventType,
-            payload: event as any,
-            status: initialStatus,
-            processing_started_at: isAsyncProcessedEvent ? nowIso : null,
-            processed_at: isAsyncProcessedEvent ? null : nowIso,
-          });
+          .insert(insertPayload);
+
+        if (insertErr && (insertErr.code === '42703' || insertErr.code === 'PGRST204' || insertErr.message?.includes('Could not find')) && insertPayload.provider_account_id) {
+          delete insertPayload.provider_account_id;
+          const retry = await (supabase as any).from('billing_webhook_events').insert(insertPayload);
+          insertErr = retry.error;
+        }
 
         if (insertErr) {
           if (insertErr.code === '23505') {
@@ -364,6 +391,63 @@ export class StripeWebhookHandler {
         }
 
         await this.syncPaymentOperationState(supabase, paymentIntent, event.type);
+        return null;
+      }
+      case 'charge.refunded':
+      case 'refund.created':
+      case 'refund.updated':
+      case 'refund.failed': {
+        const refundRes = await CreditTopupRefundService.handleRefundEvent(supabase, event);
+        if (refundRes.success) {
+          await (supabase as any)
+            .from('billing_webhook_events')
+            .update({
+              status: 'completed',
+              processed_at: nowIso,
+              last_error: null,
+            })
+            .eq('provider', 'stripe')
+            .eq('provider_event_id', providerEventId);
+        } else {
+          await (supabase as any)
+            .from('billing_webhook_events')
+            .update({
+              status: refundRes.retryable ? 'failed' : 'completed',
+              processed_at: refundRes.retryable ? null : nowIso,
+              last_error: `REFUND_PROCESSING_ERROR: [${refundRes.code}] ${refundRes.message}`,
+            })
+            .eq('provider', 'stripe')
+            .eq('provider_event_id', providerEventId);
+        }
+        return null;
+      }
+      case 'charge.dispute.created':
+      case 'charge.dispute.updated':
+      case 'charge.dispute.closed':
+      case 'charge.dispute.funds_withdrawn':
+      case 'charge.dispute.funds_reinstated': {
+        const disputeRes = await CreditTopupDisputeService.handleDisputeEvent(supabase, event);
+        if (disputeRes.success) {
+          await (supabase as any)
+            .from('billing_webhook_events')
+            .update({
+              status: 'completed',
+              processed_at: nowIso,
+              last_error: null,
+            })
+            .eq('provider', 'stripe')
+            .eq('provider_event_id', providerEventId);
+        } else {
+          await (supabase as any)
+            .from('billing_webhook_events')
+            .update({
+              status: disputeRes.retryable ? 'failed' : 'completed',
+              processed_at: disputeRes.retryable ? null : nowIso,
+              last_error: `DISPUTE_PROCESSING_ERROR: [${disputeRes.code}] ${disputeRes.message}`,
+            })
+            .eq('provider', 'stripe')
+            .eq('provider_event_id', providerEventId);
+        }
         return null;
       }
       default:

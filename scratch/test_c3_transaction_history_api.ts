@@ -44,7 +44,7 @@ async function runC3ATests() {
     .eq('organization_id', testOrgId)
     .order('created_at', { ascending: false })
     .order('id', { ascending: false })
-    .range(0, 9);
+    .range(0, 19);
 
   assert.strictEqual(error, null, `Ledger query failed: ${error?.message}`);
   assert.strictEqual(typeof count, 'number');

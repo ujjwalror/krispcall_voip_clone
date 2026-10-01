@@ -1,5 +1,6 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import Stripe from 'stripe';
+import { ProviderAccountResolver } from './providers/providerAccountResolver';
 
 export interface CreditTopupWebhookResult {
   success: boolean;
@@ -85,6 +86,18 @@ export class CreditTopupWebhookService {
         success: false,
         code: 'PROVIDER_MISMATCH',
         message: `Local operation provider '${op.provider}' is not stripe.`,
+      };
+    }
+
+    // Validate provider_account_id if present
+    const activeProviderAccount = await ProviderAccountResolver.resolveActiveAccount(supabase);
+    const activeProviderAccountId = activeProviderAccount.id;
+    if (op.provider_account_id && op.provider_account_id !== activeProviderAccountId) {
+      console.warn(`[CreditTopupWebhookService] Provider account mismatch for op ${op.id}: op=${op.provider_account_id}, active=${activeProviderAccountId}`);
+      return {
+        success: false,
+        code: 'PROVIDER_ACCOUNT_MISMATCH',
+        message: 'Payment operation provider_account_id does not match active provider account ID.',
       };
     }
 

@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import Stripe from 'stripe';
 import { getStripeClient } from './providers/stripe/stripeClient';
 import { StripeCustomerService } from './providers/stripe/stripeCustomerService';
+import { ProviderAccountResolver } from './providers/providerAccountResolver';
 import { formatMinorUnitsToCurrency } from './currencyFormatter';
 
 export interface CreateCreditTopupParams {
@@ -172,6 +173,7 @@ export class CreditTopupService {
       };
     }
 
+    const providerAccount = await ProviderAccountResolver.resolveActiveAccount(supabase, 'stripe', 'test');
     const idempotencyKey = `credit_topup:${organizationId}:${cleanAttemptToken}`;
     const requestFingerprint = this.generateFingerprint(organizationId, amountMinor, currency, cleanAttemptToken);
 
@@ -179,20 +181,38 @@ export class CreditTopupService {
     let paymentOp: any = null;
     let isReused = false;
 
-    const { data: newOp, error: insertErr } = await (supabase as any)
+    const opPayload: any = {
+      organization_id: organizationId,
+      operation_type: 'credit_topup',
+      provider: 'stripe',
+      provider_account_id: providerAccount.id,
+      status: 'pending',
+      amount_minor: amountMinor,
+      gross_charge_minor: amountMinor,
+      credit_value_minor: amountMinor,
+      currency,
+      idempotency_key: idempotencyKey,
+      request_fingerprint: requestFingerprint,
+    };
+
+    let { data: newOp, error: insertErr } = await (supabase as any)
       .from('billing_payment_operations')
-      .insert({
-        organization_id: organizationId,
-        operation_type: 'credit_topup',
-        provider: 'stripe',
-        status: 'pending',
-        amount_minor: amountMinor,
-        currency,
-        idempotency_key: idempotencyKey,
-        request_fingerprint: requestFingerprint,
-      })
+      .insert(opPayload)
       .select()
       .single();
+
+    if (insertErr && (insertErr.code === '42703' || insertErr.code === 'PGRST204' || insertErr.message?.includes('Could not find'))) {
+      delete opPayload.provider_account_id;
+      delete opPayload.gross_charge_minor;
+      delete opPayload.credit_value_minor;
+      const retry = await (supabase as any)
+        .from('billing_payment_operations')
+        .insert(opPayload)
+        .select()
+        .single();
+      newOp = retry.data;
+      insertErr = retry.error;
+    }
 
     if (!insertErr && newOp) {
       paymentOp = newOp;
@@ -243,7 +263,7 @@ export class CreditTopupService {
     // 4. Resolve / Obtain Stripe Customer Idempotently
     let stripeCustomerId: string | null = null;
     try {
-      stripeCustomerId = await StripeCustomerService.getOrCreateStripeCustomer(supabase, organizationId);
+      stripeCustomerId = await StripeCustomerService.getOrCreateStripeCustomer(supabase, organizationId, undefined, undefined, options);
     } catch (custErr: any) {
       console.error('[CreditTopupService] Stripe customer resolution failed:', custErr.message);
       return {
@@ -290,7 +310,7 @@ export class CreditTopupService {
 
     // 6. Bind provider_payment_id compare-and-set safely
     if (paymentOp.provider_payment_id !== paymentIntent.id) {
-      if (paymentOp.provider_payment_id !== null && paymentOp.provider_payment_id !== paymentIntent.id) {
+      if (paymentOp.provider_payment_id != null && paymentOp.provider_payment_id !== paymentIntent.id) {
         console.error(`[CreditTopupService] Provider binding conflict: op ${paymentOp.id} bound to ${paymentOp.provider_payment_id}, attempt to bind ${paymentIntent.id}`);
         return {
           success: false,
