@@ -1,8 +1,10 @@
 -- ============================================================================
--- PUBLIC SAAS PHASE 13.4.3C SUBPHASE C.4E.DB — FINANCIAL LIFECYCLE DATABASE FOUNDATION
+-- PUBLIC SAAS PHASE 13.4.3C SUBPHASE C.4E.DB — FINANCIAL LIFECYCLE DATABASE FOUNDATION (REMEDIATED)
 -- Date: 2026-12-20
 -- Builds local database foundation for provider account portability, refund authorizations,
 -- refund execution, dispute tracking, aggregate financial risk holds, and account debt recovery.
+-- Includes remediation for cumulative over-refund guards, dispute terminal status guards,
+-- and hold replay prevention.
 -- LOCAL MIGRATION ONLY — SUBJECT TO MANUAL DBA REVIEW. DO NOT EXECUTE REMOTELY AUTOMATICALLY.
 -- ============================================================================
 
@@ -27,11 +29,11 @@ CREATE INDEX IF NOT EXISTS idx_billing_provider_accounts_lookup
 ON public.billing_provider_accounts (provider, environment, status);
 
 -- Seed initial internal provider account for current Stripe test context
--- ID: 00000000-0000-0000-0000-000000000001
+-- ID: 00000000-0000-0000-0000-0000000000aa (Unambiguous internal sentinel UUID)
 INSERT INTO public.billing_provider_accounts (
     id, provider, provider_account_reference, environment, status
 ) VALUES (
-    '00000000-0000-0000-0000-000000000001'::uuid,
+    '00000000-0000-0000-0000-0000000000aa'::uuid,
     'stripe',
     'stripe_primary_test',
     'test',
@@ -50,7 +52,7 @@ ADD COLUMN IF NOT EXISTS gross_charge_minor BIGINT NULL CHECK (gross_charge_mino
 ADD COLUMN IF NOT EXISTS credit_value_minor BIGINT NULL CHECK (credit_value_minor IS NULL OR credit_value_minor >= 0);
 
 UPDATE public.billing_payment_operations 
-SET provider_account_id = '00000000-0000-0000-0000-000000000001'::uuid 
+SET provider_account_id = '00000000-0000-0000-0000-0000000000aa'::uuid 
 WHERE provider_account_id IS NULL;
 
 UPDATE public.billing_payment_operations 
@@ -66,7 +68,7 @@ ALTER TABLE public.billing_webhook_events
 ADD COLUMN IF NOT EXISTS provider_account_id UUID REFERENCES public.billing_provider_accounts(id) ON DELETE RESTRICT;
 
 UPDATE public.billing_webhook_events 
-SET provider_account_id = '00000000-0000-0000-0000-000000000001'::uuid 
+SET provider_account_id = '00000000-0000-0000-0000-0000000000aa'::uuid 
 WHERE provider_account_id IS NULL;
 
 ALTER TABLE public.billing_webhook_events 
@@ -77,7 +79,7 @@ ALTER TABLE public.billing_provider_customers
 ADD COLUMN IF NOT EXISTS provider_account_id UUID REFERENCES public.billing_provider_accounts(id) ON DELETE RESTRICT;
 
 UPDATE public.billing_provider_customers 
-SET provider_account_id = '00000000-0000-0000-0000-000000000001'::uuid 
+SET provider_account_id = '00000000-0000-0000-0000-0000000000aa'::uuid 
 WHERE provider_account_id IS NULL;
 
 ALTER TABLE public.billing_provider_customers 
@@ -313,11 +315,12 @@ BEGIN
   WHERE organization_id = p_organization_id
     AND status = 'active';
 
-  -- 3. Fetch sum of ALL active financial risk holds
+  -- 3. Fetch sum of ALL active financial risk holds matching wallet currency
   SELECT COALESCE(SUM(amount_minor), 0) INTO v_active_holds
   FROM public.billing_financial_holds
   WHERE organization_id = p_organization_id
-    AND status = 'active';
+    AND status = 'active'
+    AND currency = v_currency;
 
   -- 4. Calculate Available Spendable Balance (clamped non-negative)
   v_available_balance := GREATEST(0, v_funded_balance - v_active_reservations - v_active_holds);
@@ -338,7 +341,7 @@ GRANT EXECUTE ON FUNCTION public.get_telecom_wallet_summary_atomic(UUID) TO serv
 
 
 -- ----------------------------------------------------------------------------
--- 10. Atomic SECURITY DEFINER RPC: Process Refund Reversal
+-- 10. Atomic SECURITY DEFINER RPC: Process Refund Reversal (REMEDIATED)
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.process_refund_reversal_atomic(
   p_payment_operation_id UUID,
@@ -358,6 +361,7 @@ AS $$
 DECLARE
   v_op public.billing_payment_operations;
   v_refund public.billing_payment_refunds;
+  v_req public.billing_refund_requests;
   v_clean_provider_refund_id TEXT;
   v_clean_currency TEXT;
   v_current_balance BIGINT := 0;
@@ -367,6 +371,10 @@ DECLARE
   v_reversal_from_wallet BIGINT := 0;
   v_uncovered_debt BIGINT := 0;
   v_new_balance BIGINT := 0;
+  v_prior_cash_refund_sum BIGINT := 0;
+  v_prior_credit_reversal_sum BIGINT := 0;
+  v_gross_charge_ceiling BIGINT := 0;
+  v_credit_value_ceiling BIGINT := 0;
   v_ledger_id UUID := NULL;
   v_refund_row_id UUID := NULL;
   v_debt_id UUID := NULL;
@@ -416,7 +424,7 @@ BEGIN
     );
   END IF;
 
-  -- 2. Lock payment operation row
+  -- 2. Lock payment operation row exclusively
   SELECT * INTO v_op
   FROM public.billing_payment_operations
   WHERE id = p_payment_operation_id
@@ -426,15 +434,74 @@ BEGIN
     RAISE EXCEPTION 'PAYMENT_OPERATION_NOT_FOUND: Payment operation % does not exist.', p_payment_operation_id;
   END IF;
 
+  IF v_op.provider_account_id <> p_provider_account_id THEN
+    RAISE EXCEPTION 'PROVIDER_ACCOUNT_MISMATCH: Operation provider account % does not match refund provider account %.',
+      v_op.provider_account_id, p_provider_account_id;
+  END IF;
+
   IF v_op.currency <> v_clean_currency THEN
     RAISE EXCEPTION 'CURRENCY_MISMATCH: Refund currency % does not match operation currency %.',
       v_clean_currency, v_op.currency;
   END IF;
 
-  -- 3. Lock organization for wallet calculations
+  -- 3. Validate ceilings against cumulative prior succeeded refunds for this operation
+  v_gross_charge_ceiling := COALESCE(v_op.gross_charge_minor, v_op.amount_minor);
+  v_credit_value_ceiling := COALESCE(v_op.credit_value_minor, v_op.amount_minor);
+
+  SELECT COALESCE(SUM(provider_refund_minor), 0), COALESCE(SUM(credit_value_reversal_minor), 0)
+  INTO v_prior_cash_refund_sum, v_prior_credit_reversal_sum
+  FROM public.billing_payment_refunds
+  WHERE payment_operation_id = v_op.id
+    AND status = 'succeeded';
+
+  -- Enforce cumulative provider cash refund ceiling
+  IF (v_prior_cash_refund_sum + p_provider_refund_minor) > v_gross_charge_ceiling THEN
+    RAISE EXCEPTION 'OVER_REFUND_EXCEEDED: Cumulative provider cash refund (% + %) would exceed payment gross charge (%).',
+      v_prior_cash_refund_sum, p_provider_refund_minor, v_gross_charge_ceiling;
+  END IF;
+
+  -- Enforce cumulative Credit reversal ceiling
+  IF (v_prior_credit_reversal_sum + p_credit_value_reversal_minor) > v_credit_value_ceiling THEN
+    RAISE EXCEPTION 'CREDIT_REVERSAL_CEILING_EXCEEDED: Cumulative Credit reversal (% + %) would exceed payment credit value (%).',
+      v_prior_credit_reversal_sum, p_credit_value_reversal_minor, v_credit_value_ceiling;
+  END IF;
+
+  -- 4. Cross-check optional billing_refund_requests authorization record if attached
+  IF p_refund_request_id IS NOT NULL THEN
+    SELECT * INTO v_req
+    FROM public.billing_refund_requests
+    WHERE id = p_refund_request_id
+    FOR UPDATE;
+
+    IF v_req.id IS NULL THEN
+      RAISE EXCEPTION 'REFUND_REQUEST_NOT_FOUND: Refund request % does not exist.', p_refund_request_id;
+    END IF;
+
+    IF v_req.organization_id <> v_op.organization_id OR v_req.payment_operation_id <> v_op.id THEN
+      RAISE EXCEPTION 'REFUND_REQUEST_MISMATCH: Refund request % does not match operation % or organization %.',
+        p_refund_request_id, v_op.id, v_op.organization_id;
+    END IF;
+
+    IF v_req.currency <> v_clean_currency THEN
+      RAISE EXCEPTION 'REFUND_REQUEST_CURRENCY_MISMATCH: Refund request currency % does not match refund currency %.',
+        v_req.currency, v_clean_currency;
+    END IF;
+
+    IF p_credit_value_reversal_minor > v_req.approved_credit_value_reversal_minor THEN
+      RAISE EXCEPTION 'REFUND_REQUEST_EXCEEDED: Credit reversal % exceeds approved reversal amount %.',
+        p_credit_value_reversal_minor, v_req.approved_credit_value_reversal_minor;
+    END IF;
+
+    IF p_provider_refund_minor > v_req.approved_amount_minor THEN
+      RAISE EXCEPTION 'REFUND_REQUEST_EXCEEDED: Provider cash refund % exceeds approved cash refund %.',
+        p_provider_refund_minor, v_req.approved_amount_minor;
+    END IF;
+  END IF;
+
+  -- 5. Lock organization for wallet calculations
   PERFORM id FROM public.organizations WHERE id = v_op.organization_id FOR UPDATE;
 
-  -- 4. Calculate available spendable wallet balance
+  -- 6. Calculate available spendable wallet balance
   SELECT balance_after_minor INTO v_current_balance
   FROM public.billing_credit_ledger
   WHERE organization_id = v_op.organization_id
@@ -449,15 +516,15 @@ BEGIN
 
   SELECT COALESCE(SUM(amount_minor), 0) INTO v_active_holds
   FROM public.billing_financial_holds
-  WHERE organization_id = v_op.organization_id AND status = 'active';
+  WHERE organization_id = v_op.organization_id AND status = 'active' AND currency = v_clean_currency;
 
   v_available_spendable := GREATEST(0, v_current_balance - v_active_reservations - v_active_holds);
 
-  -- 5. Calculate Reversal vs Debt split
+  -- 7. Calculate Reversal vs Debt split
   v_reversal_from_wallet := LEAST(v_available_spendable, p_credit_value_reversal_minor);
   v_uncovered_debt := p_credit_value_reversal_minor - v_reversal_from_wallet;
 
-  -- 6. Insert credit ledger reversal if spendable credits available
+  -- 8. Insert credit ledger reversal if spendable credits available
   IF v_reversal_from_wallet > 0 THEN
     v_new_balance := v_current_balance - v_reversal_from_wallet;
 
@@ -472,7 +539,7 @@ BEGIN
     v_new_balance := v_current_balance;
   END IF;
 
-  -- 7. Insert account debt if uncovered exposure exists
+  -- 9. Insert account debt if uncovered exposure exists
   IF v_uncovered_debt > 0 THEN
     INSERT INTO public.billing_account_debts (
       organization_id, reference_type, reference_id,
@@ -487,7 +554,16 @@ BEGIN
     RETURNING id INTO v_debt_id;
   END IF;
 
-  -- 8. Upsert billing_payment_refunds
+  -- 10. Settle any active pending refund financial hold matching this refund
+  UPDATE public.billing_financial_holds
+  SET status = 'settled',
+      settled_at = NOW()
+  WHERE organization_id = v_op.organization_id
+    AND reference_type = 'refund_pending'
+    AND reference_id = v_clean_provider_refund_id
+    AND status = 'active';
+
+  -- 11. Upsert billing_payment_refunds
   INSERT INTO public.billing_payment_refunds (
     organization_id, payment_operation_id, refund_request_id, provider_account_id,
     provider_refund_id, currency, provider_refund_minor, credit_value_reversal_minor, status
@@ -500,8 +576,8 @@ BEGIN
       updated_at = NOW()
   RETURNING id INTO v_refund_row_id;
 
-  -- 9. Update Payment Operation status
-  IF p_provider_refund_minor < COALESCE(v_op.gross_charge_minor, v_op.amount_minor) THEN
+  -- 12. Update Payment Operation status
+  IF (v_prior_cash_refund_sum + p_provider_refund_minor) < v_gross_charge_ceiling THEN
     v_new_status := 'partially_refunded';
   ELSE
     v_new_status := 'refunded';
@@ -512,7 +588,7 @@ BEGIN
       updated_at = NOW()
   WHERE id = v_op.id;
 
-  -- 10. Update refund request if attached
+  -- 13. Update refund request if attached
   IF p_refund_request_id IS NOT NULL THEN
     UPDATE public.billing_refund_requests
     SET status = 'executed',
@@ -542,7 +618,7 @@ GRANT EXECUTE ON FUNCTION public.process_refund_reversal_atomic(UUID, UUID, TEXT
 
 
 -- ----------------------------------------------------------------------------
--- 11. Atomic SECURITY DEFINER RPC: Process Dispute Risk Hold & Settlement
+-- 11. Atomic SECURITY DEFINER RPC: Process Dispute Risk Hold & Settlement (REMEDIATED)
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.process_dispute_hold_atomic(
   p_payment_operation_id UUID,
@@ -563,6 +639,7 @@ AS $$
 DECLARE
   v_op public.billing_payment_operations;
   v_dispute public.billing_payment_disputes;
+  v_existing_hold public.billing_financial_holds;
   v_clean_dispute_id TEXT;
   v_clean_currency TEXT;
   v_current_balance BIGINT := 0;
@@ -606,10 +683,56 @@ BEGIN
     RAISE EXCEPTION 'PAYMENT_OPERATION_NOT_FOUND: Payment operation % does not exist.', p_payment_operation_id;
   END IF;
 
+  IF v_op.provider_account_id <> p_provider_account_id THEN
+    RAISE EXCEPTION 'PROVIDER_ACCOUNT_MISMATCH: Operation provider account % does not match dispute provider account %.',
+      v_op.provider_account_id, p_provider_account_id;
+  END IF;
+
+  -- Validate currency match
+  IF v_op.currency <> v_clean_currency THEN
+    RAISE EXCEPTION 'CURRENCY_MISMATCH: Dispute currency % does not match operation currency %.',
+      v_clean_currency, v_op.currency;
+  END IF;
+
   -- Lock organization for financial calculations
   PERFORM id FROM public.organizations WHERE id = v_op.organization_id FOR UPDATE;
 
-  -- 1. Upsert dispute tracking record
+  -- Check existing dispute record to guard against terminal state downgrades
+  SELECT * INTO v_dispute
+  FROM public.billing_payment_disputes
+  WHERE provider_account_id = p_provider_account_id
+    AND provider_dispute_id = v_clean_dispute_id;
+
+  -- Guard: Terminal dispute states cannot be overwritten by stale open webhooks
+  IF v_dispute.id IS NOT NULL AND v_dispute.status IN ('won', 'lost', 'charge_refunded') THEN
+    IF p_action = 'PLACE_HOLD' THEN
+      RETURN jsonb_build_object(
+        'success', true,
+        'action', 'PLACE_HOLD',
+        'already_terminal', true,
+        'dispute_id', v_dispute.id,
+        'status', v_dispute.status
+      );
+    ELSIF p_action = 'RELEASE_HOLD' AND v_dispute.status = 'won' THEN
+      RETURN jsonb_build_object(
+        'success', true,
+        'action', 'RELEASE_HOLD',
+        'already_released', true,
+        'dispute_id', v_dispute.id,
+        'status', 'won'
+      );
+    ELSIF p_action = 'SETTLE_LOST' AND v_dispute.status = 'lost' THEN
+      RETURN jsonb_build_object(
+        'success', true,
+        'action', 'SETTLE_LOST',
+        'already_settled', true,
+        'dispute_id', v_dispute.id,
+        'status', 'lost'
+      );
+    END IF;
+  END IF;
+
+  -- 1. Upsert dispute tracking record with protected terminal state guard
   INSERT INTO public.billing_payment_disputes (
     organization_id, payment_operation_id, provider_account_id, provider_dispute_id,
     amount_minor, currency, status, reason
@@ -618,14 +741,50 @@ BEGIN
     p_dispute_amount_minor, v_clean_currency, p_dispute_status, p_reason
   )
   ON CONFLICT (provider_account_id, provider_dispute_id) DO UPDATE
-  SET status = EXCLUDED.status,
+  SET status = CASE 
+        WHEN public.billing_payment_disputes.status IN ('won', 'lost', 'charge_refunded') THEN public.billing_payment_disputes.status 
+        ELSE EXCLUDED.status 
+      END,
       reason = EXCLUDED.reason,
       updated_at = NOW()
   RETURNING id INTO v_dispute_row_id;
 
   -- 2. Execute Action
   IF p_action = 'PLACE_HOLD' THEN
-    -- Place active financial hold if not already present
+    -- Check if any hold (active, released, or settled) already exists for this dispute reference
+    SELECT * INTO v_existing_hold
+    FROM public.billing_financial_holds
+    WHERE organization_id = v_op.organization_id
+      AND reference_type = 'dispute'
+      AND reference_id = v_clean_dispute_id
+    ORDER BY created_at DESC
+    LIMIT 1;
+
+    IF v_existing_hold.id IS NOT NULL THEN
+      IF v_existing_hold.status = 'active' THEN
+        RETURN jsonb_build_object(
+          'success', true,
+          'action', 'PLACE_HOLD',
+          'already_held', true,
+          'dispute_id', v_dispute_row_id,
+          'hold_id', v_existing_hold.id,
+          'status', p_dispute_status
+        );
+      ELSE
+        -- Hold was previously released or settled; do not resurrect hold on replay
+        RETURN jsonb_build_object(
+          'success', true,
+          'action', 'PLACE_HOLD',
+          'already_settled', true,
+          'resurrected', false,
+          'dispute_id', v_dispute_row_id,
+          'hold_id', v_existing_hold.id,
+          'status', v_dispute.status
+        );
+      END IF;
+    END IF;
+
+    -- Place new active financial hold
     INSERT INTO public.billing_financial_holds (
       organization_id, reference_type, reference_id, amount_minor, currency, status, reason
     ) VALUES (
@@ -678,6 +837,7 @@ BEGIN
     FROM public.billing_financial_holds
     WHERE organization_id = v_op.organization_id
       AND status = 'active'
+      AND currency = v_clean_currency
       AND reference_id <> v_clean_dispute_id;
 
     v_available_spendable := GREATEST(0, v_current_balance - v_active_reservations - v_active_holds);
