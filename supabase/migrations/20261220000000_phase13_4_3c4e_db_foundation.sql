@@ -917,13 +917,7 @@ CREATE POLICY "authenticated_select_billing_refund_requests"
 ON public.billing_refund_requests 
 FOR SELECT 
 TO authenticated 
-USING (
-  organization_id IN (
-    SELECT m.organization_id 
-    FROM public.user_organization_memberships m 
-    WHERE m.user_id = auth.uid()
-  )
-);
+USING (organization_id = public.get_auth_organization_id());
 
 -- Service Role Full Access Policies
 DROP POLICY IF EXISTS "service_role_all_billing_provider_accounts" ON public.billing_provider_accounts;
