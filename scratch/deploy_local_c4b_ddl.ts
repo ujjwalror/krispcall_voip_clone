@@ -1,0 +1,207 @@
+import fs from 'fs';
+import path from 'path';
+import { createClient } from '@supabase/supabase-js';
+
+(globalThis as any).WebSocket = class {};
+
+const envPath = path.resolve(process.cwd(), '.env.local');
+if (fs.existsSync(envPath)) {
+  const lines = fs.readFileSync(envPath, 'utf8').split('\n');
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith('#') && trimmed.includes('=')) {
+      const idx = trimmed.indexOf('=');
+      const key = trimmed.slice(0, idx).trim();
+      const val = trimmed.slice(idx + 1).trim();
+      if (key && !process.env[key]) {
+        process.env[key] = val;
+      }
+    }
+  }
+}
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseKey = process.env.SUPABASE_SECRET_KEY!;
+const supabase = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
+
+async function main() {
+  console.log('--- Applying 20261219000000_phase13_4_3c4b_exact_once_funding_foundation.sql DDL to Database ---');
+
+  const ddl1 = `
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_payment_ops_unique_provider_payment_id
+    ON public.billing_payment_operations (provider, provider_payment_id)
+    WHERE provider_payment_id IS NOT NULL;
+  `;
+
+  const ddl2 = `
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_billing_credit_ledger_payment_grant
+    ON public.billing_credit_ledger (organization_id, reference_id)
+    WHERE reference_type = 'payment_operation'
+      AND entry_type IN ('grant', 'auto_recharge')
+      AND reference_id IS NOT NULL;
+  `;
+
+  const ddl3 = `
+    CREATE OR REPLACE FUNCTION public.fund_credit_topup_from_payment_atomic(
+      p_payment_operation_id UUID,
+      p_provider_payment_id TEXT,
+      p_succeeded_amount_minor BIGINT,
+      p_succeeded_currency TEXT,
+      p_provider_event_id TEXT DEFAULT NULL
+    )
+    RETURNS JSONB
+    LANGUAGE plpgsql
+    SECURITY DEFINER
+    SET search_path = public, pg_temp
+    AS $$
+    DECLARE
+      v_op public.billing_payment_operations;
+      v_clean_provider_payment_id TEXT;
+      v_clean_currency TEXT;
+      v_current_balance BIGINT := 0;
+      v_wallet_currency TEXT := 'USD';
+      v_new_balance BIGINT := 0;
+      v_ledger_id UUID;
+    BEGIN
+      v_clean_provider_payment_id := pg_catalog.btrim(COALESCE(p_provider_payment_id, ''));
+      v_clean_currency := pg_catalog.upper(pg_catalog.btrim(COALESCE(p_succeeded_currency, 'USD')));
+
+      IF p_payment_operation_id IS NULL THEN
+        RAISE EXCEPTION 'INVALID_ARGUMENT: p_payment_operation_id is required.';
+      END IF;
+      IF length(v_clean_provider_payment_id) = 0 THEN
+        RAISE EXCEPTION 'INVALID_ARGUMENT: p_provider_payment_id is required.';
+      END IF;
+      IF p_succeeded_amount_minor <= 0 THEN
+        RAISE EXCEPTION 'INVALID_AMOUNT: p_succeeded_amount_minor must be positive.';
+      END IF;
+
+      -- Lock payment operation row exclusively
+      SELECT * INTO v_op
+      FROM public.billing_payment_operations
+      WHERE id = p_payment_operation_id
+      FOR UPDATE;
+
+      IF v_op.id IS NULL THEN
+        RAISE EXCEPTION 'PAYMENT_OPERATION_NOT_FOUND: Payment operation % does not exist.', p_payment_operation_id;
+      END IF;
+
+      IF v_op.operation_type <> 'credit_topup' THEN
+        RAISE EXCEPTION 'INVALID_OPERATION_TYPE: Payment operation % type is %, expected credit_topup.',
+          p_payment_operation_id, v_op.operation_type;
+      END IF;
+
+      -- Idempotent Already-Funded Path
+      IF v_op.status = 'captured' THEN
+        SELECT balance_after_minor INTO v_current_balance
+        FROM public.billing_credit_ledger
+        WHERE organization_id = v_op.organization_id
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1;
+
+        RETURN jsonb_build_object(
+          'success', true,
+          'already_funded', true,
+          'payment_operation_id', v_op.id,
+          'funded_amount_minor', v_op.amount_minor,
+          'balance_after_minor', COALESCE(v_current_balance, 0),
+          'currency', v_op.currency,
+          'status', 'captured'
+        );
+      END IF;
+
+      -- Validate Pre-Funding Status
+      IF v_op.status IN ('canceled', 'failed', 'refunded', 'partially_refunded', 'refund_pending') THEN
+        RAISE EXCEPTION 'CANNOT_FUND_TERMINAL_PAYMENT: Payment operation % status is terminal (%).',
+          v_op.id, v_op.status;
+      END IF;
+
+      IF v_op.status NOT IN ('pending', 'requires_customer_action', 'authorized', 'capture_pending') THEN
+        RAISE EXCEPTION 'INVALID_PAYMENT_STATUS: Payment operation % status % is not eligible for funding.',
+          v_op.id, v_op.status;
+      END IF;
+
+      -- Validate / Bind Provider Payment ID
+      IF v_op.provider_payment_id IS NOT NULL AND v_op.provider_payment_id <> v_clean_provider_payment_id THEN
+        RAISE EXCEPTION 'PROVIDER_PAYMENT_ID_MISMATCH: Payment operation % has provider payment ID %, expected %.',
+          v_op.id, v_op.provider_payment_id, v_clean_provider_payment_id;
+      END IF;
+
+      -- Validate Amount & Currency against expectations
+      IF v_op.amount_minor <> p_succeeded_amount_minor THEN
+        RAISE EXCEPTION 'AMOUNT_MISMATCH: Succeeded amount % does not match payment operation amount %.',
+          p_succeeded_amount_minor, v_op.amount_minor;
+      END IF;
+
+      IF v_op.currency <> v_clean_currency THEN
+        RAISE EXCEPTION 'CURRENCY_MISMATCH: Succeeded currency % does not match payment operation currency %.',
+          v_clean_currency, v_op.currency;
+      END IF;
+
+      -- Lock organization row for ledger calculation
+      PERFORM id FROM public.organizations WHERE id = v_op.organization_id FOR UPDATE;
+
+      -- Fetch current wallet balance & currency
+      SELECT balance_after_minor, currency INTO v_current_balance, v_wallet_currency
+      FROM public.billing_credit_ledger
+      WHERE organization_id = v_op.organization_id
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1;
+
+      v_current_balance := COALESCE(v_current_balance, 0);
+      v_wallet_currency := COALESCE(v_wallet_currency, 'USD');
+
+      IF v_wallet_currency <> v_op.currency THEN
+        RAISE EXCEPTION 'WALLET_CURRENCY_MISMATCH: Wallet currency % does not match payment currency %.',
+          v_wallet_currency, v_op.currency;
+      END IF;
+
+      v_new_balance := v_current_balance + v_op.amount_minor;
+
+      -- Insert Exactly One Ledger Grant Entry
+      INSERT INTO public.billing_credit_ledger (
+        organization_id, entry_type, amount_minor, balance_after_minor,
+        currency, description, reference_type, reference_id
+      ) VALUES (
+        v_op.organization_id, 'grant', v_op.amount_minor, v_new_balance,
+        v_op.currency, 'Prepaid calling credit top-up', 'payment_operation', v_op.id::text
+      ) RETURNING id INTO v_ledger_id;
+
+      -- Update Payment Operation to Captured State
+      UPDATE public.billing_payment_operations
+      SET status = 'captured',
+          provider_payment_id = v_clean_provider_payment_id,
+          updated_at = NOW()
+      WHERE id = v_op.id;
+
+      RETURN jsonb_build_object(
+        'success', true,
+        'already_funded', false,
+        'payment_operation_id', v_op.id,
+        'ledger_entry_id', v_ledger_id,
+        'funded_amount_minor', v_op.amount_minor,
+        'balance_after_minor', v_new_balance,
+        'currency', v_op.currency,
+        'status', 'captured'
+      );
+    END;
+    $$;
+  `;
+
+  const ddl4 = `
+    REVOKE ALL ON FUNCTION public.fund_credit_topup_from_payment_atomic(UUID, TEXT, BIGINT, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
+    GRANT EXECUTE ON FUNCTION public.fund_credit_topup_from_payment_atomic(UUID, TEXT, BIGINT, TEXT, TEXT) TO service_role;
+  `;
+
+  const ddls = [ddl1, ddl2, ddl3, ddl4];
+  for (let i = 0; i < ddls.length; i++) {
+    const { error } = await (supabase as any).rpc('exec_sql', { sql_query: ddls[i] });
+    if (error) {
+      console.log(`DDL step ${i + 1} info:`, error.message);
+    } else {
+      console.log(`✓ DDL step ${i + 1} applied cleanly.`);
+    }
+  }
+}
+
+main().catch(console.error);
