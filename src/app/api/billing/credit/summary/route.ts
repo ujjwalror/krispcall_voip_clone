@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireActiveSession } from '@/lib/auth/requireActiveSession';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { TelecomWalletService } from '@/lib/billing/telecomWalletService';
+import { formatMinorUnitsToCurrency } from '@/lib/billing/currencyFormatter';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -38,7 +39,7 @@ export async function GET(req: NextRequest) {
 
     const availableCreditsMinor = summary.availableBalanceMinor || 0;
     const currency = summary.currency || 'USD';
-    const formattedBalance = `$${(availableCreditsMinor / 100).toFixed(2)} ${currency}`;
+    const formattedBalance = formatMinorUnitsToCurrency(availableCreditsMinor, currency);
 
     // CUSTOMER-SAFE RESPONSE CONTRACT:
     // Strictly omit internal reservation hold totals, wholesale costs, provider SIDs, and ledger details!

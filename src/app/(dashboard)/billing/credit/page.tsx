@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Zap, Lock, Bell, RefreshCw, Shield, Info, AlertTriangle, Loader2 } from 'lucide-react';
+import { formatMinorUnitsToCurrency } from '@/lib/billing/currencyFormatter';
 
 interface CreditSummaryData {
   success: boolean;
@@ -59,6 +60,10 @@ export default function BillingCreditPage() {
     };
   }, []);
 
+  const displayBalance = summary
+    ? summary.formattedBalance || formatMinorUnitsToCurrency(summary.availableCreditsMinor, summary.currency)
+    : '$0.00 USD';
+
   return (
     <div className="space-y-6 max-w-4xl mx-auto pb-12">
       {/* Header */}
@@ -103,7 +108,7 @@ export default function BillingCreditPage() {
             </div>
           ) : (
             <div className="text-2xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight">
-              {summary?.formattedBalance || '$0.00 USD'}
+              {displayBalance}
             </div>
           )}
 

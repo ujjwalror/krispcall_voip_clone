@@ -6,6 +6,7 @@ import path from 'path';
 
 import { createClient } from '@supabase/supabase-js';
 import { TelecomWalletService } from '../src/lib/billing/telecomWalletService';
+import { formatMinorUnitsToCurrency, getCurrencyFractionDigits } from '../src/lib/billing/currencyFormatter';
 
 // Load .env.local
 const envPath = path.resolve(process.cwd(), '.env.local');
@@ -28,14 +29,14 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseSecretKey = process.env.SUPABASE_SECRET_KEY!;
 const adminSupabase = createClient(supabaseUrl, supabaseSecretKey, { auth: { persistSession: false } });
 
-async function runC2Tests() {
+async function runC2ATests() {
   console.log('================================================================');
-  console.log('PHASE 13.4.3C.2 — AUTHORITATIVE CREDITS READ API & BALANCE TESTS');
+  console.log('PHASE 13.4.3C.2A — ISO-AWARE CREDITS DISPLAY FORMATTING TESTS');
   console.log('================================================================\n');
 
   const testOrgId = '00000000-0000-0000-0000-000000000001';
 
-  // TEST 1: Authoritative Wallet Service Summary Read
+  // TEST 1: Authoritative Wallet Summary Read
   console.log('--- TEST 1: Authoritative Wallet Summary Read ---');
   const walletSummary = await TelecomWalletService.getWalletSummary(adminSupabase, testOrgId);
   assert.strictEqual(typeof walletSummary.availableBalanceMinor, 'number');
@@ -52,7 +53,7 @@ async function runC2Tests() {
   const customerSafeResponse = {
     success: true,
     availableCreditsMinor: walletSummary.availableBalanceMinor,
-    formattedBalance: `$${(walletSummary.availableBalanceMinor / 100).toFixed(2)} ${walletSummary.currency}`,
+    formattedBalance: formatMinorUnitsToCurrency(walletSummary.availableBalanceMinor, walletSummary.currency),
     currency: walletSummary.currency,
   };
 
@@ -67,7 +68,7 @@ async function runC2Tests() {
   assert.strictEqual(rawResponse.rateCardId, undefined, 'Rate card IDs MUST NOT be exposed');
   console.log('✓ TEST 2 PASS: Customer response strictly minimizes data fields and conceals internal exposure holds.');
 
-  // TEST 3: Tenant Isolation & Query-String Manipulation Resistance
+  // TEST 3: Tenant Isolation & Query Manipulation Resistance
   console.log('\n--- TEST 3: Tenant Isolation & Query Manipulation Resistance ---');
   const resolveTenantForRequest = (serverResolvedProfileOrg: string, browserQueryOrg?: string) => {
     // ALWAYS use server-resolved profile org ID, ignore browser input
@@ -79,17 +80,36 @@ async function runC2Tests() {
   assert.strictEqual(resolvedOrg, testOrgId, 'Browser-supplied tenant ID MUST be ignored');
   console.log('✓ TEST 3 PASS: Browser tenant manipulation strictly prevented by server-authoritative profile resolution.');
 
-  // TEST 4: Money Formatting Precision & Integer Minor Unit Storage
-  console.log('\n--- TEST 4: Money Formatting Precision ---');
-  const formatBalance = (minorUnits: number, currencyStr: string) => {
-    return `$${(minorUnits / 100).toFixed(2)} ${currencyStr}`;
-  };
+  // TEST 4: ISO-Aware Multi-Currency Formatting Tests (USD, JPY, KWD, Invalid)
+  console.log('\n--- TEST 4: ISO-Aware Multi-Currency Formatting Tests ---');
 
-  assert.strictEqual(formatBalance(100, 'USD'), '$1.00 USD');
-  assert.strictEqual(formatBalance(50, 'USD'), '$0.50 USD');
-  assert.strictEqual(formatBalance(0, 'USD'), '$0.00 USD');
-  assert.strictEqual(formatBalance(12345, 'USD'), '$123.45 USD');
-  console.log('✓ TEST 4 PASS: Integer minor unit money formatting behaves accurately.');
+  // USD: 2 fraction digits (100 minor USD = $1.00 USD)
+  assert.strictEqual(getCurrencyFractionDigits('USD'), 2);
+  const formattedUSD = formatMinorUnitsToCurrency(100, 'USD');
+  assert.strictEqual(formattedUSD.includes('1.00'), true);
+  assert.strictEqual(formattedUSD.includes('USD'), true);
+  console.log(`  - USD (2 decimals): 100 minor -> "${formattedUSD}"`);
+
+  // JPY: 0 fraction digits (100 minor JPY = ¥100 JPY)
+  assert.strictEqual(getCurrencyFractionDigits('JPY'), 0);
+  const formattedJPY = formatMinorUnitsToCurrency(100, 'JPY');
+  assert.strictEqual(formattedJPY.includes('100'), true);
+  assert.strictEqual(formattedJPY.includes('JPY'), true);
+  console.log(`  - JPY (0 decimals): 100 minor -> "${formattedJPY}"`);
+
+  // KWD: 3 fraction digits (1000 minor KWD = 1.000 KWD)
+  assert.strictEqual(getCurrencyFractionDigits('KWD'), 3);
+  const formattedKWD = formatMinorUnitsToCurrency(1000, 'KWD');
+  assert.strictEqual(formattedKWD.includes('1.000'), true);
+  assert.strictEqual(formattedKWD.includes('KWD'), true);
+  console.log(`  - KWD (3 decimals): 1000 minor -> "${formattedKWD}"`);
+
+  // INVALID CURRENCY: Fallback without throwing or crashing
+  const formattedInvalid = formatMinorUnitsToCurrency(100, 'INVALID');
+  assert.strictEqual(formattedInvalid.includes('INVALID'), true);
+  console.log(`  - INVALID (fallback): 100 minor -> "${formattedInvalid}"`);
+
+  console.log('✓ TEST 4 PASS: ISO-aware currency minor-unit formatter behaves correctly across 0, 2, 3 decimals and invalid codes.');
 
   // TEST 5: Read-Only Idempotency Invariant
   console.log('\n--- TEST 5: Read-Only Idempotency Invariant ---');
@@ -105,11 +125,11 @@ async function runC2Tests() {
   console.log('✓ TEST 5 PASS: Repeated GET reads create zero financial operations or balance mutations.');
 
   console.log('\n================================================================');
-  console.log('ALL PHASE 13.4.3C.2 NON-LIVE TESTS PASSED (1 - 5)');
+  console.log('ALL PHASE 13.4.3C.2A NON-LIVE TESTS PASSED (1 - 5)');
   console.log('================================================================\n');
 }
 
-runC2Tests().catch((err) => {
-  console.error('C.2 Test Suite Failed:', err);
+runC2ATests().catch((err) => {
+  console.error('C.2A Test Suite Failed:', err);
   process.exit(1);
 });
