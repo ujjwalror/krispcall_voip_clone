@@ -6,28 +6,52 @@ import { formatMinorUnitsToCurrency } from '@/lib/billing/currencyFormatter';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-function mapCustomerCategory(entryType: string, description: string = ''): string {
-  const lowerDesc = description.toLowerCase();
+export interface MapCategoryResult {
+  category: string;
+  defaultDescription: string;
+}
+
+/**
+ * Hardened ISO-Aware Customer Transaction Category Classifier (C.3A).
+ * Enforces strict semantic classification based on authoritative entry_type.
+ * Free-text description parsing (e.g. description.includes("SMS")) is strictly prohibited.
+ */
+export function mapCustomerTransactionCategory(entryType: string): MapCategoryResult {
   switch (entryType) {
     case 'grant':
-      return 'Credits Added';
+      return { category: 'Credits Added', defaultDescription: 'Credits added to wallet' };
     case 'auto_recharge':
-      return 'Auto Top-Up';
+      return { category: 'Auto Top-Up', defaultDescription: 'Auto Top-Up credits added' };
     case 'usage_reversal':
-      return 'Refund';
-    case 'adjustment':
-      return 'Adjustment';
-    case 'consumption':
+      return { category: 'Usage Reversal', defaultDescription: 'Telecom usage charge reversed' };
     case 'telecom_usage':
-      if (lowerDesc.includes('sms')) return 'SMS Usage';
-      if (lowerDesc.includes('mms')) return 'MMS Usage';
-      if (lowerDesc.includes('voice') || lowerDesc.includes('call')) return 'Voice Usage';
-      return 'Telecom Usage';
+      return { category: 'Telecom Usage', defaultDescription: 'Telecom usage charge' };
+    case 'consumption':
+      return { category: 'Credits Used', defaultDescription: 'Credits consumed' };
+    case 'adjustment':
+      return { category: 'Credits Adjustment', defaultDescription: 'Account credits adjustment' };
     case 'expiration':
-      return 'Expiration';
+      return { category: 'Credits Expired', defaultDescription: 'Unused credits expired' };
     default:
-      return 'Credits Adjustment';
+      return { category: 'Credits Transaction', defaultDescription: 'Account transaction' };
   }
+}
+
+/**
+ * Sanitizes description strings to ensure raw provider SIDs or internal operation details are not exposed.
+ */
+function sanitizeCustomerDescription(rawDescription: string, defaultDescription: string): string {
+  if (!rawDescription || rawDescription.trim().length === 0) {
+    return defaultDescription;
+  }
+
+  const trimmed = rawDescription.trim();
+  // Filter out raw Twilio CallSids (CA...), MessageSids (SM.../MM...), or uuid strings if present in description
+  if (/^(CA|SM|MM)[a-f0-9]{32}$/i.test(trimmed) || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed)) {
+    return defaultDescription;
+  }
+
+  return trimmed;
 }
 
 export async function GET(req: NextRequest) {
@@ -88,7 +112,9 @@ export async function GET(req: NextRequest) {
       const amount = Number(row.amount_minor);
       const balanceAfter = Number(row.balance_after_minor);
       const currency = row.currency || 'USD';
-      const category = mapCustomerCategory(row.entry_type, row.description);
+      
+      const { category, defaultDescription } = mapCustomerTransactionCategory(row.entry_type);
+      const safeDescription = sanitizeCustomerDescription(row.description, defaultDescription);
 
       const formattedAbs = formatMinorUnitsToCurrency(Math.abs(amount), currency);
       const formattedAmount = amount > 0 ? `+${formattedAbs}` : `-${formattedAbs}`;
@@ -100,7 +126,7 @@ export async function GET(req: NextRequest) {
         id: row.id,
         occurredAt: row.created_at,
         category,
-        description: row.description,
+        description: safeDescription,
         amountMinor: amount,
         formattedAmount,
         balanceAfterMinor: balanceAfter,
