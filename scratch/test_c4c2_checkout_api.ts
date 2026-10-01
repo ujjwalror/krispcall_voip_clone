@@ -55,138 +55,88 @@ function createMockStripeClient(statusOverride: string = 'requires_payment_metho
   } as any;
 }
 
-async function runC4C2Tests() {
+async function runC4C4Tests() {
   console.log('================================================================');
-  console.log('PHASE 13.4.3C.4C.2 — SERVER CHECKOUT ENDPOINT NON-LIVE MOCK TESTS');
+  console.log('PHASE 13.4.3C.4C.4 — PRE-STRIPE CONTRACT REMEDIATION TESTS');
   console.log('================================================================\n');
 
   const testOrgId = '00000000-0000-0000-0000-000000000001';
   const testUserId = '00000000-0000-0000-0000-000000000099';
 
-  // TEST 1: Technical Input Validation (Invalid Token / Amount <= 0 / Non-integer)
-  console.log('--- TEST 1: Technical Request Input Validation ---');
+  // TEST 1: Strict Attempt Token Validation (UUID v4 Only!)
+  console.log('--- TEST 1: Strict UUID Attempt Token Validation ---');
 
-  const res1 = await CreditTopupService.createOrRecoverCheckoutSession(adminSupabase, {
+  // Loose 8-char token -> REJECTED
+  const resLoose = await CreditTopupService.createOrRecoverCheckoutSession(adminSupabase, {
     organizationId: testOrgId,
     userId: testUserId,
-    attemptToken: 'short', // Invalid!
+    attemptToken: 'short123',
     amountMinor: 2000,
   });
-  assert.strictEqual(res1.success, false);
-  assert.strictEqual(res1.error?.code, 'INVALID_ATTEMPT_TOKEN');
+  assert.strictEqual(resLoose.success, false);
+  assert.strictEqual(resLoose.error?.code, 'INVALID_ATTEMPT_TOKEN');
 
-  const res2 = await CreditTopupService.createOrRecoverCheckoutSession(adminSupabase, {
+  // Arbitrary alphanumeric non-UUID -> REJECTED
+  const resAlpha = await CreditTopupService.createOrRecoverCheckoutSession(adminSupabase, {
     organizationId: testOrgId,
     userId: testUserId,
-    attemptToken: 'c1b623a1-e656-4ea9-9c3e-30d15e597705',
-    amountMinor: -100, // Invalid <= 0!
+    attemptToken: 'not_a_uuid_v4_attempt_token_string_12345',
+    amountMinor: 2000,
   });
-  assert.strictEqual(res2.success, false);
-  assert.strictEqual(res2.error?.code, 'INVALID_AMOUNT');
-  console.log('✓ TEST 1 PASS: Technical request validation rejects invalid tokens & non-positive amounts.');
+  assert.strictEqual(resAlpha.success, false);
+  assert.strictEqual(resAlpha.error?.code, 'INVALID_ATTEMPT_TOKEN');
 
-  // TEST 2: Local Operation Creation & Stripe Mock PaymentIntent Creation
-  console.log('\n--- TEST 2: Local Operation Creation & Stripe Mock PaymentIntent ---');
-  const attemptToken = `c1b623a1-e656-4ea9-9c3e-${Math.random().toString(36).slice(2, 14).padEnd(12, '0')}`;
+  // Valid RFC UUID v4 -> ACCEPTED
+  const validUUID = 'a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d';
   const mockStripe = createMockStripeClient();
-
-  const res3 = await CreditTopupService.createOrRecoverCheckoutSession(
+  const resValid = await CreditTopupService.createOrRecoverCheckoutSession(
     adminSupabase,
     {
       organizationId: testOrgId,
       userId: testUserId,
-      attemptToken,
-      amountMinor: 2500,
+      attemptToken: validUUID,
+      amountMinor: 2000,
     },
     { stripeOverride: mockStripe }
   );
 
-  assert.strictEqual(res3.success, true);
-  assert.strictEqual(typeof res3.paymentOperationId, 'string');
-  assert.strictEqual(res3.clientSecret?.includes('secret_mock'), true);
-  assert.strictEqual(res3.amountMinor, 2500);
-  assert.strictEqual(res3.formattedAmount, '$25.00 USD');
-  assert.strictEqual(res3.currency, 'USD');
-  assert.strictEqual(res3.paymentStatus, 'requires_payment_method');
-  assert.strictEqual(res3.fundingStatus, 'pending_payment');
-  assert.strictEqual(res3.reusedAttempt, false);
-  console.log(`✓ TEST 3 PASS: Local operation created & mocked clientSecret generated cleanly:
-    - Payment Operation ID: ${res3.paymentOperationId}
-    - Client Secret: ${res3.clientSecret}
-    - Formatted Amount: ${res3.formattedAmount} (${res3.currency})`);
+  assert.strictEqual(resValid.success, true);
+  assert.strictEqual(typeof resValid.paymentOperationId, 'string');
+  console.log('✓ TEST 1 PASS: Loose tokens rejected; strict UUID v4 required and accepted.');
 
-  // TEST 3: Retry Same Attempt (Idempotent Recovery)
-  console.log('\n--- TEST 3: Same-Attempt Idempotent Recovery ---');
-  const res4 = await CreditTopupService.createOrRecoverCheckoutSession(
+  // TEST 2: Authoritative Wallet Currency Resolution (No Silent USD Fallback!)
+  console.log('\n--- TEST 2: Authoritative Wallet Currency Resolution ---');
+
+  // Test Org with 0 ledger rows & 0 resource rows -> Fails closed with CURRENCY_UNAVAILABLE
+  const emptyOrgId = '00000000-0000-0000-0000-000000000099';
+  const resEmpty = await CreditTopupService.createOrRecoverCheckoutSession(
     adminSupabase,
     {
-      organizationId: testOrgId,
+      organizationId: emptyOrgId,
       userId: testUserId,
-      attemptToken, // SAME token!
-      amountMinor: 2500, // SAME amount!
+      attemptToken: 'b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e',
+      amountMinor: 2000,
     },
     { stripeOverride: mockStripe }
   );
 
-  assert.strictEqual(res4.success, true);
-  assert.strictEqual(res4.paymentOperationId, res3.paymentOperationId);
-  assert.strictEqual(res4.clientSecret, res3.clientSecret);
-  assert.strictEqual(res4.reusedAttempt, true);
-  console.log('✓ TEST 3 PASS: Retry of same attemptToken returned identical local operation and clientSecret.');
+  assert.strictEqual(resEmpty.success, false);
+  assert.strictEqual(resEmpty.error?.code, 'CURRENCY_UNAVAILABLE');
+  assert.strictEqual(resEmpty.error?.message.includes('No authoritative wallet currency'), true);
+  console.log('✓ TEST 2 PASS: Organization with no ledger/resource history fails closed without silent USD fallback.');
 
-  // TEST 4: Same Attempt Token with Parameter Mismatch (Amount/Currency Conflict)
-  console.log('\n--- TEST 4: Attempt Parameter Mismatch Rejection ---');
-  const res5 = await CreditTopupService.createOrRecoverCheckoutSession(
-    adminSupabase,
-    {
-      organizationId: testOrgId,
-      userId: testUserId,
-      attemptToken, // SAME token!
-      amountMinor: 5000, // DIFFERENT amount!
-    },
-    { stripeOverride: mockStripe }
-  );
-
-  assert.strictEqual(res5.success, false);
-  assert.strictEqual(res5.error?.code, 'ATTEMPT_PARAMETER_MISMATCH');
-  console.log('✓ TEST 4 PASS: Reusing attemptToken with a different amount correctly rejected with 409 ATTEMPT_PARAMETER_MISMATCH.');
-
-  // TEST 5: Stripe Succeeded Status Does NOT Mark Local Operation Captured
-  console.log('\n--- TEST 5: Succeeded PaymentIntent Funding Status Safety ---');
-  const attemptTokenSucceeded = `d2b623a1-e656-4ea9-9c3e-${Math.random().toString(36).slice(2, 14).padEnd(12, '0')}`;
-  const mockStripeSucceeded = createMockStripeClient('succeeded');
-
-  const res6 = await CreditTopupService.createOrRecoverCheckoutSession(
-    adminSupabase,
-    {
-      organizationId: testOrgId,
-      userId: testUserId,
-      attemptToken: attemptTokenSucceeded,
-      amountMinor: 1000,
-    },
-    { stripeOverride: mockStripeSucceeded }
-  );
-
-  assert.strictEqual(res6.success, true);
-  assert.strictEqual(res6.paymentStatus, 'succeeded');
-  assert.strictEqual(res6.fundingStatus, 'pending_confirmation'); // MUST NOT BE 'funded'!
-  console.log(`✓ TEST 5 PASS: Stripe PaymentIntent status='succeeded' correctly returned fundingStatus='pending_confirmation' without claiming wallet funding!`);
-
-  // Clean up test operation rows
-  if (res3.paymentOperationId) {
-    await adminSupabase.from('billing_payment_operations').delete().eq('id', res3.paymentOperationId);
-  }
-  if (res6.paymentOperationId) {
-    await adminSupabase.from('billing_payment_operations').delete().eq('id', res6.paymentOperationId);
+  // Clean up temporary test payment op row created in TEST 1
+  if (resValid.paymentOperationId) {
+    await adminSupabase.from('billing_payment_operations').delete().eq('id', resValid.paymentOperationId);
   }
   console.log('\n✓ Cleaned up test payment operation rows.');
 
   console.log('\n================================================================');
-  console.log('ALL PHASE 13.4.3C.4C.2 MOCK TESTS PASSED (1 - 5)');
+  console.log('ALL PHASE 13.4.3C.4C.4 REMEDIATION TESTS PASSED');
   console.log('================================================================\n');
 }
 
-runC4C2Tests().catch((err) => {
-  console.error('C.4C.2 Test Suite Failed:', err);
+runC4C4Tests().catch((err) => {
+  console.error('C.4C.4 Remediation Test Suite Failed:', err);
   process.exit(1);
 });

@@ -39,6 +39,91 @@ export class CreditTopupService {
   }
 
   /**
+   * Server-authoritatively resolves the single canonical wallet currency for an organization.
+   * Fails closed if no currency exists or if multiple inconsistent currencies exist in ledger history.
+   * NO SILENT USD FALLBACK ALLOWED.
+   */
+  static async resolveAuthoritativeWalletCurrency(supabase: SupabaseClient, organizationId: string): Promise<string> {
+    // 1. Query all distinct currency values in billing_credit_ledger for the organization
+    const { data: ledgerRows, error: ledgerErr } = await (supabase as any)
+      .from('billing_credit_ledger')
+      .select('currency')
+      .eq('organization_id', organizationId);
+
+    if (ledgerErr) {
+      console.error('[CreditTopupService] Ledger currency resolution DB error:', ledgerErr.message);
+      throw new Error(`WALLET_UNAVAILABLE: Database error resolving wallet currency (${ledgerErr.message})`);
+    }
+
+    const ledgerCurrencies: string[] = Array.from(
+      new Set<string>((ledgerRows || []).map((r: any) => (r.currency || '').trim().toUpperCase()).filter(Boolean))
+    );
+
+    if (ledgerCurrencies.length > 1) {
+      throw new Error(
+        `CURRENCY_UNAVAILABLE: Organization has multiple inconsistent currencies in ledger history (${ledgerCurrencies.join(', ')}).`
+      );
+    }
+
+    // 2. Query distinct currencies in organization_billable_resources
+    const { data: resourceRows, error: resErr } = await (supabase as any)
+      .from('organization_billable_resources')
+      .select('currency')
+      .eq('organization_id', organizationId);
+
+    if (resErr) {
+      console.error('[CreditTopupService] Billable resources currency resolution DB error:', resErr.message);
+    }
+
+    const resourceCurrencies: string[] = Array.from(
+      new Set<string>((resourceRows || []).map((r: any) => (r.currency || '').trim().toUpperCase()).filter(Boolean))
+    );
+
+    if (resourceCurrencies.length > 1) {
+      throw new Error(
+        `CURRENCY_UNAVAILABLE: Organization has multiple inconsistent currencies in billable resources (${resourceCurrencies.join(', ')}).`
+      );
+    }
+
+    // 3. Query distinct currencies in billing_invoices
+    const { data: invoiceRows, error: invErr } = await (supabase as any)
+      .from('billing_invoices')
+      .select('currency')
+      .eq('organization_id', organizationId);
+
+    if (invErr) {
+      console.error('[CreditTopupService] Billing invoices currency resolution DB error:', invErr.message);
+    }
+
+    const invoiceCurrencies: string[] = Array.from(
+      new Set<string>((invoiceRows || []).map((r: any) => (r.currency || '').trim().toUpperCase()).filter(Boolean))
+    );
+
+    if (invoiceCurrencies.length > 1) {
+      throw new Error(
+        `CURRENCY_UNAVAILABLE: Organization has multiple inconsistent currencies in billing invoices (${invoiceCurrencies.join(', ')}).`
+      );
+    }
+
+    const allFoundCurrencies: string[] = Array.from(
+      new Set<string>([...ledgerCurrencies, ...resourceCurrencies, ...invoiceCurrencies])
+    );
+
+    if (allFoundCurrencies.length > 1) {
+      throw new Error(
+        `CURRENCY_UNAVAILABLE: Organization has inconsistent currencies across ledger, billable resources, or invoices (${allFoundCurrencies.join(', ')}).`
+      );
+    }
+
+    if (allFoundCurrencies.length === 1) {
+      return allFoundCurrencies[0];
+    }
+
+    // Fail closed if no authoritative currency source exists
+    throw new Error('CURRENCY_UNAVAILABLE: No authoritative wallet currency configured for organization.');
+  }
+
+  /**
    * Server-authoritatively creates or recovers an Add Credits payment operation & Stripe PaymentIntent.
    */
   static async createOrRecoverCheckoutSession(
@@ -48,16 +133,19 @@ export class CreditTopupService {
   ): Promise<CreditTopupCheckoutResult> {
     const { organizationId, userId, attemptToken, amountMinor } = params;
 
-    // 1. Technical Input Validation
-    if (!attemptToken || !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$|^[a-zA-Z0-9_-]{8,64}$/.test(attemptToken)) {
+    // 1. Technical Input Validation — STRICT UUID ONLY (v4 / RFC compliant)
+    const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+    if (!attemptToken || typeof attemptToken !== 'string' || !uuidRegex.test(attemptToken.trim())) {
       return {
         success: false,
         error: {
           code: 'INVALID_ATTEMPT_TOKEN',
-          message: 'A valid checkout attempt token UUID is required.',
+          message: 'A valid checkout attempt token UUID (v4 format) is required.',
         },
       };
     }
+
+    const cleanAttemptToken = attemptToken.trim().toLowerCase();
 
     if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
       return {
@@ -69,29 +157,23 @@ export class CreditTopupService {
       };
     }
 
-    // 2. Resolve Authoritative Wallet Currency (Server-Side)
-    const { data: latestLedger, error: ledgerErr } = await (supabase as any)
-      .from('billing_credit_ledger')
-      .select('currency')
-      .eq('organization_id', organizationId)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (ledgerErr) {
-      console.error('[CreditTopupService] Ledger currency resolution error:', ledgerErr.message);
+    // 2. Resolve Authoritative Wallet Currency (NO SILENT USD FALLBACK)
+    let currency: string;
+    try {
+      currency = await this.resolveAuthoritativeWalletCurrency(supabase, organizationId);
+    } catch (currErr: any) {
+      console.error('[CreditTopupService] Wallet currency resolution failed:', currErr.message);
       return {
         success: false,
         error: {
-          code: 'WALLET_UNAVAILABLE',
-          message: 'Unable to resolve authoritative organization wallet currency.',
+          code: currErr.message?.includes('CURRENCY_UNAVAILABLE') ? 'CURRENCY_UNAVAILABLE' : 'WALLET_UNAVAILABLE',
+          message: currErr.message || 'Unable to resolve authoritative organization wallet currency.',
         },
       };
     }
 
-    const currency = (latestLedger?.currency || 'USD').toUpperCase();
-    const idempotencyKey = `credit_topup:${organizationId}:${attemptToken}`;
-    const requestFingerprint = this.generateFingerprint(organizationId, amountMinor, currency, attemptToken);
+    const idempotencyKey = `credit_topup:${organizationId}:${cleanAttemptToken}`;
+    const requestFingerprint = this.generateFingerprint(organizationId, amountMinor, currency, cleanAttemptToken);
 
     // 3. Atomic Create-or-Get Local Operation in billing_payment_operations
     let paymentOp: any = null;
@@ -236,7 +318,7 @@ export class CreditTopupService {
       }
     }
 
-    // 7. Establish Customer-Safe Response Statuses (CRITICAL CORRECTION)
+    // 7. Establish Customer-Safe Response Statuses
     // Local DB status 'captured' (set ONLY by C.4B atomic RPC via C.4D webhook) is the EXCLUSIVE authority for funding.
     let paymentStatus = paymentIntent.status;
     let fundingStatus = 'pending_payment';

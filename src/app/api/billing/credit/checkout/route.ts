@@ -45,16 +45,17 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const { attemptToken, amountMinor } = body;
 
-    if (!attemptToken || typeof attemptToken !== 'string') {
+    const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+    if (!attemptToken || typeof attemptToken !== 'string' || !uuidRegex.test(attemptToken.trim())) {
       return NextResponse.json(
-        { error: 'INVALID_ATTEMPT_TOKEN: attemptToken UUID string is required.', code: 'invalid_attempt_token' },
+        { error: 'INVALID_ATTEMPT_TOKEN', message: 'attemptToken UUID string is required.' },
         { status: 400 }
       );
     }
 
     if (typeof amountMinor !== 'number' || !Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
       return NextResponse.json(
-        { error: 'INVALID_AMOUNT: amountMinor must be a positive integer in minor units (cents).', code: 'invalid_amount' },
+        { error: 'INVALID_AMOUNT', message: 'amountMinor must be a positive integer in minor units (cents).' },
         { status: 400 }
       );
     }
@@ -74,6 +75,8 @@ export async function POST(req: NextRequest) {
           ? 409
           : result.error?.code === 'INVALID_AMOUNT' || result.error?.code === 'INVALID_ATTEMPT_TOKEN'
           ? 400
+          : result.error?.code === 'CURRENCY_UNAVAILABLE' || result.error?.code === 'WALLET_UNAVAILABLE'
+          ? 422
           : 500;
 
       return NextResponse.json(
