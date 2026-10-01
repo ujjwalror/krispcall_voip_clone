@@ -157,7 +157,7 @@ export class CreditTopupDisputeService {
       };
     }
 
-    // Check existing dispute in public.billing_payment_disputes
+    // Check existing dispute in public.billing_payment_disputes using exact migration column names: amount_minor, status
     const { data: existingDispute } = await (supabase as any)
       .from('billing_payment_disputes')
       .select('*')
@@ -165,66 +165,23 @@ export class CreditTopupDisputeService {
       .eq('provider_dispute_id', providerDisputeId)
       .maybeSingle();
 
-    if (existingDispute && existingDispute.hold_status === 'active' && action === 'PLACE_HOLD') {
-      return {
-        success: true,
-        alreadyProcessed: true,
-        code: 'HOLD_ALREADY_ACTIVE',
-        disputeId: existingDispute.id,
-        action,
-        status: existingDispute.dispute_status,
-        message: 'Dispute hold is already active.',
-      };
-    }
-
-    if (existingDispute && (existingDispute.dispute_status === 'won' || existingDispute.dispute_status === 'lost') && action === 'PLACE_HOLD') {
+    if (existingDispute && existingDispute.status && ['won', 'lost', 'charge_refunded'].includes(existingDispute.status) && action === 'PLACE_HOLD') {
       return {
         success: true,
         alreadyProcessed: true,
         code: 'DISPUTE_ALREADY_TERMINAL',
         disputeId: existingDispute.id,
         action,
-        status: existingDispute.dispute_status,
-        message: `Dispute is already in terminal state ${existingDispute.dispute_status}; place_hold ignored.`,
+        status: existingDispute.status,
+        message: `Dispute is already in terminal state ${existingDispute.status}; place_hold ignored.`,
       };
     }
 
-    let disputeRecordId = existingDispute?.id;
-    if (!existingDispute) {
-      const { data: insertedDispute, error: insertErr } = await (supabase as any)
-        .from('billing_payment_disputes')
-        .insert({
-          organization_id: op.organization_id,
-          payment_operation_id: op.id,
-          provider_account_id: providerAccountId,
-          provider_dispute_id: providerDisputeId,
-          dispute_amount_minor: disputeAmountMinor,
-          currency,
-          dispute_status: internalDisputeStatus,
-          hold_status: 'none',
-          provider_event_id: providerEventId,
-        })
-        .select('*')
-        .single();
-
-      if (insertErr && insertErr.code !== '23505') {
-        disputeRecordId = `dp_mock_${providerDisputeId}`;
-      } else if (insertedDispute) {
-        disputeRecordId = insertedDispute.id;
-      }
-    } else {
-      await (supabase as any)
-        .from('billing_payment_disputes')
-        .update({
-          dispute_status: internalDisputeStatus,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', existingDispute.id);
-    }
+    // Note: The SQL RPC process_dispute_hold_atomic owns authoritative creation/update of billing_payment_disputes.
+    // We DO NOT pre-insert or pre-update a row in TypeScript to avoid competing/duplicate accounting authorities.
 
     // Invoke process_dispute_hold_atomic RPC
     const { data: rpcResult, error: rpcErr } = await (supabase as any).rpc('process_dispute_hold_atomic', {
-      p_payment_dispute_id: disputeRecordId,
       p_payment_operation_id: op.id,
       p_provider_account_id: providerAccountId,
       p_provider_dispute_id: providerDisputeId,
@@ -249,15 +206,15 @@ export class CreditTopupDisputeService {
     return {
       success: true,
       code: 'DISPUTE_PROCESSED',
-      disputeId: disputeRecordId,
+      disputeId: rpcResult?.dispute_id || existingDispute?.id || `dp_mock_${providerDisputeId}`,
       holdId: rpcResult?.hold_id,
       debtId: rpcResult?.debt_id,
       action,
       status: rpcResult?.status || internalDisputeStatus,
-      alreadyProcessed: rpcResult?.already_terminal || rpcResult?.already_released || rpcResult?.already_settled || rpcResult?.already_processed || false,
-      reversedFromWalletMinor: rpcResult?.reversed_from_wallet_minor || 0,
-      uncoveredDebtMinor: rpcResult?.uncovered_debt_minor || 0,
-      balanceAfterMinor: rpcResult?.balance_after_minor || 0,
+      alreadyProcessed: rpcResult?.already_terminal || rpcResult?.already_released || rpcResult?.already_settled || rpcResult?.already_held || false,
+      reversedFromWalletMinor: rpcResult?.reversed_from_wallet_minor != null ? Number(rpcResult.reversed_from_wallet_minor) : 0,
+      uncoveredDebtMinor: rpcResult?.uncovered_debt_minor != null ? Number(rpcResult.uncovered_debt_minor) : 0,
+      balanceAfterMinor: rpcResult?.balance_after_minor != null ? Number(rpcResult.balance_after_minor) : 0,
     };
   }
 }

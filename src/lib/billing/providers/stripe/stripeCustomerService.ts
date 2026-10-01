@@ -2,6 +2,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import Stripe from 'stripe';
 import { getStripeClient } from './stripeClient';
 import { ProviderAccountResolver } from '../providerAccountResolver';
+import { isExpectedLegacySchemaMissingError } from '../../schemaUtils';
 
 export class StripeCustomerService {
   /**
@@ -36,7 +37,7 @@ export class StripeCustomerService {
 
     const { data: existing, error: selectErr } = await query.maybeSingle();
 
-    if (selectErr && selectErr.code !== '42703') { // Ignore missing column error if pre-migration DB
+    if (selectErr && !isExpectedLegacySchemaMissingError(selectErr)) {
       console.error('[StripeCustomerService] Select error:', selectErr.message);
       throw new Error(`StripeCustomerService database error: ${selectErr.message}`);
     }
@@ -72,7 +73,7 @@ export class StripeCustomerService {
       .from('billing_provider_customers')
       .insert(insertPayload);
 
-    if (insertErr && (insertErr.code === '42703' || insertErr.code === 'PGRST204' || insertErr.message?.includes('Could not find'))) {
+    if (insertErr && isExpectedLegacySchemaMissingError(insertErr)) {
       delete insertPayload.provider_account_id;
       const retry = await (supabase as any)
         .from('billing_provider_customers')
@@ -122,7 +123,7 @@ export class StripeCustomerService {
 
     const { data, error } = await query.maybeSingle();
 
-    if (error && error.code !== '42703') {
+    if (error && !isExpectedLegacySchemaMissingError(error)) {
       console.error('[StripeCustomerService] Lookup error:', error.message);
       throw new Error(`StripeCustomerService lookup error: ${error.message}`);
     }
@@ -130,3 +131,4 @@ export class StripeCustomerService {
     return data ? data.provider_customer_id : null;
   }
 }
+

@@ -4,6 +4,7 @@ import Stripe from 'stripe';
 import { getStripeClient } from './providers/stripe/stripeClient';
 import { StripeCustomerService } from './providers/stripe/stripeCustomerService';
 import { ProviderAccountResolver } from './providers/providerAccountResolver';
+import { isExpectedLegacySchemaMissingError } from './schemaUtils';
 import { formatMinorUnitsToCurrency } from './currencyFormatter';
 
 export interface CreateCreditTopupParams {
@@ -201,7 +202,7 @@ export class CreditTopupService {
       .select()
       .single();
 
-    if (insertErr && (insertErr.code === '42703' || insertErr.code === 'PGRST204' || insertErr.message?.includes('Could not find'))) {
+    if (insertErr && isExpectedLegacySchemaMissingError(insertErr)) {
       delete opPayload.provider_account_id;
       delete opPayload.gross_charge_minor;
       delete opPayload.credit_value_minor;

@@ -1,4 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js';
+import { isExpectedLegacySchemaMissingError } from '../schemaUtils';
 
 export const DEFAULT_TEST_ACCOUNT_ID = '00000000-0000-0000-0000-0000000000aa';
 
@@ -20,7 +21,8 @@ export class ProviderAccountResolver {
 
   /**
    * Resolves active provider account for provider & environment context.
-   * Pre-migration safe: Falls back gracefully to default test account if billing_provider_accounts table is not yet deployed.
+   * Fail closed: Live environments must NEVER use legacy sentinel fallback.
+   * Pre-migration safe: Falls back gracefully to default test account ONLY in test mode when billing_provider_accounts table is missing.
    */
   static async resolveActiveAccount(
     supabase: SupabaseClient,
@@ -42,7 +44,11 @@ export class ProviderAccountResolver {
         .eq('environment', cleanEnv)
         .eq('status', 'active');
 
-      if (!error && Array.isArray(data)) {
+      if (error) {
+        throw error;
+      }
+
+      if (Array.isArray(data)) {
         if (data.length > 1) {
           throw new Error(`Ambiguous provider account configuration: found ${data.length} active accounts for ${cleanProvider}/${cleanEnv}`);
         }
@@ -63,10 +69,24 @@ export class ProviderAccountResolver {
       if (err.message?.includes('Ambiguous') || err.message?.includes('No active')) {
         throw err;
       }
-      // Ignore database table missing errors pre-migration
+
+      // Live environment MUST NEVER fall back to legacy sentinel
+      if (cleanEnv === 'live') {
+        throw new Error(`LIVE_PROVIDER_ACCOUNT_UNAVAILABLE: Provider account lookup failed for live environment: ${err.message}`);
+      }
+
+      // In test mode, fail closed if error is NOT an expected missing legacy schema error
+      if (!isExpectedLegacySchemaMissingError(err)) {
+        throw err;
+      }
     }
 
-    // Default fallback sentinel representation for current test mode context
+    // Prohibit sentinel fallback for live environment
+    if (cleanEnv === 'live') {
+      throw new Error(`LIVE_PROVIDER_ACCOUNT_UNAVAILABLE: No active payment provider account found for ${cleanProvider}/live`);
+    }
+
+    // Default fallback sentinel representation for test mode pre-migration ONLY
     return {
       id: ProviderAccountResolver.DEFAULT_TEST_ACCOUNT_ID,
       provider: cleanProvider,
@@ -98,3 +118,4 @@ export class ProviderAccountResolver {
     return acc.id;
   }
 }
+

@@ -10,6 +10,7 @@ import { CreditTopupWebhookService } from '../../creditTopupWebhookService';
 import { CreditTopupRefundService } from '../../creditTopupRefundService';
 import { CreditTopupDisputeService } from '../../creditTopupDisputeService';
 import { ProviderAccountResolver } from '../providerAccountResolver';
+import { isExpectedLegacySchemaMissingError } from '../../schemaUtils';
 
 export interface ProcessWebhookResult {
   success: boolean;
@@ -56,7 +57,12 @@ export class StripeWebhookHandler {
     // 2. Claim / Record Webhook Event safely
     const nowIso = new Date().toISOString();
     const staleThresholdMs = 5 * 60 * 1000; // 5 minutes conservative stale threshold
-    const providerAccountId = await ProviderAccountResolver.resolveActiveAccount(supabase);
+    // TODO / DESIGN BOUNDARY (Requirement 22):
+    // Multi-account historical webhook routing: Currently resolves default active provider account.
+    // In future multi-Stripe-account topologies, webhook endpoint/signing-secret context MUST
+    // authoritatively identify the exact historical provider account before resolving.
+    const providerAccount = await ProviderAccountResolver.resolveActiveAccount(supabase);
+    const providerAccountId = providerAccount?.id || null;
 
     // Try RPC claim_stripe_webhook_event_for_processing first
     const { data: claimResult, error: rpcErr } = await (supabase as any)
@@ -88,7 +94,7 @@ export class StripeWebhookHandler {
           .from('billing_webhook_events')
           .insert(insertPayload);
 
-        if (insertErr && (insertErr.code === '42703' || insertErr.code === 'PGRST204' || insertErr.message?.includes('Could not find')) && insertPayload.provider_account_id) {
+        if (insertErr && isExpectedLegacySchemaMissingError(insertErr) && insertPayload.provider_account_id) {
           delete insertPayload.provider_account_id;
           const retry = await (supabase as any).from('billing_webhook_events').insert(insertPayload);
           insertErr = retry.error;

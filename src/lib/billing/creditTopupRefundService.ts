@@ -22,7 +22,7 @@ export interface ProcessRefundResult {
 
 export class CreditTopupRefundService {
   /**
-   * Safe integer proportional Credit-value reversal calculation.
+   * Safe BigInt single-refund proportional flooring calculation.
    */
   static deriveCreditReversalMinor(
     grossChargeMinor: number,
@@ -32,7 +32,54 @@ export class CreditTopupRefundService {
     if (grossChargeMinor <= 0 || creditValueMinor <= 0 || providerRefundMinor <= 0) {
       throw new Error(`Invalid gross charge amount or values: gross=${grossChargeMinor}, credit=${creditValueMinor}, refund=${providerRefundMinor}`);
     }
-    return Math.floor((providerRefundMinor * creditValueMinor) / grossChargeMinor);
+    const gross = BigInt(grossChargeMinor);
+    const credit = BigInt(creditValueMinor);
+    const refund = BigInt(providerRefundMinor);
+    const result = (refund * credit) / gross;
+    const num = Number(result);
+    if (!Number.isSafeInteger(num) || num < 0) {
+      throw new Error(`Derived credit reversal ${num} is outside safe integer bounds.`);
+    }
+    return num;
+  }
+
+  /**
+   * Safe BigInt cumulative direct-refund proportional rounding formula.
+   *
+   * target cumulative Credit reversal = floor(cumulative provider cash refunds * creditValue / grossCharge)
+   * current refund Credit reversal = target cumulative Credit reversal - prior Credit reversals.
+   */
+  static deriveCumulativeCreditReversalMinor(
+    grossChargeMinor: number,
+    creditValueMinor: number,
+    priorCashRefundsMinor: number,
+    priorCreditReversalsMinor: number,
+    currentProviderRefundMinor: number
+  ): number {
+    if (grossChargeMinor <= 0 || creditValueMinor <= 0 || currentProviderRefundMinor <= 0) {
+      throw new Error(`Invalid gross charge or refund amounts: gross=${grossChargeMinor}, credit=${creditValueMinor}, refund=${currentProviderRefundMinor}`);
+    }
+
+    const gross = BigInt(grossChargeMinor);
+    const credit = BigInt(creditValueMinor);
+    const priorCash = BigInt(Math.max(0, priorCashRefundsMinor));
+    const priorCred = BigInt(Math.max(0, priorCreditReversalsMinor));
+    const currentCash = BigInt(currentProviderRefundMinor);
+
+    const cumulativeCash = priorCash + currentCash;
+    const targetCumulativeReversal = (cumulativeCash * credit) / gross;
+    let currentReversal = targetCumulativeReversal - priorCred;
+
+    if (currentReversal < BigInt(0)) {
+      currentReversal = BigInt(0);
+    }
+
+    const num = Number(currentReversal);
+    if (!Number.isSafeInteger(num) || num < 0) {
+      throw new Error(`Derived cumulative credit reversal ${num} is outside safe integer bounds.`);
+    }
+
+    return num;
   }
 
   /**
@@ -173,18 +220,43 @@ export class CreditTopupRefundService {
         .eq('id', refundRequestId)
         .maybeSingle();
 
-      if (refundReq && refundReq.status === 'approved' && refundReq.approved_credit_reversal_minor != null) {
-        creditValueReversalMinor = Number(refundReq.approved_credit_reversal_minor);
+      if (refundReq && refundReq.status === 'approved' && refundReq.approved_credit_value_reversal_minor != null) {
+        creditValueReversalMinor = Number(refundReq.approved_credit_value_reversal_minor);
       }
     }
 
-    // Default proportional credit reversal if no custom approved reversal
+    // Default cumulative proportional credit reversal if no custom approved reversal
     if (creditValueReversalMinor <= 0) {
       const grossChargeMinor = Number(op.gross_charge_minor || op.amount_minor || 0);
       const creditValueMinor = Number(op.credit_value_minor || op.amount_minor || 0);
 
+      // Query prior authoritative succeeded refunds for this operation
+      const { data: priorRefunds } = await (supabase as any)
+        .from('billing_payment_refunds')
+        .select('provider_refund_id, provider_refund_minor, credit_value_reversal_minor, status, accounting_status')
+        .eq('payment_operation_id', op.id);
+
+      let priorCashRefundsMinor = 0;
+      let priorCreditReversalsMinor = 0;
+
+      if (Array.isArray(priorRefunds)) {
+        for (const pr of priorRefunds) {
+          const isSucceeded = pr.status === 'succeeded' || pr.accounting_status === 'reversed';
+          if (isSucceeded && pr.provider_refund_id !== providerRefundId) {
+            priorCashRefundsMinor += Number(pr.provider_refund_minor || 0);
+            priorCreditReversalsMinor += Number(pr.credit_value_reversal_minor || 0);
+          }
+        }
+      }
+
       try {
-        creditValueReversalMinor = this.deriveCreditReversalMinor(grossChargeMinor, creditValueMinor, providerRefundMinor);
+        creditValueReversalMinor = this.deriveCumulativeCreditReversalMinor(
+          grossChargeMinor,
+          creditValueMinor,
+          priorCashRefundsMinor,
+          priorCreditReversalsMinor,
+          providerRefundMinor
+        );
       } catch (err: any) {
         console.error(`[CreditTopupRefundService] Reversal derivation error for op ${op.id}: ${err.message}`);
         return {
@@ -195,56 +267,11 @@ export class CreditTopupRefundService {
       }
     }
 
-    // Check idempotency in local billing_payment_refunds
-    const { data: existingRefund } = await (supabase as any)
-      .from('billing_payment_refunds')
-      .select('*')
-      .eq('provider_account_id', providerAccountId)
-      .eq('provider_refund_id', providerRefundId)
-      .maybeSingle();
-
-    if (existingRefund && existingRefund.accounting_status === 'reversed') {
-      return {
-        success: true,
-        alreadyProcessed: true,
-        code: 'ALREADY_REVERSED',
-        refundId: existingRefund.id,
-        paymentOperationId: op.id,
-        message: 'Refund reversal already processed idempotently.',
-      };
-    }
-
-    // Create or update refund record in billing_payment_refunds
-    let refundRecordId = existingRefund?.id;
-    if (!existingRefund) {
-      const { data: insertedRefund, error: insertRefundErr } = await (supabase as any)
-        .from('billing_payment_refunds')
-        .insert({
-          organization_id: op.organization_id,
-          payment_operation_id: op.id,
-          provider_account_id: providerAccountId,
-          refund_request_id: refundRequestId,
-          provider_refund_id: providerRefundId,
-          provider_refund_minor: providerRefundMinor,
-          credit_value_reversal_minor: creditValueReversalMinor,
-          currency: currency,
-          provider_event_id: providerEventId,
-          accounting_status: 'pending',
-        })
-        .select('*')
-        .single();
-
-      if (insertRefundErr && insertRefundErr.code !== '23505') {
-        // Fallback for pre-migration table missing
-        refundRecordId = `ref_mock_${providerRefundId}`;
-      } else if (insertedRefund) {
-        refundRecordId = insertedRefund.id;
-      }
-    }
+    // Note: The SQL RPC process_refund_reversal_atomic owns authoritative creation/update of billing_payment_refunds.
+    // We DO NOT pre-insert a row in TypeScript to avoid competing/duplicate accounting authorities.
 
     // Invoke process_refund_reversal_atomic RPC
     const { data: rpcResult, error: rpcErr } = await (supabase as any).rpc('process_refund_reversal_atomic', {
-      p_payment_refund_id: refundRecordId,
       p_payment_operation_id: op.id,
       p_provider_account_id: providerAccountId,
       p_provider_refund_id: providerRefundId,
@@ -268,12 +295,12 @@ export class CreditTopupRefundService {
     return {
       success: true,
       code: 'REFUND_REVERSED',
-      refundId: refundRecordId,
+      refundId: rpcResult?.refund_id || `ref_mock_${providerRefundId}`,
       paymentOperationId: op.id,
-      alreadyProcessed: rpcResult?.already_reversed || false,
-      reversedFromWalletMinor: rpcResult?.reversed_from_wallet_minor || creditValueReversalMinor,
-      uncoveredDebtMinor: rpcResult?.uncovered_debt_minor || 0,
-      balanceAfterMinor: rpcResult?.balance_after_minor || 0,
+      alreadyProcessed: rpcResult?.already_processed || false,
+      reversedFromWalletMinor: rpcResult?.reversed_from_wallet_minor != null ? Number(rpcResult.reversed_from_wallet_minor) : creditValueReversalMinor,
+      uncoveredDebtMinor: rpcResult?.uncovered_debt_minor != null ? Number(rpcResult.uncovered_debt_minor) : 0,
+      balanceAfterMinor: rpcResult?.balance_after_minor != null ? Number(rpcResult.balance_after_minor) : 0,
     };
   }
 }
