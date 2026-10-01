@@ -6,6 +6,7 @@ import { PaymentCanonicalStatus } from '../../types';
 import { CommercialCaptureReconciliationService } from '../../commercialCaptureReconciliationService';
 import { CommercialSubscriptionSyncService, SubscriptionSyncResult } from '../../commercialSubscriptionSyncService';
 import { StripeInvoiceSyncService, InvoiceSyncResult } from '../../stripeInvoiceSyncService';
+import { CreditTopupWebhookService } from '../../creditTopupWebhookService';
 
 export interface ProcessWebhookResult {
   success: boolean;
@@ -332,6 +333,34 @@ export class StripeWebhookHandler {
       case 'payment_intent.payment_failed':
       case 'payment_intent.canceled': {
         const paymentIntent = event.data.object as Stripe.PaymentIntent;
+        const opType = paymentIntent.metadata?.operation_type;
+
+        if (event.type === 'payment_intent.succeeded' && opType === 'credit_topup') {
+          const topupRes = await CreditTopupWebhookService.processPaymentIntentSucceeded(supabase, event);
+          if (topupRes.success) {
+            await (supabase as any)
+              .from('billing_webhook_events')
+              .update({
+                status: 'completed',
+                processed_at: nowIso,
+                last_error: null,
+              })
+              .eq('provider', 'stripe')
+              .eq('provider_event_id', providerEventId);
+          } else {
+            await (supabase as any)
+              .from('billing_webhook_events')
+              .update({
+                status: 'completed',
+                processed_at: nowIso,
+                last_error: `CREDIT_TOPUP_FUNDING_REJECTED: [${topupRes.code}] ${topupRes.message}`,
+              })
+              .eq('provider', 'stripe')
+              .eq('provider_event_id', providerEventId);
+          }
+          return null;
+        }
+
         await this.syncPaymentOperationState(supabase, paymentIntent, event.type);
         return null;
       }
