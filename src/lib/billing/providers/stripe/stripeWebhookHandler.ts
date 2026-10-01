@@ -45,6 +45,8 @@ export class StripeWebhookHandler {
     const eventType = event.type;
     const isSubscriptionEvent = eventType.startsWith('customer.subscription.');
     const isInvoiceEvent = eventType.startsWith('invoice.');
+    const isPaymentIntentEvent = eventType.startsWith('payment_intent.');
+    const isAsyncProcessedEvent = isSubscriptionEvent || isInvoiceEvent || isPaymentIntentEvent;
 
     // 2. Claim / Record Webhook Event safely
     const nowIso = new Date().toISOString();
@@ -62,7 +64,7 @@ export class StripeWebhookHandler {
         // Exclusive claim obtained for existing pending/failed/stale event
       } else if (claimResult.reason === 'not_found') {
         // Brand new event: Insert initial record in public.billing_webhook_events
-        const initialStatus = (isSubscriptionEvent || isInvoiceEvent) ? 'processing' : 'completed';
+        const initialStatus = isAsyncProcessedEvent ? 'processing' : 'completed';
         const { error: insertErr } = await (supabase as any)
           .from('billing_webhook_events')
           .insert({
@@ -71,8 +73,8 @@ export class StripeWebhookHandler {
             event_type: eventType,
             payload: event as any,
             status: initialStatus,
-            processing_started_at: (isSubscriptionEvent || isInvoiceEvent) ? nowIso : null,
-            processed_at: (isSubscriptionEvent || isInvoiceEvent) ? null : nowIso,
+            processing_started_at: isAsyncProcessedEvent ? nowIso : null,
+            processed_at: isAsyncProcessedEvent ? null : nowIso,
           });
 
         if (insertErr) {
@@ -89,7 +91,7 @@ export class StripeWebhookHandler {
           throw new Error(`Database error saving webhook event: ${insertErr.message}`);
         }
 
-        if (!isSubscriptionEvent && !isInvoiceEvent) {
+        if (!isAsyncProcessedEvent) {
           return {
             success: true,
             eventId: providerEventId,
@@ -176,7 +178,7 @@ export class StripeWebhookHandler {
         }
       } else {
         // Record new event in public.billing_webhook_events
-        const initialStatus = (isSubscriptionEvent || isInvoiceEvent) ? 'processing' : 'completed';
+        const initialStatus = isAsyncProcessedEvent ? 'processing' : 'completed';
 
         const { error: insertErr } = await (supabase as any)
           .from('billing_webhook_events')
@@ -186,8 +188,8 @@ export class StripeWebhookHandler {
             event_type: eventType,
             payload: event as any,
             status: initialStatus,
-            processing_started_at: (isSubscriptionEvent || isInvoiceEvent) ? nowIso : null,
-            processed_at: (isSubscriptionEvent || isInvoiceEvent) ? null : nowIso,
+            processing_started_at: isAsyncProcessedEvent ? nowIso : null,
+            processed_at: isAsyncProcessedEvent ? null : nowIso,
           });
 
         if (insertErr) {
