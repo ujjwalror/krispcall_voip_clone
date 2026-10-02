@@ -227,19 +227,25 @@ export function AddCreditsModal({
   const handleStripeSuccess = async () => {
     setStep('verifying');
 
-    // Poll authoritative summary & history until balance updates
+    const opId = checkoutData?.paymentOperationId;
+    if (!opId) {
+      setStep('pending_webhook');
+      return;
+    }
+
+    // Exact paymentOperationId Correlation Polling against /status API
     const startTime = Date.now();
     const timeoutMs = 30000;
     const intervalMs = 2000;
 
-    const checkAuthoritativeUpdate = async (): Promise<boolean> => {
+    const checkExactOperationStatus = async (): Promise<boolean> => {
       try {
-        const res = await fetch('/api/billing/credit/summary', {
+        const res = await fetch(`/api/billing/credit/checkout/${encodeURIComponent(opId)}/status`, {
           headers: { 'Cache-Control': 'no-cache' },
         });
         if (res.ok) {
-          const summary = await res.json();
-          if (summary.availableCreditsMinor > prePaymentBalanceMinor) {
+          const data = await res.json();
+          if (data.success && data.funded === true) {
             return true;
           }
         }
@@ -250,7 +256,7 @@ export function AddCreditsModal({
     };
 
     const poll = async () => {
-      const isFunded = await checkAuthoritativeUpdate();
+      const isFunded = await checkExactOperationStatus();
       if (isFunded) {
         setStep('success');
         if (onPaymentSuccess) onPaymentSuccess();
