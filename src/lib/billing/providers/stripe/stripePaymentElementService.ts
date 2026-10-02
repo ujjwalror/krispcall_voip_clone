@@ -3,6 +3,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
 import Stripe from 'stripe';
 import { getStripeClient } from './stripeClient';
+import { StripeClientFactory } from './stripeClientFactory';
 import { StripeCustomerService } from './stripeCustomerService';
 import { RetailPricingService } from '@/lib/telephony/marketplace/pricingService';
 import { inventoryProvider } from '@/lib/telephony/marketplace/inventoryProvider';
@@ -276,7 +277,10 @@ export class StripePaymentElementService {
     if (!stripeCustomerId) {
       stripeCustomerId = await StripeCustomerService.getOrCreateStripeCustomer(
         supabase,
-        organizationId
+        organizationId,
+        undefined,
+        undefined,
+        { providerAccountId: op.provider_account_id }
       );
 
       await (supabase as any)
@@ -287,7 +291,7 @@ export class StripePaymentElementService {
     }
 
     // 7. Stripe PaymentIntent Creation / Recovery with Deterministic Idempotency Key
-    const stripe = getStripeClient();
+    const stripe = await StripeClientFactory.getClientForAccount(supabase, op.provider_account_id);
     let paymentIntent: Stripe.PaymentIntent;
 
     const piIdempotencyKey = `chk_pi_${op.id}`;

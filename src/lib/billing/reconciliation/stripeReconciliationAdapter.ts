@@ -1,6 +1,7 @@
 import Stripe from 'stripe';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { getStripeClient } from '../providers/stripe/stripeClient';
+import { StripeClientFactory } from '../providers/stripe/stripeClientFactory';
 import { ProviderAccountResolver } from '../providers/providerAccountResolver';
 import {
   StripePaymentIntentSnapshot,
@@ -58,16 +59,16 @@ export class StripeReconciliationAdapter implements IStripeReconciliationAdapter
       throw new Error('STRIPE_RECON_ADAPTER_ERROR: paymentIntentId is required.');
     }
 
-    // Verify account exists & resolve provider details
+    let stripe: Stripe;
     try {
-      await ProviderAccountResolver.resolveActiveAccount(supabase, 'stripe', environment);
+      stripe = await StripeClientFactory.getClientForAccount(supabase, providerAccountId, { environment });
     } catch (err: any) {
+      if (err.message?.includes('PROVIDER_CREDENTIALS_UNAVAILABLE')) {
+        throw err;
+      }
       console.warn(`[StripeReconciliationAdapter] Provider account ${providerAccountId} resolution warning:`, err.message);
-      // Fail closed / classify credentials unavailable
       throw new Error(`PROVIDER_CREDENTIALS_UNAVAILABLE: Unable to resolve provider account ${providerAccountId} credentials.`);
     }
-
-    const stripe = getStripeClient();
 
     try {
       const pi = await stripe.paymentIntents.retrieve(paymentIntentId.trim());
@@ -111,13 +112,16 @@ export class StripeReconciliationAdapter implements IStripeReconciliationAdapter
   }): Promise<StripeRefundSnapshotPage> {
     const { supabase, providerAccountId, environment, paymentIntentId, limit = 100, startingAfter } = params;
 
+    let stripe: Stripe;
     try {
-      await ProviderAccountResolver.resolveActiveAccount(supabase, 'stripe', environment);
+      stripe = await StripeClientFactory.getClientForAccount(supabase, providerAccountId, { environment });
     } catch (err: any) {
+      if (err.message?.includes('PROVIDER_CREDENTIALS_UNAVAILABLE')) {
+        throw err;
+      }
       throw new Error(`PROVIDER_CREDENTIALS_UNAVAILABLE: Unable to resolve provider account ${providerAccountId} credentials.`);
     }
 
-    const stripe = getStripeClient();
     const queryParams: Stripe.RefundListParams = {
       limit: Math.min(100, Math.max(1, limit)),
     };
@@ -175,13 +179,15 @@ export class StripeReconciliationAdapter implements IStripeReconciliationAdapter
       throw new Error('STRIPE_RECON_ADAPTER_ERROR: disputeId is required.');
     }
 
+    let stripe: Stripe;
     try {
-      await ProviderAccountResolver.resolveActiveAccount(supabase, 'stripe', environment);
+      stripe = await StripeClientFactory.getClientForAccount(supabase, providerAccountId, { environment });
     } catch (err: any) {
+      if (err.message?.includes('PROVIDER_CREDENTIALS_UNAVAILABLE')) {
+        throw err;
+      }
       throw new Error(`PROVIDER_CREDENTIALS_UNAVAILABLE: Unable to resolve provider account ${providerAccountId} credentials.`);
     }
-
-    const stripe = getStripeClient();
 
     try {
       const dispute = await stripe.disputes.retrieve(disputeId.trim());

@@ -1,6 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import Stripe from 'stripe';
 import { ProviderAccountResolver } from './providers/providerAccountResolver';
+import { ProviderCredentialRegistry } from './providers/stripe/providerCredentialRegistry';
 
 export interface ProcessRefundResult {
   success: boolean;
@@ -94,10 +95,6 @@ export class CreditTopupRefundService {
     const eventType = event.type;
     const providerEventId = event.id;
 
-    // Resolve trusted provider account
-    const providerAccount = await ProviderAccountResolver.resolveActiveAccount(supabase, 'stripe', 'test');
-    const providerAccountId = options?.providerAccountId || providerAccount.id;
-
     // Extract object from event
     const eventObj = event.data.object as any;
     if (!eventObj) {
@@ -189,14 +186,28 @@ export class CreditTopupRefundService {
       };
     }
 
-    // Validate provider_account_id match
-    if (op.provider_account_id && op.provider_account_id !== providerAccountId) {
-      console.error(`[CreditTopupRefundService] Provider account mismatch for op ${op.id}: op account=${op.provider_account_id}, active=${providerAccountId}`);
+    // Authoritative Provider Account Identity: Use op.provider_account_id directly
+    const targetAccountId = op.provider_account_id || options?.providerAccountId;
+    if (options?.providerAccountId && op.provider_account_id && options.providerAccountId !== op.provider_account_id) {
+      console.error(`[CreditTopupRefundService] Provider account mismatch for op ${op.id}: op account=${op.provider_account_id}, option=${options.providerAccountId}`);
       return {
         success: false,
         code: 'PROVIDER_ACCOUNT_MISMATCH',
-        error: { code: 'PROVIDER_ACCOUNT_MISMATCH', message: `Refund provider_account_id ${providerAccountId} does not match operation provider_account_id ${op.provider_account_id}.` },
+        error: { code: 'PROVIDER_ACCOUNT_MISMATCH', message: `Refund provider_account_id ${options.providerAccountId} does not match operation provider_account_id ${op.provider_account_id}.` },
       };
+    }
+
+    // Verify credential availability for historical provider_account_id
+    try {
+      await ProviderCredentialRegistry.getCredentialsForAccount(supabase, targetAccountId);
+    } catch (credErr: any) {
+      if (credErr.message?.includes('PROVIDER_CREDENTIALS_UNAVAILABLE')) {
+        return {
+          success: false,
+          code: 'PROVIDER_CREDENTIALS_UNAVAILABLE',
+          error: { code: 'PROVIDER_CREDENTIALS_UNAVAILABLE', message: `Credentials for historical provider account ${targetAccountId} are unavailable.` },
+        };
+      }
     }
 
     // Validate currency
@@ -273,7 +284,7 @@ export class CreditTopupRefundService {
     // Invoke process_refund_reversal_atomic RPC
     const { data: rpcResult, error: rpcErr } = await (supabase as any).rpc('process_refund_reversal_atomic', {
       p_payment_operation_id: op.id,
-      p_provider_account_id: providerAccountId,
+      p_provider_account_id: targetAccountId,
       p_provider_refund_id: providerRefundId,
       p_provider_refund_minor: providerRefundMinor,
       p_credit_value_reversal_minor: creditValueReversalMinor,

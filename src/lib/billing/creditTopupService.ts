@@ -2,6 +2,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
 import Stripe from 'stripe';
 import { getStripeClient } from './providers/stripe/stripeClient';
+import { StripeClientFactory } from './providers/stripe/stripeClientFactory';
 import { StripeCustomerService } from './providers/stripe/stripeCustomerService';
 import { ProviderAccountResolver } from './providers/providerAccountResolver';
 import { isExpectedLegacySchemaMissingError } from './schemaUtils';
@@ -264,7 +265,16 @@ export class CreditTopupService {
     // 4. Resolve / Obtain Stripe Customer Idempotently
     let stripeCustomerId: string | null = null;
     try {
-      stripeCustomerId = await StripeCustomerService.getOrCreateStripeCustomer(supabase, organizationId, undefined, undefined, options);
+      stripeCustomerId = await StripeCustomerService.getOrCreateStripeCustomer(
+        supabase,
+        organizationId,
+        undefined,
+        undefined,
+        {
+          stripeOverride: options?.stripeOverride,
+          providerAccountId: paymentOp.provider_account_id,
+        }
+      );
     } catch (custErr: any) {
       console.error('[CreditTopupService] Stripe customer resolution failed:', custErr.message);
       return {
@@ -277,7 +287,7 @@ export class CreditTopupService {
     }
 
     // 5. Create or Recover Stripe PaymentIntent
-    const stripe = options?.stripeOverride || getStripeClient();
+    const stripe = options?.stripeOverride || (await StripeClientFactory.getClientForAccount(supabase, paymentOp.provider_account_id));
     const stripeIdempotencyKey = `credit_topup_pi_${paymentOp.id}`;
 
     let paymentIntent: Stripe.PaymentIntent;

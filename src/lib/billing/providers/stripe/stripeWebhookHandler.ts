@@ -1,6 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import Stripe from 'stripe';
-import { verifyStripeWebhookSignature } from './stripeClient';
+import { getStripeClient, verifyStripeWebhookSignature } from './stripeClient';
+import { ProviderCredentialRegistry } from './providerCredentialRegistry';
 import { PaymentStateMachine } from '../../paymentStateMachine';
 import { PaymentCanonicalStatus } from '../../types';
 import { CommercialCaptureReconciliationService } from '../../commercialCaptureReconciliationService';
@@ -30,18 +31,51 @@ export class StripeWebhookHandler {
     supabase: SupabaseClient,
     rawBody: string | Buffer,
     signature: string,
-    options?: { stripeOverride?: Stripe; skipSignatureVerification?: boolean }
+    options?: { stripeOverride?: Stripe; skipSignatureVerification?: boolean; providerAccountId?: string }
   ): Promise<ProcessWebhookResult> {
-    // 1. Verify signature
+    // 1. Verify signature and resolve authoritative provider account
     let event: Stripe.Event;
+    let providerAccountId: string | null = options?.providerAccountId || null;
+
     if (options?.skipSignatureVerification) {
       event = typeof rawBody === 'string' ? JSON.parse(rawBody) : JSON.parse(rawBody.toString());
+      if (!providerAccountId) {
+        const defaultAcc = await ProviderAccountResolver.resolveActiveAccount(supabase, 'stripe', 'test');
+        providerAccountId = defaultAcc.id;
+      }
     } else {
+      const configuredSecrets = ProviderCredentialRegistry.getAllConfiguredWebhookSecrets('test');
+      const validMatches: Array<{ event: Stripe.Event; ref: string }> = [];
+
+      for (const item of configuredSecrets) {
+        try {
+          const stripe = getStripeClient();
+          const constructed = stripe.webhooks.constructEvent(rawBody, signature, item.webhookSecret);
+          validMatches.push({ event: constructed, ref: item.providerAccountReference });
+        } catch (err) {
+          // Signature mismatch for this secret, continue testing other secrets
+        }
+      }
+
+      if (validMatches.length === 0) {
+        console.error('[StripeWebhookHandler] Signature verification failed for all configured secrets.');
+        throw new Error('INVALID_WEBHOOK_SIGNATURE: Webhook signature verification failed for all configured accounts.');
+      }
+
+      if (validMatches.length > 1) {
+        console.error('[StripeWebhookHandler] Ambiguous webhook match: multiple secrets validated the payload.');
+        throw new Error('AMBIGUOUS_WEBHOOK_SIGNATURE: Webhook signature matched multiple provider account secrets.');
+      }
+
+      const match = validMatches[0];
+      event = match.event;
+
       try {
-        event = verifyStripeWebhookSignature(rawBody, signature);
-      } catch (err: any) {
-        console.error('[StripeWebhookHandler] Signature verification failed:', err.message);
-        throw new Error(`INVALID_WEBHOOK_SIGNATURE: ${err.message}`);
+        const resolvedAcc = await ProviderAccountResolver.resolveAccountFromReference(supabase, 'stripe', 'test', match.ref);
+        providerAccountId = resolvedAcc;
+      } catch (err) {
+        const defaultAcc = await ProviderAccountResolver.resolveActiveAccount(supabase, 'stripe', 'test');
+        providerAccountId = defaultAcc.id;
       }
     }
 
@@ -57,12 +91,6 @@ export class StripeWebhookHandler {
     // 2. Claim / Record Webhook Event safely
     const nowIso = new Date().toISOString();
     const staleThresholdMs = 5 * 60 * 1000; // 5 minutes conservative stale threshold
-    // TODO / DESIGN BOUNDARY (Requirement 22):
-    // Multi-account historical webhook routing: Currently resolves default active provider account.
-    // In future multi-Stripe-account topologies, webhook endpoint/signing-secret context MUST
-    // authoritatively identify the exact historical provider account before resolving.
-    const providerAccount = await ProviderAccountResolver.resolveActiveAccount(supabase);
-    const providerAccountId = providerAccount?.id || null;
 
     // Try RPC claim_stripe_webhook_event_for_processing first
     const { data: claimResult, error: rpcErr } = await (supabase as any)
