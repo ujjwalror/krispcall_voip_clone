@@ -7,6 +7,7 @@ import { StripeCustomerService } from './providers/stripe/stripeCustomerService'
 import { ProviderAccountResolver } from './providers/providerAccountResolver';
 import { isExpectedLegacySchemaMissingError } from './schemaUtils';
 import { formatMinorUnitsToCurrency } from './currencyFormatter';
+import { validateTopupAmountMinor } from './creditTopupPolicy';
 
 export interface CreateCreditTopupParams {
   organizationId: string;
@@ -171,6 +172,18 @@ export class CreditTopupService {
         error: {
           code: currErr.message?.includes('CURRENCY_UNAVAILABLE') ? 'CURRENCY_UNAVAILABLE' : 'WALLET_UNAVAILABLE',
           message: currErr.message || 'Unable to resolve authoritative organization wallet currency.',
+        },
+      };
+    }
+
+    // 2b. Commercial Top-Up Policy Validation (Min $10 / Max $500 equivalent in wallet currency)
+    const policyValidation = validateTopupAmountMinor(amountMinor, currency);
+    if (!policyValidation.valid) {
+      return {
+        success: false,
+        error: {
+          code: policyValidation.code || 'INVALID_AMOUNT',
+          message: policyValidation.message || 'Invalid top-up amount.',
         },
       };
     }

@@ -49,6 +49,7 @@ export async function GET(req: NextRequest) {
         availableCreditsMinor,
         formattedBalance,
         currency,
+        role: (profile.role || 'agent').toLowerCase(),
       },
       {
         status: 200,

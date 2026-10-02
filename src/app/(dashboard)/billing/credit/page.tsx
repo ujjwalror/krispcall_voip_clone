@@ -1,16 +1,18 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
-import { Zap, Lock, Bell, RefreshCw, Shield, Info, AlertTriangle, Loader2, History, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Zap, Lock, Bell, RefreshCw, Shield, Info, AlertTriangle, Loader2, History, ChevronLeft, ChevronRight, PlusCircle } from 'lucide-react';
 import { formatMinorUnitsToCurrency } from '@/lib/billing/currencyFormatter';
+import { AddCreditsModal } from '@/components/billing/AddCreditsModal';
 
 interface CreditSummaryData {
   success: boolean;
   availableCreditsMinor: number;
   formattedBalance: string;
   currency: string;
+  role?: string;
 }
 
 interface TransactionItem {
@@ -36,6 +38,7 @@ export default function BillingCreditPage() {
   const [summaryLoading, setSummaryLoading] = useState<boolean>(true);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [summary, setSummary] = useState<CreditSummaryData | null>(null);
+  const [isAddCreditsOpen, setIsAddCreditsOpen] = useState<boolean>(false);
 
   const [historyLoading, setHistoryLoading] = useState<boolean>(true);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -43,41 +46,33 @@ export default function BillingCreditPage() {
   const [pagination, setPagination] = useState<PaginationMeta>({ total: 0, limit: 10, offset: 0, hasMore: false });
 
   // Fetch summary
-  useEffect(() => {
-    let isMounted = true;
-    async function fetchSummary() {
-      try {
-        setSummaryLoading(true);
-        setSummaryError(null);
-        const res = await fetch('/api/billing/credit/summary', {
-          method: 'GET',
-          headers: { 'Cache-Control': 'no-cache' },
-        });
+  const fetchSummary = useCallback(async () => {
+    try {
+      setSummaryLoading(true);
+      setSummaryError(null);
+      const res = await fetch('/api/billing/credit/summary', {
+        method: 'GET',
+        headers: { 'Cache-Control': 'no-cache' },
+      });
 
-        if (!res.ok) {
-          const errJson = await res.json().catch(() => ({}));
-          throw new Error(errJson.message || 'Credits balance temporarily unavailable.');
-        }
-
-        const data: CreditSummaryData = await res.json();
-        if (isMounted) {
-          setSummary(data);
-        }
-      } catch (err: any) {
-        if (isMounted) {
-          console.error('[BillingCreditPage] Error loading credit summary:', err.message || err);
-          setSummaryError('Credits balance temporarily unavailable.');
-        }
-      } finally {
-        if (isMounted) {
-          setSummaryLoading(false);
-        }
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.message || 'Credits balance temporarily unavailable.');
       }
-    }
 
-    fetchSummary();
-    return () => { isMounted = false; };
+      const data: CreditSummaryData = await res.json();
+      setSummary(data);
+    } catch (err: any) {
+      console.error('[BillingCreditPage] Error loading credit summary:', err.message || err);
+      setSummaryError('Credits balance temporarily unavailable.');
+    } finally {
+      setSummaryLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchSummary();
+  }, [fetchSummary]);
 
   // Fetch transaction history
   const fetchHistory = async (offset: number = 0) => {
@@ -180,16 +175,49 @@ export default function BillingCreditPage() {
           </p>
 
           <div className="flex items-center gap-3 pt-1">
-            <button
-              disabled
-              className="px-4 py-2 rounded-xl text-xs font-semibold bg-amber-500/10 text-amber-700 dark:text-amber-300 cursor-not-allowed border border-amber-500/20 opacity-80 flex items-center gap-2"
-            >
-              <Lock className="w-3.5 h-3.5" />
-              <span>Add Credits</span>
-              <span className="px-1.5 py-0.2 rounded-md bg-amber-200/50 dark:bg-amber-900/50 text-[10px]">
-                Upcoming
-              </span>
-            </button>
+            {(() => {
+              const role = (summary?.role || '').toLowerCase();
+              const isAllowed = ['owner', 'admin'].includes(role);
+
+              if (summaryLoading) {
+                return (
+                  <button
+                    disabled
+                    className="px-4 py-2 rounded-xl text-xs font-semibold bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20 opacity-70 flex items-center gap-2"
+                  >
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-500" />
+                    <span>Loading...</span>
+                  </button>
+                );
+              }
+
+              if (isAllowed) {
+                return (
+                  <button
+                    onClick={() => setIsAddCreditsOpen(true)}
+                    className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md shadow-amber-500/20 transition flex items-center gap-2"
+                  >
+                    <PlusCircle className="w-4 h-4" />
+                    <span>Add Credits</span>
+                  </button>
+                );
+              }
+
+              return (
+                <div className="flex items-center gap-2">
+                  <button
+                    disabled
+                    className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 cursor-not-allowed border border-slate-300 dark:border-slate-700 opacity-80 flex items-center gap-2"
+                  >
+                    <Lock className="w-3.5 h-3.5" />
+                    <span>Add Credits</span>
+                  </button>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 italic">
+                    Only workspace Owners and Admins can add calling credits.
+                  </span>
+                </div>
+              );
+            })()}
           </div>
         </div>
       </Card>
@@ -353,6 +381,18 @@ export default function BillingCreditPage() {
           )}
         </div>
       </Card>
+
+      {/* Add Credits Modal */}
+      <AddCreditsModal
+        isOpen={isAddCreditsOpen}
+        onClose={() => setIsAddCreditsOpen(false)}
+        currency={summary?.currency || 'USD'}
+        prePaymentBalanceMinor={summary?.availableCreditsMinor || 0}
+        onPaymentSuccess={() => {
+          fetchSummary();
+          fetchHistory(0);
+        }}
+      />
     </div>
   );
 }
