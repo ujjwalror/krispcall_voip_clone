@@ -427,7 +427,7 @@ export class StripePaymentElementService {
 
     if (data.provider_payment_id && !['canceled', 'failed', 'captured'].includes(canonicalStatus)) {
       try {
-        const stripe = getStripeClient();
+        const stripe = await StripeClientFactory.getClientForAccount(supabase, data.provider_account_id);
         const pi = await stripe.paymentIntents.retrieve(data.provider_payment_id);
         clientSecret = pi.client_secret;
 
@@ -514,7 +514,7 @@ export class StripePaymentElementService {
     // Cancel Stripe PaymentIntent if provider_payment_id exists
     if (op.provider_payment_id) {
       try {
-        const stripe = getStripeClient();
+        const stripe = await StripeClientFactory.getClientForAccount(supabase, op.provider_account_id);
         await stripe.paymentIntents.cancel(op.provider_payment_id, {
           cancellation_reason: 'abandoned',
         });

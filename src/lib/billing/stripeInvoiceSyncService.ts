@@ -8,6 +8,7 @@ export interface InvoiceSyncOptions {
   expectedMode?: 'test' | 'live';
   stripeOverride?: Stripe;
   eventPayload?: Stripe.Event | Stripe.Invoice | null;
+  providerAccountId?: string;
 }
 
 export type InvoiceSyncClassification =
@@ -78,7 +79,15 @@ export class StripeInvoiceSyncService {
       stripeInvoice = eventPayload as Stripe.Invoice;
     } else {
       try {
-        const stripe = stripeOverride || getStripeClient();
+        let stripe: Stripe;
+        if (stripeOverride) {
+          stripe = stripeOverride;
+        } else if (options?.providerAccountId) {
+          const { StripeClientFactory } = await import('./providers/stripe/stripeClientFactory');
+          stripe = await StripeClientFactory.getClientForAccount(supabase, options.providerAccountId, { environment: options?.expectedMode || 'test' });
+        } else {
+          stripe = getStripeClient();
+        }
         stripeInvoice = await stripe.invoices.retrieve(providerInvoiceId, {
           expand: ['lines.data'],
         });

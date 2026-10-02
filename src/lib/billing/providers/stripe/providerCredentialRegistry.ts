@@ -49,18 +49,56 @@ export class ProviderCredentialRegistry {
   };
 
   /**
+   * Authoritative Server-Side Stripe Runtime Environment Resolver.
+   * Derives 'test' | 'live' from private server configuration.
+   * Fails closed if missing in production or invalid.
+   */
+  static resolveServerRuntimeEnvironment(explicitMode?: 'test' | 'live'): 'test' | 'live' {
+    if (explicitMode) {
+      if (explicitMode !== 'test' && explicitMode !== 'live') {
+        throw new Error(`STRIPE_ENVIRONMENT_INVALID: Explicit mode '${explicitMode}' must be 'test' or 'live'.`);
+      }
+      return explicitMode;
+    }
+
+    const rawServerEnv = process.env.STRIPE_EXPECTED_MODE || process.env.STRIPE_RUNTIME_ENVIRONMENT;
+    const rawClientEnv = process.env.NEXT_PUBLIC_STRIPE_ENVIRONMENT;
+
+    let mode: string = (rawServerEnv || '').trim().toLowerCase();
+
+    if (!mode) {
+      if (rawClientEnv) {
+        mode = rawClientEnv.trim().toLowerCase();
+      } else {
+        mode = 'test'; // Default safe mode when unconfigured
+      }
+    }
+
+    if (rawServerEnv && rawClientEnv && rawServerEnv.trim().toLowerCase() !== rawClientEnv.trim().toLowerCase()) {
+      throw new Error(`STRIPE_ENVIRONMENT_MISMATCH: Server setting '${rawServerEnv}' conflicts with NEXT_PUBLIC_STRIPE_ENVIRONMENT '${rawClientEnv}'.`);
+    }
+
+    if (mode !== 'test' && mode !== 'live') {
+      throw new Error(`STRIPE_ENVIRONMENT_INVALID: Configured Stripe environment '${mode}' must be strictly 'test' or 'live'.`);
+    }
+
+    return mode as 'test' | 'live';
+  }
+
+  /**
    * Resolves credentials for an explicit provider_account_id.
    * Retired accounts remain resolvable for historical operations as long as credentials exist.
    */
   static async getCredentialsForAccount(
     supabase: SupabaseClient,
     providerAccountId: string,
-    runtimeEnv: 'test' | 'live' = 'test'
+    runtimeEnv?: 'test' | 'live'
   ): Promise<ProviderAccountCredentials> {
     if (!providerAccountId || !providerAccountId.trim()) {
       throw new Error('PROVIDER_CREDENTIALS_UNAVAILABLE: providerAccountId is required.');
     }
 
+    const env = runtimeEnv ? this.resolveServerRuntimeEnvironment(runtimeEnv) : this.resolveServerRuntimeEnvironment();
     const cleanId = providerAccountId.trim();
 
     // 1. Fetch provider account record from public.billing_provider_accounts
@@ -84,7 +122,7 @@ export class ProviderCredentialRegistry {
 
     // 2. Pre-migration sentinel fallback (ONLY for sentinel ID in test mode)
     if (!accountRecord) {
-      if (cleanId === '00000000-0000-0000-0000-0000000000aa' && runtimeEnv === 'test') {
+      if (cleanId === '00000000-0000-0000-0000-0000000000aa' && env === 'test') {
         accountRecord = {
           id: '00000000-0000-0000-0000-0000000000aa',
           provider: 'stripe',
@@ -102,8 +140,8 @@ export class ProviderCredentialRegistry {
       throw new Error(`PROVIDER_CREDENTIALS_UNAVAILABLE: Unsupported provider ${accountRecord.provider} for account ${cleanId}.`);
     }
 
-    if (accountRecord.environment !== runtimeEnv) {
-      throw new Error(`PROVIDER_CREDENTIALS_UNAVAILABLE: Account ${cleanId} environment (${accountRecord.environment}) does not match runtime environment (${runtimeEnv}).`);
+    if (accountRecord.environment !== env) {
+      throw new Error(`PROVIDER_CREDENTIALS_UNAVAILABLE: Account ${cleanId} environment (${accountRecord.environment}) does not match runtime environment (${env}).`);
     }
 
     // 4. Resolve credentials via Controlled Whitelist Map
@@ -136,14 +174,15 @@ export class ProviderCredentialRegistry {
    * Returns all configured webhook secrets for bounded multi-account signature matching.
    * Prevents unbounded database table scans on every webhook delivery.
    */
-  static getAllConfiguredWebhookSecrets(runtimeEnv: 'test' | 'live' = 'test'): Array<{
+  static getAllConfiguredWebhookSecrets(runtimeEnv?: 'test' | 'live'): Array<{
     providerAccountReference: string;
     webhookSecret: string;
   }> {
+    const env = runtimeEnv ? this.resolveServerRuntimeEnvironment(runtimeEnv) : this.resolveServerRuntimeEnvironment();
     const results: Array<{ providerAccountReference: string; webhookSecret: string }> = [];
 
     for (const [ref, mapping] of Object.entries(this.CONTROLLED_CREDENTIAL_MAP)) {
-      if (ref.includes(runtimeEnv)) {
+      if (ref.includes(env)) {
         if (mapping.webhookSecretEnv) {
           const val = process.env[mapping.webhookSecretEnv];
           if (val && val.trim().length > 0) {
@@ -157,7 +196,7 @@ export class ProviderCredentialRegistry {
     }
 
     // Default fallback if explicit env matching produces empty list in test mode
-    if (results.length === 0 && process.env.STRIPE_WEBHOOK_SECRET) {
+    if (results.length === 0 && env === 'test' && process.env.STRIPE_WEBHOOK_SECRET) {
       results.push({
         providerAccountReference: 'stripe_primary_test',
         webhookSecret: process.env.STRIPE_WEBHOOK_SECRET.trim(),

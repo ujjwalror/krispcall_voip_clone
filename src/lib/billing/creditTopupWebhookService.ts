@@ -1,6 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import Stripe from 'stripe';
-import { ProviderAccountResolver } from './providers/providerAccountResolver';
 
 export interface CreditTopupWebhookResult {
   success: boolean;
@@ -21,7 +20,8 @@ export class CreditTopupWebhookService {
    */
   static async processPaymentIntentSucceeded(
     supabase: SupabaseClient,
-    event: Stripe.Event
+    event: Stripe.Event,
+    options?: { providerAccountId?: string }
   ): Promise<CreditTopupWebhookResult> {
     const pi = event.data.object as Stripe.PaymentIntent;
     const providerEventId = event.id;
@@ -89,15 +89,38 @@ export class CreditTopupWebhookService {
       };
     }
 
-    // Validate provider_account_id if present
-    const activeProviderAccount = await ProviderAccountResolver.resolveActiveAccount(supabase);
-    const activeProviderAccountId = activeProviderAccount.id;
-    if (op.provider_account_id && op.provider_account_id !== activeProviderAccountId) {
-      console.warn(`[CreditTopupWebhookService] Provider account mismatch for op ${op.id}: op=${op.provider_account_id}, active=${activeProviderAccountId}`);
+    // Validate provider_account_id on operation
+    if (!op.provider_account_id) {
+      console.warn(`[CreditTopupWebhookService] Operation ${op.id} missing provider_account_id`);
+      return {
+        success: false,
+        code: 'MISSING_PROVIDER_ACCOUNT_ID',
+        message: 'Payment operation is missing persisted provider_account_id.',
+      };
+    }
+
+    // Cross-check authenticated webhook provider account against operation provider_account_id
+    const authenticatedAccountId = options?.providerAccountId;
+    if (authenticatedAccountId && authenticatedAccountId !== op.provider_account_id) {
+      console.warn(`[CreditTopupWebhookService] Authenticated provider account mismatch for op ${op.id}: op=${op.provider_account_id}, webhook=${authenticatedAccountId}`);
       return {
         success: false,
         code: 'PROVIDER_ACCOUNT_MISMATCH',
-        message: 'Payment operation provider_account_id does not match active provider account ID.',
+        message: 'Authenticated webhook provider_account_id does not match payment operation provider_account_id.',
+      };
+    }
+
+    // Verify historical provider account credential availability
+    const { ProviderCredentialRegistry } = await import('./providers/stripe/providerCredentialRegistry');
+    const env = ProviderCredentialRegistry.resolveServerRuntimeEnvironment();
+    try {
+      await ProviderCredentialRegistry.getCredentialsForAccount(supabase, op.provider_account_id, env);
+    } catch (credErr: any) {
+      console.error(`[CreditTopupWebhookService] Failed to resolve credentials for historical provider account ${op.provider_account_id}:`, credErr.message);
+      return {
+        success: false,
+        code: 'PROVIDER_CREDENTIALS_UNAVAILABLE',
+        message: `Credentials for historical provider account ${op.provider_account_id} are unavailable.`,
       };
     }
 

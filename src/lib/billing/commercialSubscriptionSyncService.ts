@@ -7,6 +7,7 @@ export interface SubscriptionSyncOptions {
   expectedMode?: 'test' | 'live';
   stripeOverride?: Stripe;
   eventPayload?: Stripe.Event | Stripe.Subscription | null;
+  providerAccountId?: string;
 }
 
 export type SyncClassification =
@@ -87,7 +88,15 @@ export class CommercialSubscriptionSyncService {
     let isProvider404 = false;
 
     try {
-      const stripeClient = stripeOverride || getStripeClient();
+      let stripeClient: Stripe;
+      if (stripeOverride) {
+        stripeClient = stripeOverride;
+      } else if (options?.providerAccountId) {
+        const { StripeClientFactory } = await import('./providers/stripe/stripeClientFactory');
+        stripeClient = await StripeClientFactory.getClientForAccount(supabase, options.providerAccountId, { environment: expectedMode });
+      } else {
+        stripeClient = getStripeClient();
+      }
       subscription = await stripeClient.subscriptions.retrieve(providerSubscriptionId, {
         expand: ['items.data.price', 'customer'],
       });

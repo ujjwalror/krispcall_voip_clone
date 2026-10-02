@@ -37,14 +37,16 @@ export class StripeWebhookHandler {
     let event: Stripe.Event;
     let providerAccountId: string | null = options?.providerAccountId || null;
 
+    const env = ProviderCredentialRegistry.resolveServerRuntimeEnvironment();
+
     if (options?.skipSignatureVerification) {
       event = typeof rawBody === 'string' ? JSON.parse(rawBody) : JSON.parse(rawBody.toString());
       if (!providerAccountId) {
-        const defaultAcc = await ProviderAccountResolver.resolveActiveAccount(supabase, 'stripe', 'test');
+        const defaultAcc = await ProviderAccountResolver.resolveActiveAccount(supabase, 'stripe', env);
         providerAccountId = defaultAcc.id;
       }
     } else {
-      const configuredSecrets = ProviderCredentialRegistry.getAllConfiguredWebhookSecrets('test');
+      const configuredSecrets = ProviderCredentialRegistry.getAllConfiguredWebhookSecrets(env);
       const validMatches: Array<{ event: Stripe.Event; ref: string }> = [];
 
       for (const item of configuredSecrets) {
@@ -71,10 +73,10 @@ export class StripeWebhookHandler {
       event = match.event;
 
       try {
-        const resolvedAcc = await ProviderAccountResolver.resolveAccountFromReference(supabase, 'stripe', 'test', match.ref);
+        const resolvedAcc = await ProviderAccountResolver.resolveAccountFromReference(supabase, 'stripe', env, match.ref);
         providerAccountId = resolvedAcc;
       } catch (err) {
-        const defaultAcc = await ProviderAccountResolver.resolveActiveAccount(supabase, 'stripe', 'test');
+        const defaultAcc = await ProviderAccountResolver.resolveActiveAccount(supabase, 'stripe', env);
         providerAccountId = defaultAcc.id;
       }
     }
@@ -270,7 +272,10 @@ export class StripeWebhookHandler {
     }
 
     // 4. Process state-changing event types safely
-    const syncRes = await this.dispatchWebhookEvent(supabase, event, options?.stripeOverride);
+    const syncRes = await this.dispatchWebhookEvent(supabase, event, {
+      stripeOverride: options?.stripeOverride,
+      providerAccountId: providerAccountId || undefined,
+    });
 
     const isGateDisabled = (syncRes as any)?.classification === 'FEATURE_GATE_DISABLED';
 
@@ -293,10 +298,12 @@ export class StripeWebhookHandler {
   private static async dispatchWebhookEvent(
     supabase: SupabaseClient,
     event: Stripe.Event,
-    stripeOverride?: Stripe
+    options?: { stripeOverride?: Stripe; providerAccountId?: string }
   ): Promise<SubscriptionSyncResult | InvoiceSyncResult | null> {
     const providerEventId = event.id;
     const nowIso = new Date().toISOString();
+    const stripeOverride = options?.stripeOverride;
+    const providerAccountId = options?.providerAccountId;
 
     switch (event.type) {
       case 'customer.subscription.created':
@@ -311,6 +318,7 @@ export class StripeWebhookHandler {
             providerSubscriptionId: subId,
             eventPayload: event,
             stripeOverride,
+            providerAccountId,
           }
         );
 
@@ -364,6 +372,7 @@ export class StripeWebhookHandler {
             providerInvoiceId: invoiceId,
             eventPayload: event,
             stripeOverride,
+            providerAccountId,
           }
         );
 
@@ -399,7 +408,7 @@ export class StripeWebhookHandler {
         const opType = paymentIntent.metadata?.operation_type;
 
         if (event.type === 'payment_intent.succeeded' && opType === 'credit_topup') {
-          const topupRes = await CreditTopupWebhookService.processPaymentIntentSucceeded(supabase, event);
+          const topupRes = await CreditTopupWebhookService.processPaymentIntentSucceeded(supabase, event, { providerAccountId });
           if (topupRes.success) {
             await (supabase as any)
               .from('billing_webhook_events')
@@ -431,7 +440,7 @@ export class StripeWebhookHandler {
       case 'refund.created':
       case 'refund.updated':
       case 'refund.failed': {
-        const refundRes = await CreditTopupRefundService.handleRefundEvent(supabase, event);
+        const refundRes = await CreditTopupRefundService.handleRefundEvent(supabase, event, { providerAccountId });
         if (refundRes.success) {
           await (supabase as any)
             .from('billing_webhook_events')
@@ -460,7 +469,7 @@ export class StripeWebhookHandler {
       case 'charge.dispute.closed':
       case 'charge.dispute.funds_withdrawn':
       case 'charge.dispute.funds_reinstated': {
-        const disputeRes = await CreditTopupDisputeService.handleDisputeEvent(supabase, event);
+        const disputeRes = await CreditTopupDisputeService.handleDisputeEvent(supabase, event, { providerAccountId });
         if (disputeRes.success) {
           await (supabase as any)
             .from('billing_webhook_events')

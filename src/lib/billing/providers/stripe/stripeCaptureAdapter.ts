@@ -1,29 +1,15 @@
 import Stripe from 'stripe';
+import { SupabaseClient } from '@supabase/supabase-js';
 import { getStripeClient } from './stripeClient';
-
-/**
- * Phase 13.3.3.2C.1 — Stripe Capture Adapter
- * 
- * Minimal, production-grade wrapper for executing Stripe PaymentIntent capture POST requests.
- * 
- * DUAL FEATURE GATE INVARIANT:
- * Executable capture request is reachable ONLY WHEN BOTH:
- * 1. process.env.PHASE13_PAYMENT_ENABLED === 'true'
- * AND
- * 2. process.env.PHASE13_STRIPE_CAPTURE_ENABLED === 'true'
- * 
- * NO NODE_ENV INFERENCE.
- * 
- * SECURITY CONTRACT:
- * Receives ONLY server-authoritative inputs derived from canonical database records.
- * Does NOT accept browser inputs or make eligibility decisions itself.
- */
+import { StripeClientFactory } from './stripeClientFactory';
 
 export interface CaptureDispatchParams {
   providerPaymentId: string;
   amountMinor: number;
   idempotencyKey: string;
   expectedMode: 'test' | 'live';
+  supabase?: SupabaseClient;
+  providerAccountId?: string;
 }
 
 export interface CaptureDispatchResult {
@@ -64,7 +50,7 @@ export class StripeCaptureAdapter {
       };
     }
 
-    const { providerPaymentId, amountMinor, idempotencyKey, expectedMode } = params;
+    const { providerPaymentId, amountMinor, idempotencyKey, expectedMode, supabase, providerAccountId } = params;
 
     if (!providerPaymentId || !amountMinor || !idempotencyKey) {
       return {
@@ -76,7 +62,24 @@ export class StripeCaptureAdapter {
       };
     }
 
-    const stripe = getStripeClient();
+    let stripe: Stripe;
+    if (supabase && providerAccountId) {
+      stripe = await StripeClientFactory.getClientForAccount(supabase, providerAccountId, { environment: expectedMode });
+    } else if (supabase && providerPaymentId) {
+      const { data: op } = await (supabase as any)
+        .from('billing_payment_operations')
+        .select('provider_account_id')
+        .eq('provider_payment_id', providerPaymentId)
+        .maybeSingle();
+
+      if (op?.provider_account_id) {
+        stripe = await StripeClientFactory.getClientForAccount(supabase, op.provider_account_id, { environment: expectedMode });
+      } else {
+        stripe = getStripeClient();
+      }
+    } else {
+      stripe = getStripeClient();
+    }
 
     try {
       const paymentIntent = await stripe.paymentIntents.capture(

@@ -1,6 +1,6 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import Stripe from 'stripe';
-import { ProviderAccountResolver } from './providers/providerAccountResolver';
+import { ProviderCredentialRegistry } from './providers/stripe/providerCredentialRegistry';
 
 export interface ProcessDisputeResult {
   success: boolean;
@@ -34,10 +34,6 @@ export class CreditTopupDisputeService {
   ): Promise<ProcessDisputeResult> {
     const eventType = event.type;
     const providerEventId = event.id;
-
-    // Resolve trusted provider account
-    const providerAccount = await ProviderAccountResolver.resolveActiveAccount(supabase, 'stripe', 'test');
-    const providerAccountId = options?.providerAccountId || providerAccount.id;
 
     const dispute = event.data.object as Stripe.Dispute;
     if (!dispute || !dispute.id) {
@@ -137,13 +133,36 @@ export class CreditTopupDisputeService {
       };
     }
 
-    // Validate provider_account_id match
-    if (op.provider_account_id && op.provider_account_id !== providerAccountId) {
-      console.error(`[CreditTopupDisputeService] Provider account mismatch for op ${op.id}: op account=${op.provider_account_id}, active=${providerAccountId}`);
+    const providerAccountId = op.provider_account_id;
+    if (!providerAccountId) {
+      console.error(`[CreditTopupDisputeService] Payment operation ${op.id} missing provider_account_id`);
+      return {
+        success: false,
+        code: 'MISSING_PROVIDER_ACCOUNT_ID',
+        error: { code: 'MISSING_PROVIDER_ACCOUNT_ID', message: `Payment operation ${op.id} is missing provider_account_id.` },
+      };
+    }
+
+    // Validate cross-check with authenticated webhook account if provided
+    if (options?.providerAccountId && options.providerAccountId !== providerAccountId) {
+      console.error(`[CreditTopupDisputeService] Provider account mismatch for op ${op.id}: op account=${providerAccountId}, webhook=${options.providerAccountId}`);
       return {
         success: false,
         code: 'PROVIDER_ACCOUNT_MISMATCH',
-        error: { code: 'PROVIDER_ACCOUNT_MISMATCH', message: `Dispute provider_account_id ${providerAccountId} does not match operation provider_account_id ${op.provider_account_id}.` },
+        error: { code: 'PROVIDER_ACCOUNT_MISMATCH', message: `Dispute webhook provider_account_id ${options.providerAccountId} does not match operation provider_account_id ${providerAccountId}.` },
+      };
+    }
+
+    // Validate historical credentials exist
+    const env = ProviderCredentialRegistry.resolveServerRuntimeEnvironment();
+    try {
+      await ProviderCredentialRegistry.getCredentialsForAccount(supabase, providerAccountId, env);
+    } catch (credErr: any) {
+      console.error(`[CreditTopupDisputeService] Failed to resolve credentials for historical provider account ${providerAccountId}:`, credErr.message);
+      return {
+        success: false,
+        code: 'PROVIDER_CREDENTIALS_UNAVAILABLE',
+        error: { code: 'PROVIDER_CREDENTIALS_UNAVAILABLE', message: `Credentials for historical provider account ${providerAccountId} are unavailable.` },
       };
     }
 

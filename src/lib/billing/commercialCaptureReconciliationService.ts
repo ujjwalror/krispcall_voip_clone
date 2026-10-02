@@ -146,7 +146,15 @@ export class CommercialCaptureReconciliationService {
     // 2. Direct Authoritative Stripe Retrieval
     let paymentIntent: Stripe.PaymentIntent;
     try {
-      const stripeClient = stripeOverride || getStripeClient();
+      let stripeClient: Stripe;
+      if (stripeOverride) {
+        stripeClient = stripeOverride;
+      } else if (paymentOp.provider_account_id) {
+        const { StripeClientFactory } = await import('./providers/stripe/stripeClientFactory');
+        stripeClient = await StripeClientFactory.getClientForAccount(supabase, paymentOp.provider_account_id, { environment: params.expectedMode });
+      } else {
+        stripeClient = getStripeClient();
+      }
       paymentIntent = await stripeClient.paymentIntents.retrieve(opProviderPaymentId);
     } catch (retrieveErr: any) {
       console.error('[CommercialCaptureReconciliationService] Authoritative Stripe retrieve failed:', retrieveErr.message || retrieveErr);
@@ -412,10 +420,8 @@ export class CommercialCaptureReconciliationService {
 
     const dispatcher = captureDispatcher || (async (p) => {
       const { StripeCaptureAdapter } = await import('./providers/stripe/stripeCaptureAdapter');
-      return StripeCaptureAdapter.capturePaymentIntent(p);
+      return StripeCaptureAdapter.capturePaymentIntent({ ...p, supabase });
     });
-
-    const stripeClient = stripeOverride || getStripeClient();
 
     // 4. Server-side loading of canonical entities
     const { data: saga } = await (supabase as any)
@@ -459,6 +465,16 @@ export class CommercialCaptureReconciliationService {
         customerDTO: CommercialSagaStateMachine.mapStateToCustomerDTO(saga.state as CommercialSagaState),
         error: { code: 'PAYMENT_OP_NOT_FOUND', message: 'Linked billing payment operation not found.' },
       };
+    }
+
+    let stripeClient: Stripe;
+    if (stripeOverride) {
+      stripeClient = stripeOverride;
+    } else if (paymentOp.provider_account_id) {
+      const { StripeClientFactory } = await import('./providers/stripe/stripeClientFactory');
+      stripeClient = await StripeClientFactory.getClientForAccount(supabase, paymentOp.provider_account_id, { environment: expectedMode });
+    } else {
+      stripeClient = getStripeClient();
     }
 
     const claimedAt = paymentOp.capture_dispatch_claimed_at ?? paymentOp.captureDispatchClaimedAt;

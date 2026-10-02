@@ -368,6 +368,10 @@ export class CommercialSagaOrchestrator {
     let paymentIntent: Stripe.PaymentIntent | any;
     if (options?.stripeClient) {
       paymentIntent = await options.stripeClient.paymentIntents.retrieve(paymentOp.provider_payment_id);
+    } else if (paymentOp.provider_account_id) {
+      const { StripeClientFactory } = await import('./providers/stripe/stripeClientFactory');
+      const stripe = await StripeClientFactory.getClientForAccount(supabase, paymentOp.provider_account_id, { environment: options?.expectedStripeMode || 'test' });
+      paymentIntent = await stripe.paymentIntents.retrieve(paymentOp.provider_payment_id);
     } else {
       const stripe = getStripeClient();
       paymentIntent = await stripe.paymentIntents.retrieve(paymentOp.provider_payment_id);
