@@ -1,10 +1,13 @@
 -- ============================================================================
--- PUBLIC SAAS PHASE 13.4.3C SUBPHASE C.4E.RECON.A — FINANCIAL RECONCILIATION DATABASE FOUNDATION
+-- PUBLIC SAAS PHASE 13.4.3C SUBPHASE C.4E.RECON.A — FINANCIAL RECONCILIATION DATABASE FOUNDATION (REMEDIATED)
 -- Date: 2026-12-21
 -- Establishes durable storage tables for financial reconciliation runs, persistent findings,
 -- and run observation snapshots.
 -- Includes strict constraints for fingerprint uniqueness, scope coherence, lifecycle ordering,
--- evidence sanitization, and service-role-only access control.
+-- evidence sanitization, append-only observation immutability, and service-role-only access control.
+-- REMEDIATED: Made provider_account_id nullable on findings to support provider-neutral organization findings,
+-- enforced object shape CHECK constraints on all JSONB fields, and restricted service_role permissions
+-- on observation snapshots to append-only (SELECT + INSERT).
 -- LOCAL MIGRATION ONLY — SUBJECT TO MANUAL DBA REVIEW. DO NOT EXECUTE REMOTELY AUTOMATICALLY.
 -- ============================================================================
 
@@ -21,10 +24,10 @@ CREATE TABLE IF NOT EXISTS public.billing_reconciliation_runs (
     status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'completed', 'failed', 'partial')),
     started_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.now(),
     completed_at TIMESTAMPTZ NULL,
-    module_coverage JSONB NOT NULL DEFAULT '{}'::jsonb,
-    summary_counts JSONB NOT NULL DEFAULT '{"total_inspected": 0, "findings_open": 0, "findings_resolved": 0}'::jsonb,
-    error_info JSONB NOT NULL DEFAULT '{}'::jsonb,
-    scope_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    module_coverage JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(module_coverage) = 'object'),
+    summary_counts JSONB NOT NULL DEFAULT '{"total_inspected": 0, "findings_open": 0, "findings_resolved": 0}'::jsonb CHECK (jsonb_typeof(summary_counts) = 'object'),
+    error_info JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(error_info) = 'object'),
+    scope_metadata JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(scope_metadata) = 'object'),
     created_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.now(),
     CONSTRAINT check_run_timestamps CHECK (completed_at IS NULL OR completed_at >= started_at),
     CONSTRAINT check_run_scope_coherence CHECK (
@@ -50,7 +53,7 @@ CREATE TABLE IF NOT EXISTS public.billing_reconciliation_findings (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     fingerprint TEXT NOT NULL UNIQUE CHECK (pg_catalog.length(pg_catalog.btrim(fingerprint)) = 64 AND fingerprint ~ '^[a-f0-9]{64}$'),
     organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE RESTRICT,
-    provider_account_id UUID NOT NULL REFERENCES public.billing_provider_accounts(id) ON DELETE RESTRICT,
+    provider_account_id UUID NULL REFERENCES public.billing_provider_accounts(id) ON DELETE RESTRICT,
     finding_category TEXT NOT NULL CHECK (pg_catalog.length(pg_catalog.btrim(finding_category)) > 0 AND finding_category ~ '^[A-Z0-9_]+$'),
     severity TEXT NOT NULL CHECK (severity IN ('informational', 'warning', 'financial_risk', 'critical')),
     status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'investigating', 'resolved', 'ignored')),
@@ -80,7 +83,7 @@ CREATE INDEX IF NOT EXISTS idx_billing_recon_findings_org
 ON public.billing_reconciliation_findings (organization_id, status);
 
 CREATE INDEX IF NOT EXISTS idx_billing_recon_findings_provider_acc 
-ON public.billing_reconciliation_findings (provider_account_id, status);
+ON public.billing_reconciliation_findings (provider_account_id, status) WHERE provider_account_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_billing_recon_findings_entity 
 ON public.billing_reconciliation_findings (target_entity_type, target_entity_id);
@@ -105,7 +108,7 @@ CREATE TABLE IF NOT EXISTS public.billing_reconciliation_finding_observations (
     run_id UUID NOT NULL REFERENCES public.billing_reconciliation_runs(id) ON DELETE RESTRICT,
     finding_id UUID NOT NULL REFERENCES public.billing_reconciliation_findings(id) ON DELETE RESTRICT,
     observed_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.now(),
-    evidence_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    evidence_json JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(evidence_json) = 'object'),
     evidence_hash TEXT NOT NULL CHECK (pg_catalog.length(pg_catalog.btrim(evidence_hash)) = 64 AND evidence_hash ~ '^[a-f0-9]{64}$'),
     created_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.now(),
     CONSTRAINT uq_billing_recon_finding_obs_run_finding UNIQUE (run_id, finding_id)
@@ -119,7 +122,7 @@ ON public.billing_reconciliation_finding_observations (finding_id, observed_at D
 
 
 -- ----------------------------------------------------------------------------
--- 4. Security & Access Control (Service Role ONLY)
+-- 4. Security & Access Control (Service Role ONLY; Observations Append-Only)
 -- ----------------------------------------------------------------------------
 ALTER TABLE public.billing_reconciliation_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.billing_reconciliation_findings ENABLE ROW LEVEL SECURITY;
@@ -130,9 +133,12 @@ REVOKE ALL ON public.billing_reconciliation_runs FROM PUBLIC, anon, authenticate
 REVOKE ALL ON public.billing_reconciliation_findings FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON public.billing_reconciliation_finding_observations FROM PUBLIC, anon, authenticated;
 
+-- Runs and Findings require SELECT, INSERT, UPDATE for lifecycle state management
 GRANT SELECT, INSERT, UPDATE ON public.billing_reconciliation_runs TO service_role;
 GRANT SELECT, INSERT, UPDATE ON public.billing_reconciliation_findings TO service_role;
-GRANT SELECT, INSERT, UPDATE ON public.billing_reconciliation_finding_observations TO service_role;
+
+-- Observations are append-only historical run snapshots: SELECT and INSERT ONLY (UPDATE & DELETE DENIED)
+GRANT SELECT, INSERT ON public.billing_reconciliation_finding_observations TO service_role;
 
 -- RLS policies explicitly restricting operation to service_role
 CREATE POLICY service_role_access_billing_reconciliation_runs 
@@ -147,10 +153,15 @@ FOR ALL TO service_role
 USING (true)
 WITH CHECK (true);
 
-CREATE POLICY service_role_access_billing_reconciliation_finding_obs 
+-- Observations policies scoped specifically to SELECT and INSERT to enforce database-level immutability
+CREATE POLICY service_role_select_billing_reconciliation_finding_obs 
 ON public.billing_reconciliation_finding_observations
-FOR ALL TO service_role
-USING (true)
+FOR SELECT TO service_role
+USING (true);
+
+CREATE POLICY service_role_insert_billing_reconciliation_finding_obs 
+ON public.billing_reconciliation_finding_observations
+FOR INSERT TO service_role
 WITH CHECK (true);
 
 COMMIT;
