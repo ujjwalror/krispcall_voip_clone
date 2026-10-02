@@ -26,6 +26,8 @@ export interface ExecuteReconciliationOptions {
   customAdapter?: IStripeReconciliationAdapter;
   customGraceConfigurator?: ReconciliationGraceWindowConfigurator;
   environment?: 'test' | 'live';
+  runId?: string;
+  leaseToken?: string;
 }
 
 export interface DiscrepancyObservationDraft {
@@ -92,16 +94,6 @@ export class FinancialReconciliationEngine {
       throw new Error('RECON_ENGINE_ERROR: targetedEntityType and targetedEntityId are required for targeted run.');
     }
 
-    // 2. Create Run Record in billing_reconciliation_runs
-    const scopeMetadata = {
-      runType,
-      organizationId: organizationId || null,
-      providerAccountId: providerAccountId || null,
-      targetedEntityType: targetedEntityType || null,
-      targetedEntityId: targetedEntityId || null,
-      environment,
-    };
-
     const initialCoverage: RunModuleCoverage = {
       eligibleForResolution: true,
       modules: {
@@ -118,26 +110,42 @@ export class FinancialReconciliationEngine {
       findingsResolved: 0,
     };
 
-    const { data: runRecord, error: runErr } = await (supabase as any)
-      .from('billing_reconciliation_runs')
-      .insert({
-        run_type: runType,
-        organization_id: organizationId || null,
-        provider_account_id: providerAccountId || null,
-        status: 'running',
-        module_coverage: initialCoverage,
-        summary_counts: initialCounts,
-        scope_metadata: scopeMetadata,
-      })
-      .select('id')
-      .single();
+    let runId: string;
 
-    if (runErr || !runRecord) {
-      console.error('[FinancialReconciliationEngine] Failed to create run record:', runErr?.message);
-      throw new Error(`RECON_ENGINE_ERROR: Failed to create run record: ${runErr?.message}`);
+    if (options.runId && options.runId.trim()) {
+      runId = options.runId.trim();
+    } else {
+      // Create Run Record in billing_reconciliation_runs if not pre-claimed
+      const scopeMetadata = {
+        runType,
+        organizationId: organizationId || null,
+        providerAccountId: providerAccountId || null,
+        targetedEntityType: targetedEntityType || null,
+        targetedEntityId: targetedEntityId || null,
+        environment,
+      };
+
+      const { data: runRecord, error: runErr } = await (supabase as any)
+        .from('billing_reconciliation_runs')
+        .insert({
+          run_type: runType,
+          organization_id: organizationId || null,
+          provider_account_id: providerAccountId || null,
+          status: 'running',
+          module_coverage: initialCoverage,
+          summary_counts: initialCounts,
+          scope_metadata: scopeMetadata,
+        })
+        .select('id')
+        .single();
+
+      if (runErr || !runRecord) {
+        console.error('[FinancialReconciliationEngine] Failed to create run record:', runErr?.message);
+        throw new Error(`RECON_ENGINE_ERROR: Failed to create run record: ${runErr?.message}`);
+      }
+
+      runId = runRecord.id;
     }
-
-    const runId = runRecord.id;
     let runStatus: ReconciliationRunStatus = 'completed';
     const detectedDiscrepancies: DiscrepancyObservationDraft[] = [];
     const activeObservedFingerprints = new Set<string>();

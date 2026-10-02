@@ -10,6 +10,8 @@
     "worker:telecom-voice-extension": "tsx src/workers/telecomVoiceExtensionWorker.ts",
     "worker:telecom-reconciliation": "tsx src/workers/telecomReconciliationWorker.ts",
     "worker:telecom-termination": "tsx src/workers/telecomTerminationWorker.ts",
+    "reconcile:billing": "tsx scripts/reconcile-billing.ts",
+    "worker:financial-reconciliation": "tsx src/workers/financialReconciliationWorker.ts",
     "lint": "eslint"
   },
   "dependencies": {
