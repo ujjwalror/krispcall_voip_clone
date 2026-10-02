@@ -53,12 +53,12 @@ export async function POST(req: NextRequest) {
   const { runType, organizationId, targetedEntityType, targetedEntityId } = body || {};
 
   // 5. Allowlist & Bounded Scope Validation for Serverless HTTP Route
-  const allowedHttpScopes: ReconciliationRunType[] = ['targeted', 'organization'];
+  const allowedHttpScopes: ReconciliationRunType[] = ['targeted'];
   if (!runType || !allowedHttpScopes.includes(runType as ReconciliationRunType)) {
     return NextResponse.json(
       {
         error: 'UNSUPPORTED_HTTP_SCOPE',
-        message: 'HTTP internal route supports targeted or organization scopes only. Full system sweeps require CLI/Worker daemon.',
+        message: 'HTTP internal route supports targeted scope only. Organization, provider account, and full system sweeps require CLI/Worker daemon.',
       },
       { status: 400 }
     );

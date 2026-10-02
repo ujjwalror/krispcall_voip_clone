@@ -235,7 +235,7 @@ export class FinancialReconciliationEngine {
 
       activeObservedFingerprints.add(fingerprint);
 
-      await this.recordFindingAndObservation(supabase, runId, draft, fingerprint);
+      await this.recordFindingAndObservation(supabase, runId, options.leaseToken, draft, fingerprint);
       openFindingsCount++;
     }
 
@@ -244,6 +244,8 @@ export class FinancialReconciliationEngine {
     if (initialCoverage.eligibleForResolution && runStatus === 'completed') {
       resolvedFindingsCount = await this.evaluateResolutions(
         supabase,
+        runId,
+        options.leaseToken,
         options,
         activeObservedFingerprints
       );
@@ -256,16 +258,66 @@ export class FinancialReconciliationEngine {
       findingsResolved: resolvedFindingsCount,
     };
 
-    await (supabase as any)
-      .from('billing_reconciliation_runs')
-      .update({
-        status: runStatus,
-        completed_at: new Date().toISOString(),
-        module_coverage: initialCoverage,
-        summary_counts: finalCounts,
-        error_info: errorInfo,
-      })
-      .eq('id', runId);
+    if (options.leaseToken) {
+      try {
+        const { data: finData, error: finErr } = await (supabase as any).rpc(
+          'finalize_reconciliation_run_atomic',
+          {
+            p_run_id: runId,
+            p_lease_token: options.leaseToken,
+            p_status: runStatus,
+            p_module_coverage: initialCoverage,
+            p_summary_counts: finalCounts,
+            p_error_info: errorInfo,
+          }
+        );
+
+        if (finErr || !finData?.success) {
+          throw new Error(`LEASE_LOST_FENCING_ERROR: Run finalization failed: ${finData?.reason || finErr?.message}`);
+        }
+      } catch (finRpcErr: any) {
+        if (finRpcErr.message?.includes('LEASE_LOST_FENCING_ERROR')) {
+          throw finRpcErr;
+        }
+        // Fallback for mock clients without RPC
+        const { data: currentRun } = await (supabase as any)
+          .from('billing_reconciliation_runs')
+          .select('lease_token, lease_expires_at, status')
+          .eq('id', runId)
+          .single();
+
+        if (
+          currentRun &&
+          currentRun.status === 'running' &&
+          (!currentRun.lease_token || currentRun.lease_token === options.leaseToken) &&
+          (!currentRun.lease_expires_at || new Date(currentRun.lease_expires_at).getTime() > Date.now())
+        ) {
+          await (supabase as any)
+            .from('billing_reconciliation_runs')
+            .update({
+              status: runStatus,
+              completed_at: new Date().toISOString(),
+              module_coverage: initialCoverage,
+              summary_counts: finalCounts,
+              error_info: errorInfo,
+            })
+            .eq('id', runId);
+        } else {
+          throw new Error('LEASE_LOST_FENCING_ERROR: Run finalization denied due to stale lease.');
+        }
+      }
+    } else {
+      await (supabase as any)
+        .from('billing_reconciliation_runs')
+        .update({
+          status: runStatus,
+          completed_at: new Date().toISOString(),
+          module_coverage: initialCoverage,
+          summary_counts: finalCounts,
+          error_info: errorInfo,
+        })
+        .eq('id', runId);
+    }
 
     return {
       runId,
@@ -924,14 +976,64 @@ export class FinancialReconciliationEngine {
 
   /**
    * Records Finding Upsert and Immutable Observation Snapshot.
+   * Atomic Fenced Execution: Validates lease ownership inside database transaction.
    * NEVER ATTEMPTS UPDATE ON OBSERVATIONS!
    */
   private async recordFindingAndObservation(
     supabase: SupabaseClient,
     runId: string,
+    leaseToken: string | undefined,
     draft: DiscrepancyObservationDraft,
     fingerprint: string
   ): Promise<void> {
+    const evidenceHash = generateEvidenceHash(draft.evidenceJson);
+
+    if (leaseToken) {
+      try {
+        const { data: recData, error: recErr } = await (supabase as any).rpc(
+          'record_reconciliation_finding_and_observation_atomic',
+          {
+            p_run_id: runId,
+            p_lease_token: leaseToken,
+            p_fingerprint: fingerprint,
+            p_organization_id: draft.organizationId,
+            p_provider_account_id: draft.providerAccountId,
+            p_finding_category: draft.category,
+            p_severity: draft.severity,
+            p_target_entity_type: draft.targetEntityType,
+            p_target_entity_id: draft.targetEntityId,
+            p_stable_discriminator: draft.stableDiscriminator || 'default',
+            p_evidence_json: draft.evidenceJson,
+            p_evidence_hash: evidenceHash,
+          }
+        );
+
+        if (recErr || !recData?.success) {
+          throw new Error(`LEASE_LOST_FENCING_ERROR: Record finding failed: ${recData?.reason || recErr?.message}`);
+        }
+        return;
+      } catch (rpcErr: any) {
+        if (rpcErr.message?.includes('LEASE_LOST_FENCING_ERROR')) {
+          throw rpcErr;
+        }
+        // Fallback for mock clients without RPC
+        const { data: currentRun } = await (supabase as any)
+          .from('billing_reconciliation_runs')
+          .select('lease_token, lease_expires_at, status')
+          .eq('id', runId)
+          .single();
+
+        if (
+          !currentRun ||
+          currentRun.status !== 'running' ||
+          (currentRun.lease_token && currentRun.lease_token !== leaseToken) ||
+          (currentRun.lease_expires_at && new Date(currentRun.lease_expires_at).getTime() <= Date.now())
+        ) {
+          throw new Error('LEASE_LOST_FENCING_ERROR: Stale worker denied finding recording due to expired or taken-over lease.');
+        }
+      }
+    }
+
     const nowIso = new Date().toISOString();
 
     // 1. Check existing finding by fingerprint
@@ -949,6 +1051,8 @@ export class FinancialReconciliationEngine {
       await (supabase as any)
         .from('billing_reconciliation_findings')
         .update({
+          status: existing.status === 'resolved' ? 'open' : existing.status,
+          resolved_at: existing.status === 'resolved' ? null : undefined,
           last_seen_at: nowIso,
           updated_at: nowIso,
         })
@@ -992,8 +1096,6 @@ export class FinancialReconciliationEngine {
     }
 
     // 2. Insert Immutable Observation Snapshot (SELECT + INSERT ONLY; UPDATE DENIED)
-    const evidenceHash = generateEvidenceHash(draft.evidenceJson);
-
     const { error: obsErr } = await (supabase as any)
       .from('billing_reconciliation_finding_observations')
       .insert({
@@ -1014,14 +1116,58 @@ export class FinancialReconciliationEngine {
   }
 
   /**
-   * Safely evaluates finding resolution.
-   * Auto-resolves open findings ONLY if current run verified 0 discrepancy.
+   * Safely evaluates finding resolution with atomic lease fencing.
+   * Auto-resolves open findings ONLY if current run verified 0 discrepancy and lease remains valid.
    */
   private async evaluateResolutions(
     supabase: SupabaseClient,
+    runId: string,
+    leaseToken: string | undefined,
     options: ExecuteReconciliationOptions,
     activeFingerprints: Set<string>
   ): Promise<number> {
+    const activeArray = Array.from(activeFingerprints);
+
+    if (leaseToken) {
+      try {
+        const { data: resData, error: resErr } = await (supabase as any).rpc(
+          'evaluate_reconciliation_resolutions_atomic',
+          {
+            p_run_id: runId,
+            p_lease_token: leaseToken,
+            p_organization_id: options.organizationId || null,
+            p_provider_account_id: options.providerAccountId || null,
+            p_active_fingerprints: activeArray,
+          }
+        );
+
+        if (resErr || !resData?.success) {
+          throw new Error(`LEASE_LOST_FENCING_ERROR: Evaluate resolutions failed: ${resData?.reason || resErr?.message}`);
+        }
+
+        return Number(resData.resolved_count || 0);
+      } catch (rpcErr: any) {
+        if (rpcErr.message?.includes('LEASE_LOST_FENCING_ERROR')) {
+          throw rpcErr;
+        }
+        // Fallback for mock clients without RPC
+        const { data: currentRun } = await (supabase as any)
+          .from('billing_reconciliation_runs')
+          .select('lease_token, lease_expires_at, status')
+          .eq('id', runId)
+          .single();
+
+        if (
+          !currentRun ||
+          currentRun.status !== 'running' ||
+          (currentRun.lease_token && currentRun.lease_token !== leaseToken) ||
+          (currentRun.lease_expires_at && new Date(currentRun.lease_expires_at).getTime() <= Date.now())
+        ) {
+          throw new Error('LEASE_LOST_FENCING_ERROR: Stale worker denied resolution writes due to expired or taken-over lease.');
+        }
+      }
+    }
+
     let resolvedCount = 0;
     const nowIso = new Date().toISOString();
 

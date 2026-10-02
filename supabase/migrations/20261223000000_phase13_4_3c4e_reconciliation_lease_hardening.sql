@@ -1,10 +1,12 @@
 -- ============================================================================
--- PUBLIC SAAS PHASE 13.4.3C SUBPHASE C.4E.RECON.C — RECONCILIATION LEASE & REPLAY HARDENING
+-- PUBLIC SAAS PHASE 13.4.3C SUBPHASE C.4E.RECON.C — RECONCILIATION LEASE & REPLAY HARDENING (REMEDIATED)
 -- Date: 2026-12-23
 -- Extends public.billing_reconciliation_runs with cryptographic lease tokens, expiry timestamps,
 -- and worker heartbeats for durable execution ownership and fencing.
 -- Creates public.billing_reconciliation_hmac_nonces for distributed, atomic HMAC replay protection.
--- Implements atomic RPC functions for scope-serialized run claiming, lease renewal, and nonce verification.
+-- Implements atomic RPC functions for scope-serialized run claiming, lease renewal, HMAC nonce verification,
+-- AND atomic fenced persistence (record_reconciliation_finding_and_observation_atomic, 
+-- evaluate_reconciliation_resolutions_atomic, finalize_reconciliation_run_atomic).
 -- SECURITY DEFINER functions set explicit search_path = public, pg_temp.
 -- Access strictly revoked from PUBLIC, anon, authenticated; granted to service_role ONLY.
 -- LOCAL MIGRATION ONLY — SUBJECT TO MANUAL DBA REVIEW. DO NOT EXECUTE REMOTELY AUTOMATICALLY.
@@ -291,7 +293,6 @@ DECLARE
     v_now TIMESTAMPTZ := pg_catalog.now();
     v_clean_nonce_hash TEXT;
     v_expires_at TIMESTAMPTZ;
-    v_inserted boolean := false;
 BEGIN
     v_clean_nonce_hash := pg_catalog.btrim(COALESCE(p_nonce_hash, ''));
     v_expires_at := v_now + (GREATEST(60, COALESCE(p_ttl_seconds, 300)) || ' seconds')::interval;
@@ -323,5 +324,223 @@ $$;
 
 REVOKE ALL ON FUNCTION public.verify_and_claim_hmac_nonce_atomic(TEXT, INT) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.verify_and_claim_hmac_nonce_atomic(TEXT, INT) TO service_role;
+
+
+-- ----------------------------------------------------------------------------
+-- 6. Atomic RPC: Fenced Record Finding and Observation Snapshot
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.record_reconciliation_finding_and_observation_atomic(
+    p_run_id UUID,
+    p_lease_token UUID,
+    p_fingerprint TEXT,
+    p_organization_id UUID,
+    p_provider_account_id UUID,
+    p_finding_category TEXT,
+    p_severity TEXT,
+    p_target_entity_type TEXT,
+    p_target_entity_id TEXT,
+    p_stable_discriminator TEXT,
+    p_evidence_json JSONB,
+    p_evidence_hash TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_now TIMESTAMPTZ := pg_catalog.now();
+    v_run public.billing_reconciliation_runs;
+    v_finding_id UUID := NULL;
+    v_existing_status TEXT := NULL;
+BEGIN
+    -- 1. Fencing Check: Verify active run lease ownership atomically
+    SELECT * INTO v_run
+    FROM public.billing_reconciliation_runs
+    WHERE id = p_run_id
+      AND lease_token = p_lease_token
+      AND status = 'running'
+      AND lease_expires_at > v_now;
+
+    IF v_run.id IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'reason', 'LEASE_LOST_OR_EXPIRED');
+    END IF;
+
+    -- 2. Upsert Finding in billing_reconciliation_findings
+    SELECT id, status INTO v_finding_id, v_existing_status
+    FROM public.billing_reconciliation_findings
+    WHERE fingerprint = p_fingerprint;
+
+    IF v_finding_id IS NOT NULL THEN
+        -- Update existing finding; reopen if resolved
+        UPDATE public.billing_reconciliation_findings
+        SET status = CASE WHEN status = 'resolved' THEN 'open' ELSE status END,
+            resolved_at = CASE WHEN status = 'resolved' THEN NULL ELSE resolved_at END,
+            last_seen_at = v_now,
+            updated_at = v_now
+        WHERE id = v_finding_id;
+    ELSE
+        -- Insert new finding
+        INSERT INTO public.billing_reconciliation_findings (
+            fingerprint,
+            organization_id,
+            provider_account_id,
+            finding_category,
+            severity,
+            status,
+            target_entity_type,
+            target_entity_id,
+            stable_discriminator,
+            first_seen_at,
+            last_seen_at
+        ) VALUES (
+            p_fingerprint,
+            p_organization_id,
+            p_provider_account_id,
+            p_finding_category,
+            p_severity,
+            'open',
+            p_target_entity_type,
+            p_target_entity_id,
+            COALESCE(p_stable_discriminator, 'default'),
+            v_now,
+            v_now
+        ) RETURNING id INTO v_finding_id;
+    END IF;
+
+    -- 3. Insert Immutable Observation Snapshot
+    INSERT INTO public.billing_reconciliation_finding_observations (
+        run_id,
+        finding_id,
+        observed_at,
+        evidence_json,
+        evidence_hash
+    ) VALUES (
+        p_run_id,
+        v_finding_id,
+        v_now,
+        COALESCE(p_evidence_json, '{}'::jsonb),
+        p_evidence_hash
+    ) ON CONFLICT (run_id, finding_id) DO NOTHING;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'finding_id', v_finding_id
+    );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.record_reconciliation_finding_and_observation_atomic(UUID, UUID, TEXT, UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.record_reconciliation_finding_and_observation_atomic(UUID, UUID, TEXT, UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT) TO service_role;
+
+
+-- ----------------------------------------------------------------------------
+-- 7. Atomic RPC: Fenced Evaluate Resolutions
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.evaluate_reconciliation_resolutions_atomic(
+    p_run_id UUID,
+    p_lease_token UUID,
+    p_organization_id UUID DEFAULT NULL,
+    p_provider_account_id UUID DEFAULT NULL,
+    p_active_fingerprints JSONB DEFAULT '[]'::jsonb
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_now TIMESTAMPTZ := pg_catalog.now();
+    v_run public.billing_reconciliation_runs;
+    v_resolved_count INT := 0;
+BEGIN
+    -- 1. Fencing Check
+    SELECT * INTO v_run
+    FROM public.billing_reconciliation_runs
+    WHERE id = p_run_id
+      AND lease_token = p_lease_token
+      AND status = 'running'
+      AND lease_expires_at > v_now;
+
+    IF v_run.id IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'reason', 'LEASE_LOST_OR_EXPIRED');
+    END IF;
+
+    -- 2. Resolve open findings in scope whose fingerprints are NOT active
+    WITH to_resolve AS (
+        SELECT id
+        FROM public.billing_reconciliation_findings
+        WHERE status = 'open'
+          AND (p_organization_id IS NULL OR organization_id = p_organization_id)
+          AND (p_provider_account_id IS NULL OR provider_account_id = p_provider_account_id)
+          AND NOT (fingerprint = ANY(ARRAY(SELECT jsonb_array_elements_text(p_active_fingerprints))))
+    )
+    UPDATE public.billing_reconciliation_findings
+    SET status = 'resolved',
+        resolved_at = v_now,
+        updated_at = v_now
+    WHERE id IN (SELECT id FROM to_resolve);
+
+    GET DIAGNOSTICS v_resolved_count = ROW_COUNT;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'resolved_count', v_resolved_count
+    );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.evaluate_reconciliation_resolutions_atomic(UUID, UUID, UUID, UUID, JSONB) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.evaluate_reconciliation_resolutions_atomic(UUID, UUID, UUID, UUID, JSONB) TO service_role;
+
+
+-- ----------------------------------------------------------------------------
+-- 8. Atomic RPC: Fenced Finalize Reconciliation Run
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.finalize_reconciliation_run_atomic(
+    p_run_id UUID,
+    p_lease_token UUID,
+    p_status TEXT,
+    p_module_coverage JSONB,
+    p_summary_counts JSONB,
+    p_error_info JSONB DEFAULT '{}'::jsonb
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_now TIMESTAMPTZ := pg_catalog.now();
+    v_updated_count INT := 0;
+BEGIN
+    IF p_status NOT IN ('completed', 'failed', 'partial') THEN
+        RAISE EXCEPTION 'INVALID_STATUS: p_status must be completed, failed, or partial.';
+    END IF;
+
+    UPDATE public.billing_reconciliation_runs
+    SET status = p_status,
+        completed_at = v_now,
+        module_coverage = COALESCE(p_module_coverage, module_coverage),
+        summary_counts = COALESCE(p_summary_counts, summary_counts),
+        error_info = COALESCE(p_error_info, error_info),
+        last_heartbeat_at = v_now
+    WHERE id = p_run_id
+      AND lease_token = p_lease_token
+      AND status = 'running'
+      AND lease_expires_at > v_now;
+
+    GET DIAGNOSTICS v_updated_count = ROW_COUNT;
+
+    IF v_updated_count = 1 THEN
+        RETURN jsonb_build_object('success', true);
+    ELSE
+        RETURN jsonb_build_object('success', false, 'reason', 'LEASE_LOST_OR_EXPIRED');
+    END IF;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.finalize_reconciliation_run_atomic(UUID, UUID, TEXT, JSONB, JSONB, JSONB) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.finalize_reconciliation_run_atomic(UUID, UUID, TEXT, JSONB, JSONB, JSONB) TO service_role;
 
 COMMIT;
