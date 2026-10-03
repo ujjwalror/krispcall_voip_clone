@@ -315,7 +315,7 @@ CREATE OR REPLACE FUNCTION public.authorize_auto_topup_provider_mutation_atomic(
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 DECLARE
   v_settings public.billing_auto_topup_settings;
@@ -419,7 +419,7 @@ BEGIN
 
   -- 7. Create/Recover Payment Operation with Explicit auto_topup_trigger_id FK Relation
   v_idempotency_key := 'atu_pi_' || v_trigger.id::text;
-  v_request_fingerprint := 'sha256:' || encode(digest('auto_topup:' || v_trigger.id::text, 'sha256'), 'hex');
+  v_request_fingerprint := 'sha256:' || encode(sha256(('auto_topup:' || v_trigger.id::text)::bytea), 'hex');
 
   INSERT INTO public.billing_payment_operations (
     organization_id,
