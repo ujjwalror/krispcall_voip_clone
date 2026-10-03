@@ -79,8 +79,8 @@ BEGIN
   ORDER BY created_at DESC, id DESC
   LIMIT 1;
 
-  SELECT COALESCE(SUM(amount_minor), 0) INTO v_reservations
-  FROM public.billing_telecom_reservations
+  SELECT COALESCE(SUM(amount_reserved_minor), 0) INTO v_reservations
+  FROM public.telecom_usage_reservations
   WHERE organization_id = p_organization_id AND status = 'active';
 
   SELECT COALESCE(SUM(amount_minor), 0) INTO v_holds
