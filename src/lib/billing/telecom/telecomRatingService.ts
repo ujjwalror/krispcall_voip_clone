@@ -2,8 +2,23 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { TelecomRetailRateCard } from '../types';
 import { RateResolutionParams, RateResolutionResult } from './types';
 import { TelecomWalletService } from '../telecomWalletService';
-import { ProviderWholesaleRateService } from './providerWholesaleRateService';
+import { ProviderWholesaleRateService, GetWholesaleQuoteParams } from './providerWholesaleRateService';
 import { CommercialPricingEngine, CommercialPricingPolicyRecord } from './commercialPricingEngine';
+
+export interface CustomerRetailQuoteDTO {
+  serviceType: string;
+  direction: string;
+  numberCountry?: string;
+  numberType?: string;
+  destinationCountry?: string;
+  destinationCategory?: string;
+  retailRateMicro: number;
+  retailRateFormatted: string;
+  currency: string;
+  unitType: string;
+  billingIncrementSeconds: number;
+  minChargeableUnits: number;
+}
 
 export class TelecomRatingService {
   /**
@@ -15,31 +30,50 @@ export class TelecomRatingService {
    */
   public static async resolveRetailRate(
     client: SupabaseClient,
-    params: RateResolutionParams
+    params: RateResolutionParams & {
+      providerAccountId?: string;
+      originationPhoneNumber?: string | null;
+      numberType?: string | null;
+      isoCountry?: string;
+      forceDynamicPath?: boolean;
+      clientOverride?: any;
+    }
   ): Promise<RateResolutionResult> {
     const {
       organizationId,
       provider = 'twilio',
+      providerAccountId = 'default',
       serviceType,
       direction,
       destinationPhoneNumber,
+      originationPhoneNumber = null,
+      numberType = null,
+      isoCountry,
       currency = 'USD',
       timestamp = new Date().toISOString(),
+      forceDynamicPath = false,
+      clientOverride,
     } = params;
 
     // -------------------------------------------------------------
-    // DYNAMIC VOICE RETAIL PRICING ENGINE (STAGE C.6C)
+    // DYNAMIC VOICE RETAIL PRICING ENGINE (STAGE C.6C / C.6D.5A)
     // -------------------------------------------------------------
     if (serviceType === 'voice_outbound' || serviceType === 'voice_inbound') {
       try {
         // 1. Fetch Provider Pre-Usage Wholesale Rate Quote
         const wholesaleQuote = await ProviderWholesaleRateService.getWholesaleQuote(client, {
           providerKey: provider,
+          providerAccountId,
           serviceType,
           direction,
           destinationPhoneNumber,
+          originationPhoneNumber,
+          numberType,
+          isoCountry,
           currency,
           timestamp,
+          forceDynamicPath,
+          clientOverride,
         });
 
         // 2. Resolve Commercial Pricing Policy
@@ -54,7 +88,7 @@ export class TelecomRatingService {
             timestamp,
           });
         } catch (policyErr) {
-          // Fallback to default approved platform voice policy (2500 basis points) if DB RPC is not yet executed
+          // Fallback to default approved platform voice policy (2500 basis points)
           policy = {
             id: 'global-platform-voice-policy',
             policyName: 'Global Platform Voice Default Policy',
@@ -75,7 +109,14 @@ export class TelecomRatingService {
         // 3. Calculate Dynamic Retail Rate via BigInt Integer Arithmetic
         const derivedResult = CommercialPricingEngine.calculateRetailRate(wholesaleQuote, policy);
 
-        // 4. Construct Customer Retail Rate Card
+        // Enforce retail >= wholesale invariant
+        if (derivedResult.derivedRetailRateMicro < derivedResult.wholesaleRateMicro) {
+          throw new Error(
+            `RETAIL_BELOW_WHOLESALE_VIOLATION: Derived retail rate (${derivedResult.derivedRetailRateMicro}) cannot be less than wholesale rate (${derivedResult.wholesaleRateMicro})`
+          );
+        }
+
+        // 4. Construct Internal Customer Retail Rate Card with full confidential wholesale provenance
         const rateCard: TelecomRetailRateCard = {
           id: `derived-voice-${serviceType}-${direction}-${wholesaleQuote.destinationPrefix}`,
           rateCode: `DYNAMIC_VOICE_${serviceType.toUpperCase()}`,
@@ -85,7 +126,7 @@ export class TelecomRatingService {
           destinationName: `Voice Destination (${wholesaleQuote.destinationPrefix})`,
           retailRateMicro: Number(derivedResult.derivedRetailRateMicro),
           wholesaleCostMicro: Number(derivedResult.wholesaleRateMicro),
-          unitType: wholesaleQuote.unitType as any,
+          unitType: (wholesaleQuote.unitType || 'minute') as any,
           billingIncrementSeconds: wholesaleQuote.billingIncrementSeconds,
           minChargeableUnits: wholesaleQuote.minChargeableUnits,
           currency: derivedResult.currency,
@@ -95,6 +136,13 @@ export class TelecomRatingService {
           metadata: {
             pricing_policy_id: policy.id,
             pricing_mode: policy.pricingMode,
+            markup_basis_points: policy.markupBasisPoints,
+            provider_key: wholesaleQuote.providerKey,
+            provider_account_id: wholesaleQuote.providerAccountId || providerAccountId,
+            freshness_state: wholesaleQuote.freshnessState,
+            pricing_fingerprint: wholesaleQuote.pricingFingerprint,
+            version: wholesaleQuote.version,
+            authorization_timestamp: timestamp,
           },
           createdAt: timestamp,
           updatedAt: timestamp,
@@ -118,8 +166,6 @@ export class TelecomRatingService {
     // -------------------------------------------------------------
     // STATIC RETAIL RATE CARD RESOLUTION (SMS / MMS / BACKWARD COMPATIBILITY)
     // -------------------------------------------------------------
-
-    // Fetch candidate active rate cards from database
     const { data: rateCards, error } = await client
       .from('telecom_retail_rate_cards')
       .select('*')
@@ -138,7 +184,6 @@ export class TelecomRatingService {
       );
     }
 
-    // Filter rate cards by effective date window
     const targetTime = new Date(timestamp).getTime();
     const effectiveCards = rateCards.filter((card) => {
       const start = new Date(card.effective_start_at).getTime();
@@ -152,10 +197,8 @@ export class TelecomRatingService {
       );
     }
 
-    // Clean destination E.164 phone number
     const cleanDest = destinationPhoneNumber.trim();
 
-    // 1. Separate organization custom rate cards from public rate cards
     const orgCustomCards = effectiveCards.filter(
       (c) => c.metadata && c.metadata.organization_id === organizationId
     );
@@ -163,7 +206,6 @@ export class TelecomRatingService {
       (c) => !c.metadata || !c.metadata.organization_id
     );
 
-    // Helper for longest prefix match
     const findBestMatch = (cards: any[]) => {
       let bestMatch: any = null;
       let longestPrefixLength = -1;
@@ -186,29 +228,85 @@ export class TelecomRatingService {
       return { bestMatch, longestPrefixLength };
     };
 
-    // Try org custom match first
     const orgResult = findBestMatch(orgCustomCards);
     if (orgResult.bestMatch) {
       const card = orgResult.bestMatch;
       return this.mapToResult(card, 'organization_custom', card.destination_pattern);
     }
 
-    // Fall back to public tariff match
     const publicResult = findBestMatch(publicCards);
     if (publicResult.bestMatch) {
       const card = publicResult.bestMatch;
       return this.mapToResult(card, 'public_tariff', card.destination_pattern);
     }
 
-    // If no pattern matched (not even a wildcard '*') -> FAIL CLOSED!
     throw new Error(
       `RATE_CARD_NOT_FOUND: Destination ${destinationPhoneNumber} does not match any active rate card pattern for service ${serviceType}`
     );
   }
 
   /**
-   * Helper to map raw rate card database record to RateResolutionResult DTO
+   * Public Customer-Safe Retail Rate Calculator API.
+   * Shared rating method designed for future public website rate lookup and dialer calculators.
+   * Exposes ZERO internal wholesale cost, provider name, provider account, or markup basis points.
    */
+  public static async resolveCustomerRetailQuote(
+    client: SupabaseClient,
+    params: {
+      organizationId?: string;
+      serviceType: 'voice_outbound' | 'voice_inbound';
+      direction: 'outbound' | 'inbound';
+      destinationPhoneNumber?: string;
+      numberCountry?: string;
+      numberType?: string;
+      destinationCountry?: string;
+      destinationCategory?: string;
+      currency?: string;
+      forceDynamicPath?: boolean;
+    }
+  ): Promise<CustomerRetailQuoteDTO> {
+    const {
+      organizationId,
+      serviceType,
+      direction,
+      destinationPhoneNumber = '*',
+      numberCountry,
+      numberType,
+      destinationCountry,
+      destinationCategory,
+      currency = 'USD',
+      forceDynamicPath = true,
+    } = params;
+
+    const rateResult = await this.resolveRetailRate(client, {
+      organizationId: organizationId || 'public_visitor',
+      serviceType,
+      direction,
+      destinationPhoneNumber,
+      numberType,
+      isoCountry: destinationCountry || numberCountry,
+      currency,
+      forceDynamicPath,
+    });
+
+    const rateFormatted = `$${(rateResult.retailRateMicro / 1000000).toFixed(4)} / min`;
+
+    return {
+      serviceType,
+      direction,
+      numberCountry,
+      numberType: numberType || undefined,
+      destinationCountry: destinationCountry || undefined,
+      destinationCategory: destinationCategory || undefined,
+      retailRateMicro: rateResult.retailRateMicro,
+      retailRateFormatted: rateFormatted,
+      currency: rateResult.currency,
+      unitType: rateResult.unitType || 'minute',
+      billingIncrementSeconds: rateResult.billingIncrementSeconds || 60,
+      minChargeableUnits: rateResult.minChargeableUnits || 1,
+    };
+  }
+
   private static mapToResult(
     card: any,
     source: 'organization_custom' | 'public_tariff',
@@ -247,11 +345,6 @@ export class TelecomRatingService {
     };
   }
 
-  /**
-   * Pure mathematical helper to compute estimated exposure in minor units (cents)
-   * using precision micro-unit rate (10,000 micro-units = 1 minor-unit / cent).
-   * Delegates directly to TelecomWalletService.calculateRetailChargeMinor for 100% rating equivalence.
-   */
   public static calculateEstimatedExposureMinor(
     rateCard: TelecomRetailRateCard,
     durationSecondsOrUnits: number

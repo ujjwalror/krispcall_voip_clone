@@ -23,6 +23,7 @@ export interface InboundVoiceAuthorizationParams {
   calledNumber: string;
   callerNumber: string;
   overrideInitialExposureSeconds?: number;
+  forceDynamicPath?: boolean;
 }
 
 export interface InboundVoiceAuthorizationResult {
@@ -40,19 +41,19 @@ export interface InboundVoiceAuthorizationResult {
 export class InboundVoiceAuthorizationService {
   /**
    * Authorizes an inbound voice call prior to returning TwiML dial / routing instructions.
-   * Performs server-authoritative called-number tenant lookup, rate resolution with metadata filtering,
+   * Performs server-authoritative called-number tenant lookup, rate resolution with trusted number_type metadata,
    * bounded initial exposure calculation, and atomic wallet reservation.
    *
    * FAILS CLOSED if:
    * 1. Called number is unconfigured, inactive, or not assigned to an active tenant.
-   * 2. No matching inbound retail rate card exists or rate resolution is ambiguous.
+   * 2. No matching inbound retail rate card/cache exists (e.g., India IN empty inbound scope).
    * 3. Wallet available balance is insufficient in enforce mode.
    */
   public static async authorizeInboundCall(
     client: SupabaseClient,
     params: InboundVoiceAuthorizationParams
   ): Promise<InboundVoiceAuthorizationResult> {
-    const { callSid, calledNumber, callerNumber, overrideInitialExposureSeconds } = params;
+    const { callSid, calledNumber, callerNumber, overrideInitialExposureSeconds, forceDynamicPath = false } = params;
 
     const cleanCallSid = (callSid || '').trim();
     if (!cleanCallSid) {
@@ -64,10 +65,10 @@ export class InboundVoiceAuthorizationService {
       throw new InboundVoiceAuthorizationError('Missing destination called phone number', 400, 'INVALID_CALLED_NUMBER');
     }
 
-    // 1. Resolve tenant-owned active phone number metadata
+    // 1. Resolve tenant-owned active phone number metadata (including trusted stored number type & country)
     const { data: phoneRecord, error: phoneErr } = await client
       .from('phone_numbers')
-      .select('id, organization_id, active, type, country_code, capabilities_voice')
+      .select('id, organization_id, active, type, country_code, capabilities_voice, provider_account_id')
       .eq('phone_number', cleanCalled)
       .eq('active', true)
       .maybeSingle();
@@ -85,6 +86,9 @@ export class InboundVoiceAuthorizationService {
     }
 
     const organizationId = phoneRecord.organization_id;
+    const trustedNumberType = phoneRecord.type || null;
+    const trustedCountryCode = phoneRecord.country_code || 'US';
+    const providerAccountId = phoneRecord.provider_account_id || 'default';
 
     // Verify voice capability
     if (phoneRecord.capabilities_voice === false) {
@@ -95,65 +99,26 @@ export class InboundVoiceAuthorizationService {
       );
     }
 
-    // Check rate card ambiguity for winning destination prefix
-    const { data: activeCards } = await client
-      .from('telecom_retail_rate_cards')
-      .select('*')
-      .eq('service_type', 'voice_inbound')
-      .eq('direction', 'inbound')
-      .eq('is_active', true)
-      .eq('currency', 'USD');
-
-    if (activeCards && activeCards.length > 1) {
-      const cleanDest = cleanCalled.trim();
-      let maxLen = -1;
-      const prefixMatches: any[] = [];
-
-      for (const card of activeCards) {
-        const pat = (card.destination_pattern || '*').trim();
-        if (pat === '*' && maxLen <= 0) {
-          maxLen = 0;
-          prefixMatches.push(card);
-        } else if (cleanDest.startsWith(pat)) {
-          if (pat.length > maxLen) {
-            maxLen = pat.length;
-            prefixMatches.length = 0;
-            prefixMatches.push(card);
-          } else if (pat.length === maxLen) {
-            prefixMatches.push(card);
-          }
-        }
-      }
-
-      // If multiple rate cards match the exact same winning longest prefix with different rates -> FAIL CLOSED!
-      if (prefixMatches.length > 1) {
-        const rates = new Set(prefixMatches.map((c) => Number(c.retail_rate_micro)));
-        if (rates.size > 1) {
-          throw new InboundVoiceAuthorizationError(
-            'Ambiguous rate cards for destination. Failing closed.',
-            400,
-            'AMBIGUOUS_RATE_CARD'
-          );
-        }
-      }
-    }
-
-    // 2. Resolve inbound retail rate card
+    // 2. Resolve inbound retail rate card using trusted server-side metadata (never customer/browser input)
     let rateSnapshot: RateResolutionResult;
     try {
       rateSnapshot = await TelecomRatingService.resolveRetailRate(client, {
         organizationId,
         provider: 'twilio',
+        providerAccountId,
         serviceType: 'voice_inbound',
         direction: 'inbound',
         destinationPhoneNumber: cleanCalled,
+        numberType: trustedNumberType,
+        isoCountry: trustedCountryCode,
         currency: 'USD',
+        forceDynamicPath,
       });
     } catch (rateErr: any) {
       throw new InboundVoiceAuthorizationError(
         `Inbound rate resolution failed: ${rateErr.message}`,
         400,
-        'RATE_CARD_NOT_FOUND'
+        'INBOUND_PRICING_UNAVAILABLE'
       );
     }
 
@@ -180,6 +145,28 @@ export class InboundVoiceAuthorizationService {
 
     let reservationId = '';
 
+    // Complete rate snapshot payload for wallet reservation
+    const rateSnapshotPayload = {
+      rateMicro: rateSnapshot.retailRateMicro,
+      retailRateMicro: rateSnapshot.retailRateMicro,
+      wholesaleRateMicro: rateSnapshot.matchedRateCard.wholesaleCostMicro || 0,
+      billingIncrementSeconds: rateSnapshot.billingIncrementSeconds || 60,
+      minChargeableUnits: rateSnapshot.minChargeableUnits || 1,
+      unitType: rateSnapshot.unitType || 'minute',
+      currency: rateSnapshot.currency || 'USD',
+      prefix: rateSnapshot.matchedPrefix,
+      source: rateSnapshot.resolutionSource,
+      pricingPolicyId: rateSnapshot.matchedRateCard.metadata?.pricing_policy_id,
+      pricingMode: rateSnapshot.matchedRateCard.metadata?.pricing_mode,
+      markupBasisPoints: rateSnapshot.matchedRateCard.metadata?.markup_basis_points || 2500,
+      providerKey: rateSnapshot.matchedRateCard.metadata?.provider_key || 'twilio',
+      providerAccountId,
+      numberType: trustedNumberType,
+      freshnessState: rateSnapshot.matchedRateCard.metadata?.freshness_state,
+      pricingFingerprint: rateSnapshot.matchedRateCard.metadata?.pricing_fingerprint,
+      authorizationTimestamp: rateSnapshot.matchedRateCard.metadata?.authorization_timestamp || new Date().toISOString(),
+    };
+
     // 5. Reserve usage against shared organization Credits wallet in enforce mode
     if (enforcementMode === 'enforce') {
       try {
@@ -190,7 +177,7 @@ export class InboundVoiceAuthorizationService {
           internalUsageId,
           amountReservedMinor,
           idempotencyKey,
-          rateSnapshot: rateSnapshot as any,
+          rateSnapshot: rateSnapshotPayload as any,
           metadata: {
             callSid: cleanCallSid,
             calledNumber: cleanCalled,
@@ -211,7 +198,7 @@ export class InboundVoiceAuthorizationService {
       }
     }
 
-    // Record Option B confidential wholesale economics snapshot
+    // Record confidential wholesale economics snapshot
     if (reservationId) {
       await TelecomWholesaleService.recordWholesaleSnapshot(client, {
         organizationId,
@@ -244,7 +231,7 @@ export class InboundVoiceAuthorizationService {
         sessionType: 'inbound_call',
         direction: 'inbound',
         currency: rateSnapshot.currency || 'USD',
-        metadata: { callSid: cleanCallSid, rateSnapshot },
+        metadata: { callSid: cleanCallSid, rateSnapshot: rateSnapshotPayload },
       });
 
       await TelecomDomainService.createComponent(client, {

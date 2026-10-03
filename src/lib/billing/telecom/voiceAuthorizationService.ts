@@ -14,6 +14,8 @@ export interface AuthorizeOutboundVoiceParams {
   toNumber: string;
   currency?: string;
   policyConfigOverrides?: Partial<ExposurePolicyConfig>;
+  providerAccountId?: string;
+  forceDynamicPath?: boolean;
 }
 
 export interface OutboundVoiceAuthorizationResult {
@@ -46,6 +48,8 @@ export class VoiceAuthorizationService {
       toNumber,
       currency = 'USD',
       policyConfigOverrides,
+      providerAccountId = 'default',
+      forceDynamicPath = false,
     } = params;
 
     if (!organizationId || !dbCallId || !toNumber) {
@@ -84,22 +88,26 @@ export class VoiceAuthorizationService {
       };
     }
 
-    // 2. Authoritatively resolve retail rate for destination
+    // 2. Authoritatively resolve retail rate for destination (dynamic or legacy based on feature flag / parameter)
     let matchedRate: RateResolutionResult;
     try {
       matchedRate = await TelecomRatingService.resolveRetailRate(client, {
         organizationId,
+        provider: 'twilio',
+        providerAccountId,
         serviceType: 'voice_outbound',
         direction: 'outbound',
         destinationPhoneNumber: toNumber,
+        originationPhoneNumber: fromNumber,
         currency,
+        forceDynamicPath,
       });
     } catch (rateErr: any) {
       console.warn('[VoiceAuthorizationService] Retail rate resolution failed:', rateErr.message);
       return {
         authorized: false,
         failureReason: 'RATE_CARD_NOT_FOUND',
-        customerMessage: 'Calling rate is unconfigured for this destination. Please contact support.',
+        customerMessage: 'We are unable to connect your call at this time. Calling rate is unavailable for this destination.',
       };
     }
 
@@ -118,6 +126,7 @@ export class VoiceAuthorizationService {
         destination: toNumber,
         matchedPrefix: matchedRate.matchedPrefix,
         rateMicro: matchedRate.retailRateMicro,
+        wholesaleRateMicro: matchedRate.matchedRateCard.wholesaleCostMicro,
         initialDurationSeconds: exposure.initialDurationSeconds,
         requiredFundedMinor: exposure.requiredFundedMinor,
         enforcementMode: 'shadow_log',
@@ -135,9 +144,6 @@ export class VoiceAuthorizationService {
     }
 
     // 4. ENFORCE MODE: Create durable session & component first, then place atomic wallet reservation hold
-    let sessionCreated = false;
-    let componentCreated = false;
-
     try {
       // Step A: Create or fetch durable telecom usage session
       try {
@@ -153,12 +159,8 @@ export class VoiceAuthorizationService {
             to_number: toNumber,
           },
         });
-        sessionCreated = true;
       } catch (sessErr: any) {
-        // If session already exists (e.g. webhook retry), ignore duplicate insert
-        if (sessErr.message?.includes('23505') || sessErr.message?.includes('duplicate key')) {
-          sessionCreated = true;
-        } else {
+        if (!sessErr.message?.includes('23505') && !sessErr.message?.includes('duplicate key')) {
           console.error('[VoiceAuthorizationService] Session creation error:', sessErr.message);
           return {
             authorized: false,
@@ -183,11 +185,8 @@ export class VoiceAuthorizationService {
             to_number: toNumber,
           },
         });
-        componentCreated = true;
       } catch (compErr: any) {
-        if (compErr.message?.includes('23505') || compErr.message?.includes('duplicate key')) {
-          componentCreated = true;
-        } else {
+        if (!compErr.message?.includes('23505') && !compErr.message?.includes('duplicate key')) {
           console.error('[VoiceAuthorizationService] Component creation error:', compErr.message);
           return {
             authorized: false,
@@ -197,7 +196,27 @@ export class VoiceAuthorizationService {
         }
       }
 
-      // Step C: Place atomic wallet pre-exposure reservation hold
+      // Step C: Place atomic wallet pre-exposure reservation hold with complete immutable rate snapshot
+      const rateSnapshotPayload = {
+        rateMicro: matchedRate.retailRateMicro,
+        retailRateMicro: matchedRate.retailRateMicro,
+        wholesaleRateMicro: matchedRate.matchedRateCard.wholesaleCostMicro || 0,
+        billingIncrementSeconds: matchedRate.matchedRateCard.billingIncrementSeconds || 60,
+        minChargeableUnits: matchedRate.matchedRateCard.minChargeableUnits || 1,
+        unitType: matchedRate.matchedRateCard.unitType || 'minute',
+        currency: matchedRate.currency || 'USD',
+        prefix: matchedRate.matchedPrefix,
+        source: matchedRate.resolutionSource,
+        pricingPolicyId: matchedRate.matchedRateCard.metadata?.pricing_policy_id,
+        pricingMode: matchedRate.matchedRateCard.metadata?.pricing_mode,
+        markupBasisPoints: matchedRate.matchedRateCard.metadata?.markup_basis_points || 2500,
+        providerKey: matchedRate.matchedRateCard.metadata?.provider_key || 'twilio',
+        providerAccountId: matchedRate.matchedRateCard.metadata?.provider_account_id || providerAccountId,
+        freshnessState: matchedRate.matchedRateCard.metadata?.freshness_state,
+        pricingFingerprint: matchedRate.matchedRateCard.metadata?.pricing_fingerprint,
+        authorizationTimestamp: matchedRate.matchedRateCard.metadata?.authorization_timestamp || new Date().toISOString(),
+      };
+
       const reservationRes = await TelecomWalletService.reserveUsage(client, {
         organizationId,
         internalUsageId,
@@ -209,17 +228,7 @@ export class VoiceAuthorizationService {
         currency,
         provider: 'twilio',
         rateCardId: matchedRate.matchedRateCard.id,
-        rateSnapshot: {
-          rateMicro: matchedRate.retailRateMicro,
-          retailRateMicro: matchedRate.retailRateMicro,
-          billingIncrementSeconds: matchedRate.matchedRateCard.billingIncrementSeconds || 60,
-          minChargeableUnits: matchedRate.matchedRateCard.minChargeableUnits || 1,
-          unitType: matchedRate.matchedRateCard.unitType || 'minute',
-          currency: matchedRate.currency || 'USD',
-          prefix: matchedRate.matchedPrefix,
-          source: matchedRate.resolutionSource,
-          pricingPolicyId: matchedRate.matchedRateCard.metadata?.pricing_policy_id,
-        },
+        rateSnapshot: rateSnapshotPayload,
         metadata: {
           sessionId,
           componentId,
@@ -235,12 +244,12 @@ export class VoiceAuthorizationService {
         };
       }
 
-      // Record Option B confidential wholesale economics snapshot
+      // Record confidential wholesale economics snapshot
       await TelecomWholesaleService.recordWholesaleSnapshot(client, {
         organizationId,
         reservationId: reservationRes.reservationId,
         internalUsageId,
-        providerKey: 'twilio',
+        providerKey: matchedRate.matchedRateCard.metadata?.provider_key || 'twilio',
         serviceType: 'voice_outbound',
         direction: 'outbound',
         currency,
@@ -257,55 +266,6 @@ export class VoiceAuthorizationService {
           pricing_mode: matchedRate.matchedRateCard.metadata?.pricing_mode,
         },
       });
-
-      // Step D: Transition experiment authorization CLAIMED -> CONSUMED ONLY after initial financial protection succeeds
-      if (policyConfigOverrides) {
-        try {
-          const { computeDestinationFingerprint } = await import('@/lib/telephony/experimentCrypto');
-          const destFingerprint = computeDestinationFingerprint(toNumber);
-          const { data: expConsumeResult, error: consumeErr } = await (client as any).rpc(
-            'consume_telecom_experiment_authorization_atomic',
-            {
-              p_organization_id: organizationId,
-              p_call_id: dbCallId,
-              p_destination_fingerprint: destFingerprint,
-            }
-          );
-
-          if (consumeErr || !expConsumeResult?.consumed) {
-            console.error('[VoiceAuthorizationService] Experiment authorization consumption failed post-reservation:', consumeErr || expConsumeResult);
-            // Safe pre-dispatch failure compensation: release reservation hold
-            await VoiceAuthorizationService.compensatePreDispatchFailure(
-              client,
-              organizationId,
-              internalUsageId,
-              dbCallId
-            );
-
-            return {
-              authorized: false,
-              failureReason: 'EXPERIMENT_CONSUMPTION_FAILED',
-              customerMessage: 'Controlled experiment authorization consumption failed. Call terminated before PSTN dispatch.',
-            };
-          }
-
-          console.log('[VoiceAuthorizationService] Controlled experiment authorization transitioned CLAIMED -> CONSUMED:', expConsumeResult);
-        } catch (expConsumeErr: any) {
-          console.error('[VoiceAuthorizationService] Exception during experiment authorization consumption:', expConsumeErr.message || expConsumeErr);
-          await VoiceAuthorizationService.compensatePreDispatchFailure(
-            client,
-            organizationId,
-            internalUsageId,
-            dbCallId
-          );
-
-          return {
-            authorized: false,
-            failureReason: 'EXPERIMENT_CONSUMPTION_FAILED',
-            customerMessage: 'Controlled experiment authorization consumption failed. Call terminated before PSTN dispatch.',
-          };
-        }
-      }
 
       return {
         authorized: true,
@@ -343,10 +303,6 @@ export class VoiceAuthorizationService {
     }
   }
 
-  /**
-   * Safe pre-dispatch failure compensation helper.
-   * Only invoked when failure occurs AFTER successful reservation hold AND BEFORE response handoff has started.
-   */
   public static async compensatePreDispatchFailure(
     client: SupabaseClient,
     organizationId: string,
@@ -364,7 +320,6 @@ export class VoiceAuthorizationService {
       return releaseRes.success;
     } catch (releaseErr: any) {
       console.error('[VoiceAuthorizationService] Compensation release failed. Marking reconciliation_required:', releaseErr.message);
-      // Mark session reconciliation_status = 'manual_review' so recovery workers pick it up
       try {
         await client
           .from('telecom_usage_sessions')
