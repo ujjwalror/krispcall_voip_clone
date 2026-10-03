@@ -1,7 +1,6 @@
 import 'server-only';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { RetailPricingService } from './pricingService';
 import { formatMinorUnitsToCurrency } from '@/lib/billing/currencyFormatter';
 
 export interface CustomerNumberSubscriptionDTO {
@@ -30,14 +29,17 @@ export interface OrganizationNumberSubscriptionsSummaryDTO {
   formattedTotalMonthlyRetail: string;
   currency: string;
   hasMultipleCurrencies: boolean;
+  hasUnpricedSubscriptions: boolean;
+  unpricedCount: number;
   currenciesPresent: string[];
   numbers: CustomerNumberSubscriptionDTO[];
 }
 
 export class NumberSubscriptionService {
   /**
-   * Resolves organization-owned numbers and contracted billable resource prices for customer display.
-   * STRICTLY REDACTS all provider internal fields (Twilio SIDs, provider account IDs, wholesale cost, etc.).
+   * Resolves organization-owned numbers and authoritative contracted billable resource prices.
+   * STRICTLY REDACTS all provider internal fields (Twilio SIDs, wholesale costs, margins, etc.).
+   * DOES NOT use marketplace offer prices as a substitute for an unknown/missing contract price!
    */
   static async getOrganizationSubscriptions(
     organizationId: string,
@@ -115,26 +117,25 @@ export class NumberSubscriptionService {
       // Authoritative billable resource matching & contracted price resolution
       let monthlyRetailMinor: number | null = null;
       let currency = 'USD';
-      let billingStatus: 'active' | 'pending_reconciliation' | 'unbilled' = 'unbilled';
+      let billingStatus: 'active' | 'pending_reconciliation' | 'unbilled' = 'pending_reconciliation';
 
       const matchedResource = billableMap.get(pn.id);
 
-      if (matchedResource && matchedResource.contracted_retail_minor !== null && matchedResource.contracted_retail_minor !== undefined) {
+      if (
+        matchedResource &&
+        matchedResource.contracted_retail_minor !== null &&
+        matchedResource.contracted_retail_minor !== undefined
+      ) {
         monthlyRetailMinor = Number(matchedResource.contracted_retail_minor);
         currency = (matchedResource.currency || 'USD').toUpperCase();
         billingStatus = 'active';
       } else {
-        // Fallback to RetailPricingService for un-reconciled legacy numbers
-        const resolved = await RetailPricingService.resolveRetailPrice(countryCode, numberType, 'USD');
-        if (resolved.hasConfiguredPrice && resolved.monthlyPriceMinor !== null) {
-          monthlyRetailMinor = resolved.monthlyPriceMinor;
-          currency = (resolved.currency || 'USD').toUpperCase();
-          billingStatus = 'pending_reconciliation';
-        } else {
-          monthlyRetailMinor = null;
-          currency = 'USD';
-          billingStatus = 'unbilled';
-        }
+        // CONTRACT PRICE SAFETY GUARANTEE:
+        // Do NOT call marketplace offer pricing to manufacture a contract price for an owned number!
+        // Return explicit pending/unavailable state.
+        monthlyRetailMinor = null;
+        currency = 'USD';
+        billingStatus = 'pending_reconciliation';
       }
 
       const monthlyRetailFormatted = monthlyRetailMinor !== null
@@ -163,8 +164,15 @@ export class NumberSubscriptionService {
 
     // Calculate Summary Totals for Active Numbers
     const activeDtoNumbers = dtoList.filter((n) => n.numberStatus === 'active');
-    const currenciesPresent = Array.from(new Set(activeDtoNumbers.map((n) => n.currency).filter(Boolean)));
+    const pricedActiveNumbers = activeDtoNumbers.filter((n) => n.monthlyRetailMinor !== null);
+    const unpricedActiveNumbers = activeDtoNumbers.filter((n) => n.monthlyRetailMinor === null);
+
+    const currenciesPresent = Array.from(
+      new Set(pricedActiveNumbers.map((n) => n.currency).filter(Boolean))
+    );
     const hasMultipleCurrencies = currenciesPresent.length > 1;
+    const hasUnpricedSubscriptions = unpricedActiveNumbers.length > 0;
+    const unpricedCount = unpricedActiveNumbers.length;
 
     let totalMonthlyRetailMinor: number | null = 0;
     let formattedTotalMonthlyRetail = '$0.00 / month';
@@ -176,18 +184,25 @@ export class NumberSubscriptionService {
       totalMonthlyRetailMinor = null; // Cannot sum minor units across different currencies
       const breakdown = currenciesPresent
         .map((curr) => {
-          const sum = activeDtoNumbers
-            .filter((n) => n.currency === curr && n.monthlyRetailMinor !== null)
+          const sum = pricedActiveNumbers
+            .filter((n) => n.currency === curr)
             .reduce((acc, n) => acc + (n.monthlyRetailMinor || 0), 0);
           return formatMinorUnitsToCurrency(sum, curr);
         })
         .join(' + ');
-      formattedTotalMonthlyRetail = `${breakdown} / month`;
+      formattedTotalMonthlyRetail = `${breakdown} / month${hasUnpricedSubscriptions ? ' (Partial)' : ''}`;
+    } else if (pricedActiveNumbers.length === 0) {
+      // All active numbers have unknown/pending contracted prices - DO NOT TREAT AS $0!
+      totalMonthlyRetailMinor = null;
+      formattedTotalMonthlyRetail = 'Billing setup pending';
     } else {
       const mainCurrency = currenciesPresent[0] || 'USD';
-      const sum = activeDtoNumbers.reduce((acc, n) => acc + (n.monthlyRetailMinor || 0), 0);
+      const sum = pricedActiveNumbers.reduce((acc, n) => acc + (n.monthlyRetailMinor || 0), 0);
       totalMonthlyRetailMinor = sum;
-      formattedTotalMonthlyRetail = `${formatMinorUnitsToCurrency(sum, mainCurrency)} / month`;
+      const formattedSum = formatMinorUnitsToCurrency(sum, mainCurrency);
+      formattedTotalMonthlyRetail = hasUnpricedSubscriptions
+        ? `${formattedSum} / month (Known - ${unpricedCount} pending)`
+        : `${formattedSum} / month`;
     }
 
     return {
@@ -197,6 +212,8 @@ export class NumberSubscriptionService {
       formattedTotalMonthlyRetail,
       currency: hasMultipleCurrencies ? 'MULTI' : (currenciesPresent[0] || 'USD'),
       hasMultipleCurrencies,
+      hasUnpricedSubscriptions,
+      unpricedCount,
       currenciesPresent,
       numbers: dtoList,
     };

@@ -15,10 +15,8 @@ import {
   RefreshCw,
   Settings,
   PlusCircle,
-  Globe,
-  CheckCircle2,
+  Clock,
   Layers,
-  ArrowRight,
 } from 'lucide-react';
 import type {
   CustomerNumberSubscriptionDTO,
@@ -187,10 +185,15 @@ export default function BillingNumbersPage() {
                 <div className="flex items-center justify-between w-full">
                   <CardTitle className="text-xs font-semibold text-emerald-900 dark:text-emerald-200 flex items-center gap-2 uppercase tracking-wider">
                     <Receipt className="w-4 h-4 text-emerald-500" />
-                    <span>Monthly Number Rental</span>
+                    <span>
+                      {summary?.hasUnpricedSubscriptions ? 'Known Monthly Rental' : 'Monthly Number Rental'}
+                    </span>
                   </CardTitle>
-                  <Badge variant="emerald" className="text-[10px]">
-                    Contracted Retail
+                  <Badge
+                    variant={summary?.hasUnpricedSubscriptions ? 'amber' : 'emerald'}
+                    className="text-[10px]"
+                  >
+                    {summary?.hasUnpricedSubscriptions ? 'Partial Breakdown' : 'Contracted Retail'}
                   </Badge>
                 </div>
               </CardHeader>
@@ -199,7 +202,9 @@ export default function BillingNumbersPage() {
                   {summary?.formattedTotalMonthlyRetail || '$0.00 / month'}
                 </div>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  {summary?.hasMultipleCurrencies
+                  {summary?.hasUnpricedSubscriptions
+                    ? `Known recurring rental for configured lines. (${summary.unpricedCount} ${summary.unpricedCount === 1 ? 'line' : 'lines'} pending setup).`
+                    : summary?.hasMultipleCurrencies
                     ? 'Breakdown of active monthly rental obligations by currency.'
                     : 'Total recurring monthly retail rental obligation for active numbers.'}
                 </p>
@@ -291,10 +296,24 @@ export default function BillingNumbersPage() {
                             </div>
                           </td>
                           <td className="py-3.5 whitespace-nowrap">
-                            {getStatusBadge(num.numberStatus)}
+                            <div className="flex items-center gap-1.5">
+                              {getStatusBadge(num.numberStatus)}
+                              {num.billingStatus === 'pending_reconciliation' && (
+                                <Badge variant="amber" className="text-[9px] flex items-center gap-1">
+                                  <Clock className="w-2.5 h-2.5" />
+                                  <span>Pending Setup</span>
+                                </Badge>
+                              )}
+                            </div>
                           </td>
                           <td className="py-3.5 text-right font-semibold text-slate-900 dark:text-slate-100 whitespace-nowrap">
-                            {num.monthlyRetailFormatted ? `${num.monthlyRetailFormatted} / mo` : 'Unpriced'}
+                            {num.monthlyRetailFormatted ? (
+                              `${num.monthlyRetailFormatted} / mo`
+                            ) : (
+                              <span className="text-amber-600 dark:text-amber-400 font-normal italic text-[11px]">
+                                Billing setup pending
+                              </span>
+                            )}
                           </td>
                           <td className="py-3.5 text-right text-slate-500 dark:text-slate-400 whitespace-nowrap">
                             {formatDate(num.purchasedAt)}
