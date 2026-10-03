@@ -314,6 +314,57 @@ async function runTests() {
   assert(derivedRetail.markupAmountMicro === BigInt(5000), 'Markup amount = 5000 micro ($0.0050 = 25% of $0.020)');
   assert(derivedRetail.derivedRetailRateMicro === BigInt(25000), 'Derived customer retail rate = 25000 micro ($0.0250/min)');
 
+  // ------------------------------------------------------------------
+  // 7. Advanced Origination Scopes (ALL, ROW, *) & Inbound Normalization
+  // ------------------------------------------------------------------
+  console.log('\n--- 7. Advanced Origination Scopes (ALL, ROW, *) & Inbound Normalization ---');
+
+  const origScopeDbClient: any = {
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          eq: () => ({
+            eq: () => ({
+              eq: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    eq: () => ({
+                      data: [
+                        { destination_prefix: '614', origination_prefix: 'ALL', current_price_micro: 20000, soft_stale_at: softStaleAtIso, hard_expires_at: hardExpiresAtIso, currency: 'USD', iso_country: 'AU', is_active: true },
+                        { destination_prefix: '614', origination_prefix: '+1', current_price_micro: 30000, soft_stale_at: softStaleAtIso, hard_expires_at: hardExpiresAtIso, currency: 'USD', iso_country: 'AU', is_active: true },
+                      ],
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          }),
+        }),
+      }),
+    }),
+  };
+
+  // Specific numeric origination +1 must take precedence over ALL
+  const specRes = await ProviderWholesaleCacheResolver.resolveWholesaleQuote(origScopeDbClient, {
+    serviceType: 'voice_outbound',
+    direction: 'outbound',
+    destinationPhoneNumber: '+61412345678',
+    originationPhoneNumber: '+14155550199',
+    isoCountry: 'AU',
+  });
+  assert(specRes.currentPriceMicro === BigInt(30000), 'Specific numeric origination (+1) takes precedence over universal ALL pattern (30000 micro)');
+
+  // General origination matches universal ALL pattern when no numeric match applies
+  const genRes = await ProviderWholesaleCacheResolver.resolveWholesaleQuote(origScopeDbClient, {
+    serviceType: 'voice_outbound',
+    direction: 'outbound',
+    destinationPhoneNumber: '+61412345678',
+    originationPhoneNumber: '+442079460000',
+    isoCountry: 'AU',
+  });
+  assert(genRes.currentPriceMicro === BigInt(20000), 'General non-+1 origination matches universal ALL pattern (20000 micro)');
+
   console.log('\n================================================================');
   console.log(`TEST RESULTS: ${passed} PASSED, ${failed} FAILED`);
   console.log('================================================================\n');

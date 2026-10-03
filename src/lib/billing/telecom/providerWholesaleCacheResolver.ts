@@ -106,26 +106,44 @@ export class ProviderWholesaleCacheResolver {
         const origMatches: any[] = [];
         const origDigits = cleanOrig ? cleanOrig.replace(/^\+/, '') : '';
         for (const candidate of destCandidates) {
-          const origPattern = (candidate.origination_prefix || '*').trim();
+          const origPattern = (candidate.origination_prefix || '*').trim().toUpperCase();
           const origPatternDigits = origPattern.replace(/^\+/, '');
-          if (origPattern === '*' || (origDigits && origDigits.startsWith(origPatternDigits))) {
-            origMatches.push(candidate);
+          const isUniversal = origPattern === '*' || origPattern === 'ALL' || origPattern === 'ROW';
+          if (isUniversal || (origDigits && origDigits.startsWith(origPatternDigits))) {
+            origMatches.push({
+              candidate,
+              isUniversal,
+              prefixLength: isUniversal ? 0 : origPatternDigits.length,
+            });
           }
         }
 
         if (origMatches.length === 1) {
-          matchedRecord = origMatches[0];
+          matchedRecord = origMatches[0].candidate;
         } else if (origMatches.length > 1) {
-          // Check if all origination matches yield identical current_price_micro
-          const firstPrice = BigInt(origMatches[0].current_price_micro);
-          const allIdentical = origMatches.every((c) => BigInt(c.current_price_micro) === firstPrice);
-          if (allIdentical) {
-            matchedRecord = origMatches[0];
+          // Sort so specific numeric origination prefix takes precedence over universal (ALL / ROW / *)
+          origMatches.sort((a, b) => b.prefixLength - a.prefixLength);
+          const topMatch = origMatches[0];
+          const secondMatch = origMatches[1];
+
+          // If top match is specific numeric and second match is less specific, select top match
+          if (topMatch.prefixLength > secondMatch.prefixLength) {
+            matchedRecord = topMatch.candidate;
           } else {
-            // Ambiguous origination pricing -> FAIL CLOSED!
-            throw new Error(
-              `AMBIGUOUS_WHOLESALE_PRICING: Destination ${cleanDest} matched multiple conflicting origination pricing rules for country ${isoCountry}`
-            );
+            // Check if all top-ranked origination matches yield identical current_price_micro
+            const topPrice = BigInt(topMatch.candidate.current_price_micro);
+            const allIdentical = origMatches
+              .filter((m) => m.prefixLength === topMatch.prefixLength)
+              .every((m) => BigInt(m.candidate.current_price_micro) === topPrice);
+
+            if (allIdentical) {
+              matchedRecord = topMatch.candidate;
+            } else {
+              // Ambiguous origination pricing -> FAIL CLOSED!
+              throw new Error(
+                `AMBIGUOUS_WHOLESALE_PRICING: Destination ${cleanDest} matched multiple conflicting origination pricing rules for country ${isoCountry}`
+              );
+            }
           }
         } else {
           throw new Error(
@@ -148,7 +166,9 @@ export class ProviderWholesaleCacheResolver {
       }
 
       const currentPriceMicro = BigInt(matchedRecord.current_price_micro);
-      const basePriceMicro = matchedRecord.base_price_micro !== null ? BigInt(matchedRecord.base_price_micro) : null;
+      const basePriceMicro = matchedRecord.base_price_micro !== null && matchedRecord.base_price_micro !== undefined
+        ? BigInt(matchedRecord.base_price_micro)
+        : null;
 
       return {
         providerKey: cleanProviderKey,
@@ -180,7 +200,8 @@ export class ProviderWholesaleCacheResolver {
     // -------------------------------------------------------------
     // INBOUND VOICE CACHE RESOLUTION
     // -------------------------------------------------------------
-    const targetType = rawNumberType || 'any';
+    let targetType = rawNumberType ? rawNumberType.toLowerCase().trim().replace(/[- ]/g, '_') : 'any';
+    if (targetType.includes('toll')) targetType = 'toll_free';
     const { data: inboundRows, error: inboundErr } = await client
       .from('provider_voice_pricing_cache')
       .select('*')
@@ -223,7 +244,9 @@ export class ProviderWholesaleCacheResolver {
     }
 
     const currentPriceMicro = BigInt(matchedInbound.current_price_micro);
-    const basePriceMicro = matchedInbound.base_price_micro !== null ? BigInt(matchedInbound.base_price_micro) : null;
+    const basePriceMicro = matchedInbound.base_price_micro !== null && matchedInbound.base_price_micro !== undefined
+      ? BigInt(matchedInbound.base_price_micro)
+      : null;
 
     return {
       providerKey: cleanProviderKey,
