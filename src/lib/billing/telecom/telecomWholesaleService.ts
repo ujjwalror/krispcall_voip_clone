@@ -151,7 +151,7 @@ export class TelecomWholesaleService {
         observationId: data.observation_id,
         economicsId: data.economics_id,
         costStatus: data.cost_status,
-        netCostMinor: data.net_actual_provider_cost_minor ? Number(data.net_actual_provider_cost_minor) : 0,
+        netCostMinor: data.net_actual_provider_cost_minor !== null && data.net_actual_provider_cost_minor !== undefined ? Number(data.net_actual_provider_cost_minor) : 0,
       };
     } catch (err: any) {
       console.error('[TelecomWholesaleService] Exception in recordCostObservation:', err.message || err);

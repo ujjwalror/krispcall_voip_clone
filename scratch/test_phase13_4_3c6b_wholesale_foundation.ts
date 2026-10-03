@@ -221,6 +221,31 @@ async function runC6BTestCampaign() {
   assert(minor1 === 3, '5.1 Retail charge calculation for 45s @ 25,000 micro-units returns 3 cents (BigInt ceiling)');
 
   // -------------------------------------------------------------
+  // TEST GROUP 6: SIGNED MICRO-TO-MINOR CONSERVATIVE ROUNDING
+  // -------------------------------------------------------------
+  console.log('\n--- Test Group 6: Signed Micro-to-Minor Conservative Rounding ---');
+
+  function convertSignedMicroToMinor(micro: bigint): bigint {
+    if (micro > 0n) {
+      return (micro + 9999n) / 10000n;
+    } else if (micro < 0n) {
+      return micro / 10000n;
+    }
+    return 0n;
+  }
+
+  assert(convertSignedMicroToMinor(0n) === 0n, '6.1 micro 0 -> 0 cents');
+  assert(convertSignedMicroToMinor(1n) === 1n, '6.2 micro 1 (+0.0001 cent) -> +1 cent (never understate cost)');
+  assert(convertSignedMicroToMinor(9999n) === 1n, '6.3 micro 9999 (+0.9999 cent) -> +1 cent (never understate cost)');
+  assert(convertSignedMicroToMinor(10000n) === 1n, '6.4 micro 10000 (+1.0000 cent) -> +1 cent');
+  assert(convertSignedMicroToMinor(10001n) === 2n, '6.5 micro 10001 (+1.0001 cents) -> +2 cents (never understate cost)');
+
+  assert(convertSignedMicroToMinor(-1n) === 0n, '6.6 micro -1 (-0.0001 cent) -> 0 cents (never exaggerate credit)');
+  assert(convertSignedMicroToMinor(-9999n) === 0n, '6.7 micro -9999 (-0.9999 cent) -> 0 cents (never exaggerate credit)');
+  assert(convertSignedMicroToMinor(-10000n) === -1n, '6.8 micro -10000 (-1.0000 cent) -> -1 cent credit');
+  assert(convertSignedMicroToMinor(-10001n) === -1n, '6.9 micro -10001 (-1.0001 cents) -> -1 cent credit (never exaggerate credit)');
+
+  // -------------------------------------------------------------
   // SUMMARY REPORT
   // -------------------------------------------------------------
   console.log('\n=============================================================');

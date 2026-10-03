@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS public.telecom_usage_economics (
     
     -- Net Actual Provider Cost (Derived from Component Supersession)
     net_actual_provider_cost_micro BIGINT NULL,
-    net_actual_provider_cost_minor BIGINT NULL CHECK (net_actual_provider_cost_minor IS NULL OR net_actual_provider_cost_minor >= 0),
+    net_actual_provider_cost_minor BIGINT NULL,
     
     -- Status & Provenance Metadata
     cost_status TEXT NOT NULL DEFAULT 'cost_pending' 
@@ -419,9 +419,13 @@ BEGIN
   -- Net Provider Cost Micro (truthful signed magnitude)
   v_net_cost_micro := v_gross_charges_micro - v_gross_credits_micro;
 
-  -- Convert positive net micro to minor cents via BigInt ceiling division: (netMicro + 9999) / 10000
+  -- Convert net micro to minor cents via conservative signed rounding:
+  -- Positive net cost: ceil division (v_net_cost_micro + 9999) / 10000 (never understate provider cost)
+  -- Negative net cost: truncate division v_net_cost_micro / 10000 (never exaggerate provider credit)
   IF v_net_cost_micro > 0 THEN
     v_net_cost_minor := (v_net_cost_micro + 9999) / 10000;
+  ELSIF v_net_cost_micro < 0 THEN
+    v_net_cost_minor := v_net_cost_micro / 10000;
   ELSE
     v_net_cost_minor := 0;
   END IF;
