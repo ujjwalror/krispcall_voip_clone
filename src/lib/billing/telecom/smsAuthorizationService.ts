@@ -1,6 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { TelecomRatingService } from './telecomRatingService';
 import { TelecomWalletService } from '../telecomWalletService';
+import { TelecomWholesaleService } from './telecomWholesaleService';
 import { SmsSegmentService } from './smsSegmentService';
 import { normalizeE164PhoneNumber } from '@/lib/utils';
 
@@ -273,6 +274,27 @@ export class SmsAuthorizationService {
       serviceType,
       segmentCount,
     });
+
+    // Record Option B confidential wholesale economics snapshot
+    if (reservationId) {
+      await TelecomWholesaleService.recordWholesaleSnapshot(client, {
+        organizationId,
+        reservationId,
+        internalUsageId,
+        providerKey: 'twilio',
+        serviceType,
+        direction: 'outbound',
+        currency,
+        estimatedWholesaleRateMicro: rateResult.matchedRateCard.wholesaleCostMicro || 0,
+        estimatedWholesaleCostMinor: TelecomWalletService.calculateRetailChargeMinor({
+          retailRateMicro: rateResult.matchedRateCard.wholesaleCostMicro || 0,
+          durationSeconds: segmentCount,
+          billingIncrementSeconds: 1,
+          minChargeableUnits: 1,
+          unitType: 'message',
+        }),
+      });
+    }
 
     return {
       authorized: true,

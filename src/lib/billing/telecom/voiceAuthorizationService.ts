@@ -3,6 +3,7 @@ import { TelecomRatingService } from './telecomRatingService';
 import { ExposurePolicy, ExposurePolicyConfig, CalculatedExposure, ExposurePolicyError } from './exposurePolicy';
 import { TelecomDomainService } from './telecomDomainService';
 import { TelecomWalletService } from '../telecomWalletService';
+import { TelecomWholesaleService } from './telecomWholesaleService';
 import { CustomerTelecomSessionDTO, toCustomerTelecomSessionDTO, RateResolutionResult } from './types';
 
 export interface AuthorizeOutboundVoiceParams {
@@ -232,6 +233,25 @@ export class VoiceAuthorizationService {
           customerMessage: 'Your account has insufficient Credits to place this call. Please add Credits to continue.',
         };
       }
+
+      // Record Option B confidential wholesale economics snapshot
+      await TelecomWholesaleService.recordWholesaleSnapshot(client, {
+        organizationId,
+        reservationId: reservationRes.reservationId,
+        internalUsageId,
+        providerKey: 'twilio',
+        serviceType: 'voice_outbound',
+        direction: 'outbound',
+        currency,
+        estimatedWholesaleRateMicro: matchedRate.matchedRateCard.wholesaleCostMicro || 0,
+        estimatedWholesaleCostMinor: TelecomWalletService.calculateRetailChargeMinor({
+          retailRateMicro: matchedRate.matchedRateCard.wholesaleCostMicro || 0,
+          durationSeconds: exposure.initialDurationSeconds,
+          billingIncrementSeconds: matchedRate.matchedRateCard.billingIncrementSeconds || 60,
+          minChargeableUnits: matchedRate.matchedRateCard.minChargeableUnits || 1,
+          unitType: matchedRate.matchedRateCard.unitType || 'minute',
+        }),
+      });
 
       // Step D: Transition experiment authorization CLAIMED -> CONSUMED ONLY after initial financial protection succeeds
       if (policyConfigOverrides) {

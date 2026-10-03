@@ -1,5 +1,6 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { TelecomWalletService } from '../telecomWalletService';
+import { TelecomWholesaleService } from './telecomWholesaleService';
 
 export interface ProcessMessageStatusCallbackParams {
   organizationId: string;
@@ -312,6 +313,21 @@ export class SmsSettlementService {
           error_code: errorCode || null,
         },
       });
+
+      // Record confidential provider cost observation if price evidence exists
+      const rawPriceText = providerPrice !== null && providerPrice !== undefined ? String(providerPrice) : payload?.Price || payload?.price || null;
+      if (rawPriceText) {
+        await TelecomWholesaleService.recordTwilioCallbackCostObservation(client, {
+          organizationId,
+          internalUsageId,
+          rawPriceText,
+          costSource: 'twilio_sms_callback',
+          resourceId: messageSid,
+          settlementLedgerId: settleRes.settlementLedgerId,
+          retailChargeMinor: actualRetailChargeMinor,
+          rawPayload: payload,
+        });
+      }
 
       return {
         success: settleRes.success,

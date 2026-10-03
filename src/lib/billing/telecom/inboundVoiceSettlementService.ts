@@ -1,6 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { TelecomWalletService } from '../telecomWalletService';
 import { TelecomDomainService } from './telecomDomainService';
+import { TelecomWholesaleService } from './telecomWholesaleService';
 import { RateResolutionResult } from './types';
 
 const MESSAGE_STATUS_PRECEDENCE: Record<string, number> = {
@@ -189,6 +190,20 @@ export class InboundVoiceSettlementService {
           .from('telecom_usage_sessions')
           .update({ reconciliation_status: 'manual_review' })
           .eq('session_id', `sess_inbound_${cleanCallSid}`);
+      }
+
+      // Record confidential provider cost observation if price evidence exists
+      const rawPriceText = providerPrice !== undefined && providerPrice !== null ? String(providerPrice) : null;
+      if (rawPriceText) {
+        await TelecomWholesaleService.recordTwilioCallbackCostObservation(client, {
+          organizationId,
+          internalUsageId,
+          rawPriceText,
+          costSource: 'twilio_inbound_voice_callback',
+          resourceId: cleanCallSid,
+          settlementLedgerId: null,
+          retailChargeMinor: settlementChargeMinor,
+        });
       }
 
       return {

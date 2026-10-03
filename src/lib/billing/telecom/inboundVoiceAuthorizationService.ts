@@ -2,6 +2,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { TelecomRatingService } from './telecomRatingService';
 import { TelecomWalletService } from '../telecomWalletService';
 import { TelecomDomainService } from './telecomDomainService';
+import { TelecomWholesaleService } from './telecomWholesaleService';
 import { ExposurePolicy } from './exposurePolicy';
 import { RateResolutionResult } from './types';
 
@@ -208,6 +209,27 @@ export class InboundVoiceAuthorizationService {
         }
         throw new InboundVoiceAuthorizationError(`Reservation error: ${resErr.message}`, 500, 'RESERVATION_ERROR');
       }
+    }
+
+    // Record Option B confidential wholesale economics snapshot
+    if (reservationId) {
+      await TelecomWholesaleService.recordWholesaleSnapshot(client, {
+        organizationId,
+        reservationId,
+        internalUsageId,
+        providerKey: 'twilio',
+        serviceType: 'voice_inbound',
+        direction: 'inbound',
+        currency: rateSnapshot.currency || 'USD',
+        estimatedWholesaleRateMicro: rateSnapshot.matchedRateCard?.wholesaleCostMicro || 0,
+        estimatedWholesaleCostMinor: TelecomWalletService.calculateRetailChargeMinor({
+          retailRateMicro: rateSnapshot.matchedRateCard?.wholesaleCostMicro || 0,
+          durationSeconds: initialExposureSeconds,
+          unitType: 'minute',
+          billingIncrementSeconds: 60,
+          minChargeableUnits: 1,
+        }),
+      });
     }
 
     // 6. Create durable telecom usage session & component
