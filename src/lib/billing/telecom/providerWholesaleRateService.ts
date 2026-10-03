@@ -34,6 +34,7 @@ export interface GetWholesaleQuoteParams {
   currency?: string;
   timestamp?: string;
   forceDynamicPath?: boolean;
+  skipCacheIngestion?: boolean;
   clientOverride?: any; // For unit test mocking of Twilio API
 }
 
@@ -73,6 +74,7 @@ export class ProviderWholesaleRateService {
       currency = 'USD',
       timestamp = new Date().toISOString(),
       forceDynamicPath = false,
+      skipCacheIngestion = false,
       clientOverride,
     } = params;
 
@@ -139,29 +141,31 @@ export class ProviderWholesaleRateService {
         if (serviceType === 'voice_outbound') {
           const fallbackRes = await TwilioExactNumberFallback.fetchExactNumberPricing(cleanDest, { clientOverride });
           if (fallbackRes.success && fallbackRes.currentPriceMicro >= BigInt(0)) {
-            // Persist exact-number fallback quote via atomic RPC if database client is available
-            try {
-              await (client as any).rpc('upsert_provider_voice_pricing_record_atomic', {
-                p_provider_account_id: cleanAccountId,
-                p_provider_key: cleanProviderKey,
-                p_service_type: 'voice_outbound',
-                p_direction: 'outbound',
-                p_iso_country: fallbackRes.isoCountry,
-                p_destination_prefix: cleanDest,
-                p_origination_prefix: '*',
-                p_number_type: null,
-                p_currency: fallbackRes.currency,
-                p_current_price_micro: fallbackRes.currentPriceMicro.toString(),
-                p_base_price_micro: fallbackRes.basePriceMicro ? fallbackRes.basePriceMicro.toString() : null,
-                p_price_unit: fallbackRes.priceUnit,
-                p_fetched_at: timestamp,
-                p_soft_stale_at: new Date(Date.now() + 86400000).toISOString(),
-                p_hard_expires_at: new Date(Date.now() + 172800000).toISOString(),
-                p_source_api_version: fallbackRes.sourceApiVersion,
-                p_pricing_fingerprint: `exact_fallback:${cleanDest}:${fallbackRes.currentPriceMicro}`,
-              });
-            } catch (ingestErr: any) {
-              console.warn('[ProviderWholesaleRateService] Fallback quote ingestion warning:', ingestErr.message);
+            // Persist exact-number fallback quote via atomic RPC if database client is available & ingestion is enabled
+            if (!skipCacheIngestion) {
+              try {
+                await (client as any).rpc('upsert_provider_voice_pricing_record_atomic', {
+                  p_provider_account_id: cleanAccountId,
+                  p_provider_key: cleanProviderKey,
+                  p_service_type: 'voice_outbound',
+                  p_direction: 'outbound',
+                  p_iso_country: fallbackRes.isoCountry,
+                  p_destination_prefix: cleanDest,
+                  p_origination_prefix: '*',
+                  p_number_type: null,
+                  p_currency: fallbackRes.currency,
+                  p_current_price_micro: fallbackRes.currentPriceMicro.toString(),
+                  p_base_price_micro: fallbackRes.basePriceMicro ? fallbackRes.basePriceMicro.toString() : null,
+                  p_price_unit: fallbackRes.priceUnit,
+                  p_fetched_at: timestamp,
+                  p_soft_stale_at: new Date(Date.now() + 86400000).toISOString(),
+                  p_hard_expires_at: new Date(Date.now() + 172800000).toISOString(),
+                  p_source_api_version: fallbackRes.sourceApiVersion,
+                  p_pricing_fingerprint: `exact_fallback:${cleanDest}:${fallbackRes.currentPriceMicro}`,
+                });
+              } catch (ingestErr: any) {
+                console.warn('[ProviderWholesaleRateService] Fallback quote ingestion warning:', ingestErr.message);
+              }
             }
 
             return {

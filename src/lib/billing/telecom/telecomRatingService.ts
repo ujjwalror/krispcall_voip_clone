@@ -36,6 +36,7 @@ export class TelecomRatingService {
       numberType?: string | null;
       isoCountry?: string;
       forceDynamicPath?: boolean;
+      skipCacheIngestion?: boolean;
       clientOverride?: any;
     }
   ): Promise<RateResolutionResult> {
@@ -52,6 +53,7 @@ export class TelecomRatingService {
       currency = 'USD',
       timestamp = new Date().toISOString(),
       forceDynamicPath = false,
+      skipCacheIngestion = false,
       clientOverride,
     } = params;
 
@@ -73,6 +75,7 @@ export class TelecomRatingService {
           currency,
           timestamp,
           forceDynamicPath,
+          skipCacheIngestion,
           clientOverride,
         });
 
@@ -263,6 +266,7 @@ export class TelecomRatingService {
       destinationCategory?: string;
       currency?: string;
       forceDynamicPath?: boolean;
+      skipCacheIngestion?: boolean;
     }
   ): Promise<CustomerRetailQuoteDTO> {
     const {
@@ -276,6 +280,7 @@ export class TelecomRatingService {
       destinationCategory,
       currency = 'USD',
       forceDynamicPath = true,
+      skipCacheIngestion = false,
     } = params;
 
     const rateResult = await this.resolveRetailRate(client, {
@@ -287,6 +292,7 @@ export class TelecomRatingService {
       isoCountry: destinationCountry || numberCountry,
       currency,
       forceDynamicPath,
+      skipCacheIngestion,
     });
 
     const rateFormatted = `$${(rateResult.retailRateMicro / 1000000).toFixed(4)} / min`;

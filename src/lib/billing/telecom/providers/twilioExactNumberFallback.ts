@@ -76,8 +76,15 @@ export class TwilioExactNumberFallback {
       } else {
         const accountSid = options?.accountSid || process.env.TWILIO_ACCOUNT_SID;
         const authToken = options?.authToken || process.env.TWILIO_AUTH_TOKEN;
+        const apiKeySid = process.env.TWILIO_API_KEY_SID;
+        const apiKeySecret = process.env.TWILIO_API_KEY_SECRET;
 
-        if (!accountSid || !authToken) {
+        let client: any;
+        if (apiKeySid && apiKeySecret && accountSid) {
+          client = twilio(apiKeySid, apiKeySecret, { accountSid });
+        } else if (accountSid && authToken) {
+          client = twilio(accountSid, authToken);
+        } else {
           return {
             success: false,
             destinationPhoneNumber: cleanDest,
@@ -92,7 +99,6 @@ export class TwilioExactNumberFallback {
           };
         }
 
-        const client = twilio(accountSid, authToken);
         phoneRes = await client.pricing.v2.voice.numbers(cleanDest).fetch();
       }
 
@@ -175,8 +181,15 @@ export class TwilioExactNumberFallback {
       } else {
         const accountSid = options?.accountSid || process.env.TWILIO_ACCOUNT_SID;
         const authToken = options?.authToken || process.env.TWILIO_AUTH_TOKEN;
+        const apiKeySid = process.env.TWILIO_API_KEY_SID;
+        const apiKeySecret = process.env.TWILIO_API_KEY_SECRET;
 
-        if (!accountSid || !authToken) {
+        let client: any;
+        if (apiKeySid && apiKeySecret && accountSid) {
+          client = twilio(apiKeySid, apiKeySecret, { accountSid });
+        } else if (accountSid && authToken) {
+          client = twilio(accountSid, authToken);
+        } else {
           return {
             success: false,
             isoCountry: cleanCountry,
@@ -185,7 +198,6 @@ export class TwilioExactNumberFallback {
           };
         }
 
-        const client = twilio(accountSid, authToken);
         countryRes = await client.pricing.v2.voice.countries(cleanCountry).fetch();
       }
 
