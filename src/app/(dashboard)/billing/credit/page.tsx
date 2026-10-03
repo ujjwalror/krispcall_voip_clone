@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Zap, Lock, Bell, RefreshCw, Shield, Info, AlertTriangle, Loader2, History, ChevronLeft, ChevronRight, PlusCircle } from 'lucide-react';
 import { formatMinorUnitsToCurrency } from '@/lib/billing/currencyFormatter';
 import { AddCreditsModal } from '@/components/billing/AddCreditsModal';
+import { AutoTopupCard } from '@/components/billing/AutoTopupCard';
 
 interface CreditSummaryData {
   success: boolean;
@@ -224,37 +225,11 @@ export default function BillingCreditPage() {
 
       {/* Grid for Auto-Recharge and Notifications */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Auto-Recharge Settings */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm flex items-center gap-2">
-              <RefreshCw className="w-4 h-4 text-blue-500" />
-              <span>Auto-Top-Up Configuration</span>
-            </CardTitle>
-          </CardHeader>
-          <div className="space-y-4 text-xs">
-            <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950/50 border border-slate-200/60 dark:border-slate-800/60">
-              <div className="text-[11px] text-slate-500 dark:text-slate-400">Recharge Trigger Threshold</div>
-              <div className="font-semibold text-slate-900 dark:text-slate-100 mt-0.5">
-                Not configured (Disabled)
-              </div>
-            </div>
-
-            <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950/50 border border-slate-200/60 dark:border-slate-800/60">
-              <div className="text-[11px] text-slate-500 dark:text-slate-400">Auto-Top-Up Amount</div>
-              <div className="font-semibold text-slate-900 dark:text-slate-100 mt-0.5">
-                Not configured
-              </div>
-            </div>
-
-            <div className="p-3 rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-[11px] text-slate-500 flex items-start gap-2">
-              <Info className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
-              <span>
-                Auto-Top-Up automatically replenishes calling credits when your balance drops below your chosen threshold.
-              </span>
-            </div>
-          </div>
-        </Card>
+        {/* Auto-Top-Up Interactive Card */}
+        <AutoTopupCard
+          userRole={summary?.role || 'agent'}
+          onStatusChanged={fetchSummary}
+        />
 
         {/* Low Balance Alert Notifications */}
         <Card>
