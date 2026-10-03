@@ -1,7 +1,8 @@
 -- Migration: 20261225000000_phase13_4_3c5c2_auto_topup_durable_foundation.sql
--- Subphase C.5C.2: Durable Autonomous Charging Foundation
--- Description: Extends C.5B schema with threshold state, generations, immutable trigger snapshots,
--- shared organization-level lock primitives, atomic claim RPC, re-arm RPC, and provider mutation authorization RPC.
+-- Subphase C.5C.2: Durable Autonomous Charging Foundation (Remediated)
+-- Description: Extends C.5B schema with threshold state, atomic generations, immutable trigger snapshots,
+-- shared organization-level lock primitives, explicit structural payment operation FK relation, atomic claim,
+-- re-arm, provider mutation authorization, and enrolment completion RPCs.
 
 -- 1. EXTEND public.billing_auto_topup_settings
 ALTER TABLE public.billing_auto_topup_settings
@@ -9,8 +10,18 @@ ALTER TABLE public.billing_auto_topup_settings
   ADD COLUMN IF NOT EXISTS configuration_generation INT NOT NULL DEFAULT 1 CHECK (configuration_generation >= 1),
   ADD COLUMN IF NOT EXISTS payment_authorization_generation INT NOT NULL DEFAULT 1 CHECK (payment_authorization_generation >= 1);
 
--- 2. EXTEND public.billing_auto_topup_triggers
--- Drop old status CHECK constraint and add expanded status CHECK constraint
+-- 2. EXTEND public.billing_payment_operations FOR STRUCTURAL TRIGGER RELATION
+ALTER TABLE public.billing_payment_operations
+  ADD COLUMN IF NOT EXISTS auto_topup_trigger_id UUID NULL REFERENCES public.billing_auto_topup_triggers(id) ON DELETE RESTRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_billing_payment_ops_auto_topup_trigger_id
+  ON public.billing_payment_operations (organization_id, auto_topup_trigger_id)
+  WHERE auto_topup_trigger_id IS NOT NULL;
+
+-- Drop obsolete metadata-only index if exists
+DROP INDEX IF EXISTS idx_billing_payment_ops_auto_topup_trigger;
+
+-- 3. EXTEND public.billing_auto_topup_triggers
 ALTER TABLE public.billing_auto_topup_triggers DROP CONSTRAINT IF EXISTS billing_auto_topup_triggers_status_check;
 
 ALTER TABLE public.billing_auto_topup_triggers
@@ -49,11 +60,6 @@ ALTER TABLE public.billing_auto_topup_triggers
 CREATE INDEX IF NOT EXISTS idx_billing_auto_topup_triggers_status_lease
   ON public.billing_auto_topup_triggers(status, lease_expires_at);
 
--- 3. TRIGGER ↔ PAYMENT OPERATION PARTIAL UNIQUE INDEX
-CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_payment_ops_auto_topup_trigger
-  ON public.billing_payment_operations (organization_id, (metadata->>'auto_topup_trigger_id'))
-  WHERE metadata->>'auto_topup_trigger_id' IS NOT NULL;
-
 -- 4. HELPER FUNCTION: GET AUTHORITATIVE SPENDABLE BALANCE MINOR
 CREATE OR REPLACE FUNCTION public.get_spendable_credit_balance_minor(p_organization_id UUID)
 RETURNS BIGINT
@@ -67,19 +73,16 @@ DECLARE
   v_holds BIGINT := 0;
   v_spendable BIGINT := 0;
 BEGIN
-  -- Latest funded balance from ledger
   SELECT COALESCE(balance_after_minor, 0) INTO v_funded
   FROM public.billing_credit_ledger
   WHERE organization_id = p_organization_id
   ORDER BY created_at DESC, id DESC
   LIMIT 1;
 
-  -- Active telecom reservations
   SELECT COALESCE(SUM(amount_minor), 0) INTO v_reservations
   FROM public.billing_telecom_reservations
   WHERE organization_id = p_organization_id AND status = 'active';
 
-  -- Active financial holds
   SELECT COALESCE(SUM(amount_minor), 0) INTO v_holds
   FROM public.billing_financial_holds
   WHERE organization_id = p_organization_id AND status = 'active';
@@ -414,13 +417,13 @@ BEGIN
     RETURN jsonb_build_object('success', false, 'authorized', false, 'reason', 'RISK_STATE_PRESENT');
   END IF;
 
-  -- 7. Create/Recover Payment Operation
+  -- 7. Create/Recover Payment Operation with Explicit auto_topup_trigger_id FK Relation
   v_idempotency_key := 'atu_pi_' || v_trigger.id::text;
   v_request_fingerprint := 'sha256:' || encode(digest('auto_topup:' || v_trigger.id::text, 'sha256'), 'hex');
 
-  -- Insert billing_payment_operations row (using operation_type = 'credit_topup' for C.4 CHECK compatibility)
   INSERT INTO public.billing_payment_operations (
     organization_id,
+    auto_topup_trigger_id,
     operation_type,
     provider,
     status,
@@ -435,6 +438,7 @@ BEGIN
     updated_at
   ) VALUES (
     p_organization_id,
+    v_trigger.id,
     'credit_topup',
     'stripe',
     'pending',
@@ -448,14 +452,14 @@ BEGIN
     NOW(),
     NOW()
   )
-  ON CONFLICT (organization_id, (metadata->>'auto_topup_trigger_id')) WHERE metadata->>'auto_topup_trigger_id' IS NOT NULL
+  ON CONFLICT (organization_id, auto_topup_trigger_id) WHERE auto_topup_trigger_id IS NOT NULL
   DO UPDATE SET updated_at = NOW()
   RETURNING id INTO v_payment_op_id;
 
   IF v_payment_op_id IS NULL THEN
     SELECT id INTO v_payment_op_id
     FROM public.billing_payment_operations
-    WHERE organization_id = p_organization_id AND (metadata->>'auto_topup_trigger_id') = v_trigger.id::text;
+    WHERE organization_id = p_organization_id AND auto_topup_trigger_id = v_trigger.id;
   END IF;
 
   -- 8. IRREVERSIBLE LOCAL AUTHORIZATION COMMIT
@@ -481,7 +485,168 @@ $$;
 REVOKE ALL ON FUNCTION public.authorize_auto_topup_provider_mutation_atomic(UUID, UUID) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.authorize_auto_topup_provider_mutation_atomic(UUID, UUID) TO service_role;
 
+-- 8. UPDATED C.5B ENROLMENT COMPLETION RPC WITH GENERATION ADVANCE LOGIC
+CREATE OR REPLACE FUNCTION public.complete_auto_topup_enrolment_atomic(
+  p_organization_id UUID,
+  p_attempt_token UUID,
+  p_setup_intent_id TEXT,
+  p_provider_payment_method_id TEXT,
+  p_payment_method_brand TEXT,
+  p_payment_method_last4 TEXT,
+  p_user_id UUID
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_attempt public.billing_auto_topup_attempts;
+  v_settings public.billing_auto_topup_settings;
+  v_newer_attempt_exists BOOLEAN := FALSE;
+  v_next_config_gen INT := 1;
+  v_next_auth_gen INT := 1;
+BEGIN
+  IF p_organization_id IS NULL OR p_attempt_token IS NULL THEN
+    RAISE EXCEPTION 'INVALID_ARGUMENTS: p_organization_id and p_attempt_token are required.';
+  END IF;
+
+  -- Lock organization for atomic settings updates
+  PERFORM id FROM public.organizations WHERE id = p_organization_id FOR UPDATE;
+
+  -- Fetch enrolment attempt
+  SELECT * INTO v_attempt
+  FROM public.billing_auto_topup_attempts
+  WHERE attempt_token = p_attempt_token AND organization_id = p_organization_id
+  FOR UPDATE;
+
+  IF v_attempt.id IS NULL THEN
+    RAISE EXCEPTION 'ENROLMENT_ATTEMPT_NOT_FOUND: Attempt % for org % does not exist.', p_attempt_token, p_organization_id;
+  END IF;
+
+  -- Lock current settings if existing
+  SELECT * INTO v_settings
+  FROM public.billing_auto_topup_settings
+  WHERE organization_id = p_organization_id
+  FOR UPDATE;
+
+  -- IDEMPOTENCY CHECK: Replaying the SAME already-completed enrolment attempt MUST NOT advance generations!
+  IF v_attempt.status = 'completed' AND v_settings.provider_payment_method_id = p_provider_payment_method_id THEN
+    RETURN jsonb_build_object(
+      'success', true,
+      'already_completed', true,
+      'status', v_settings.status,
+      'organization_id', p_organization_id,
+      'configuration_generation', v_settings.configuration_generation,
+      'payment_authorization_generation', v_settings.payment_authorization_generation
+    );
+  END IF;
+
+  -- 1. Stale Enrolment Race Check
+  SELECT EXISTS (
+    SELECT 1 FROM public.billing_auto_topup_attempts
+    WHERE organization_id = p_organization_id
+      AND created_at > v_attempt.created_at
+      AND status IN ('setup_created', 'completed')
+  ) INTO v_newer_attempt_exists;
+
+  IF v_newer_attempt_exists THEN
+    RAISE EXCEPTION 'STALE_ENROLMENT: A newer enrolment attempt supersedes this attempt.';
+  END IF;
+
+  -- 2. Disable Race Check
+  IF v_settings.id IS NOT NULL AND v_settings.disabled_at IS NOT NULL AND v_settings.disabled_at > v_attempt.created_at THEN
+    RAISE EXCEPTION 'ENROLMENT_SUPERSEDED_BY_DISABLE: Auto Top-Up was disabled after this attempt was initiated.';
+  END IF;
+
+  -- Determine Generation Advances for NEW Completion
+  IF v_settings.id IS NOT NULL THEN
+    -- If threshold or recharge amount changed, advance configuration_generation
+    IF v_settings.threshold_minor <> v_attempt.threshold_minor OR v_settings.recharge_amount_minor <> v_attempt.recharge_amount_minor THEN
+      v_next_config_gen := COALESCE(v_settings.configuration_generation, 1) + 1;
+    ELSE
+      v_next_config_gen := COALESCE(v_settings.configuration_generation, 1);
+    END IF;
+
+    -- If payment method, provider account, or enabled status changed, advance payment_authorization_generation
+    IF v_settings.provider_payment_method_id <> p_provider_payment_method_id OR
+       v_settings.provider_account_id <> v_attempt.provider_account_id OR
+       v_settings.status <> 'enabled' THEN
+      v_next_auth_gen := COALESCE(v_settings.payment_authorization_generation, 1) + 1;
+    ELSE
+      v_next_auth_gen := COALESCE(v_settings.payment_authorization_generation, 1);
+    END IF;
+  ELSE
+    v_next_config_gen := 1;
+    v_next_auth_gen := 1;
+  END IF;
+
+  -- Mark attempt as completed
+  UPDATE public.billing_auto_topup_attempts
+  SET status = 'completed',
+      setup_intent_id = COALESCE(p_setup_intent_id, setup_intent_id),
+      updated_at = NOW()
+  WHERE id = v_attempt.id;
+
+  -- Mark older attempts as superseded
+  UPDATE public.billing_auto_topup_attempts
+  SET status = 'superseded',
+      updated_at = NOW()
+  WHERE organization_id = p_organization_id
+    AND id <> v_attempt.id
+    AND status IN ('initiated', 'setup_created');
+
+  -- Upsert active settings with generation advances
+  INSERT INTO public.billing_auto_topup_settings (
+    organization_id, status, threshold_minor, recharge_amount_minor, currency,
+    provider_account_id, provider_customer_id, provider_payment_method_id,
+    payment_method_brand, payment_method_last4, enrolled_by_user_id, enrolled_at,
+    consent_terms_version, failure_count, disabled_at, disabled_by_user_id, disabled_reason,
+    configuration_generation, payment_authorization_generation, updated_at
+  ) VALUES (
+    p_organization_id, 'enabled', v_attempt.threshold_minor, v_attempt.recharge_amount_minor, v_attempt.currency,
+    v_attempt.provider_account_id, v_attempt.provider_customer_id, p_provider_payment_method_id,
+    p_payment_method_brand, p_payment_method_last4, p_user_id, NOW(),
+    'v1.0', 0, NULL, NULL, NULL,
+    v_next_config_gen, v_next_auth_gen, NOW()
+  )
+  ON CONFLICT (organization_id) DO UPDATE
+  SET status = 'enabled',
+      threshold_minor = EXCLUDED.threshold_minor,
+      recharge_amount_minor = EXCLUDED.recharge_amount_minor,
+      currency = EXCLUDED.currency,
+      provider_account_id = EXCLUDED.provider_account_id,
+      provider_customer_id = EXCLUDED.provider_customer_id,
+      provider_payment_method_id = EXCLUDED.provider_payment_method_id,
+      payment_method_brand = EXCLUDED.payment_method_brand,
+      payment_method_last4 = EXCLUDED.payment_method_last4,
+      enrolled_by_user_id = EXCLUDED.enrolled_by_user_id,
+      enrolled_at = EXCLUDED.enrolled_at,
+      consent_terms_version = EXCLUDED.consent_terms_version,
+      failure_count = 0,
+      disabled_at = NULL,
+      disabled_by_user_id = NULL,
+      disabled_reason = NULL,
+      configuration_generation = EXCLUDED.configuration_generation,
+      payment_authorization_generation = EXCLUDED.payment_authorization_generation,
+      updated_at = NOW();
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'already_completed', false,
+    'status', 'enabled',
+    'organization_id', p_organization_id,
+    'configuration_generation', v_next_config_gen,
+    'payment_authorization_generation', v_next_auth_gen
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.complete_auto_topup_enrolment_atomic(UUID, UUID, TEXT, TEXT, TEXT, TEXT, UUID) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.complete_auto_topup_enrolment_atomic(UUID, UUID, TEXT, TEXT, TEXT, TEXT, UUID) TO service_role;
+
 -- Comments
-COMMENT ON FUNCTION public.claim_auto_topup_trigger_atomic IS 'Phase 13.4.3C C.5C.2 Atomic low-balance trigger claim with organization row-level serialization.';
+COMMENT ON FUNCTION public.claim_auto_topup_trigger_atomic IS 'Phase 13.4.3C C.5C.2 Remediated low-balance trigger claim with org locking and threshold state disarming.';
 COMMENT ON FUNCTION public.rearm_auto_topup_threshold_atomic IS 'Phase 13.4.3C C.5C.2 Atomic threshold re-arm evaluator enforcing spendable_balance > threshold_minor.';
-COMMENT ON FUNCTION public.authorize_auto_topup_provider_mutation_atomic IS 'Phase 13.4.3C C.5C.2 Irreversible local provider mutation authorization RPC creating durable payment operation.';
+COMMENT ON FUNCTION public.authorize_auto_topup_provider_mutation_atomic IS 'Phase 13.4.3C C.5C.2 Irreversible local provider mutation authorization RPC with structural trigger FK relation.';
+COMMENT ON FUNCTION public.complete_auto_topup_enrolment_atomic IS 'Phase 13.4.3C C.5C.2 Remediated enrolment completion RPC advancing authorization and configuration generations.';

@@ -438,6 +438,15 @@ export class CreditAutoTopupService {
     }
 
     try {
+      const { data: currentSettings } = await (supabase as any)
+        .from('billing_auto_topup_settings')
+        .select('configuration_generation, payment_authorization_generation')
+        .eq('organization_id', organizationId)
+        .maybeSingle();
+
+      const nextConfigGen = (currentSettings?.configuration_generation || 1) + 1;
+      const nextAuthGen = (currentSettings?.payment_authorization_generation || 1) + 1;
+
       const { error: err } = await (supabase as any)
         .from('billing_auto_topup_settings')
         .update({
@@ -445,6 +454,8 @@ export class CreditAutoTopupService {
           disabled_at: new Date().toISOString(),
           disabled_by_user_id: userId,
           disabled_reason: reason,
+          configuration_generation: nextConfigGen,
+          payment_authorization_generation: nextAuthGen,
           updated_at: new Date().toISOString(),
         })
         .eq('organization_id', organizationId);
