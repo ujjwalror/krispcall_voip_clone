@@ -508,4 +508,99 @@ export class CreditAutoTopupService {
 
     return { eligible: true, settings };
   }
+
+  /**
+   * C.5C.2: Evaluates spendable balance and atomically claims an Auto Top-Up trigger if eligible.
+   * Invokes claim_auto_topup_trigger_atomic RPC.
+   */
+  static async claimAutoTopupTriggerAtomic(
+    supabase: SupabaseClient,
+    organizationId: string,
+    leaseOwner: string = 'worker_node'
+  ): Promise<any> {
+    try {
+      const { data, error } = await (supabase as any).rpc('claim_auto_topup_trigger_atomic', {
+        p_organization_id: organizationId,
+        p_lease_owner: leaseOwner,
+      });
+
+      if (error) {
+        return { success: false, claimed: false, reason: error.message };
+      }
+      return data;
+    } catch (err: any) {
+      return { success: false, claimed: false, reason: err.message };
+    }
+  }
+
+  /**
+   * C.5C.2: Evaluates spendable balance and atomically re-arms threshold_state if spendable_balance > threshold_minor.
+   * Invokes rearm_auto_topup_threshold_atomic RPC.
+   */
+  static async rearmAutoTopupThresholdAtomic(
+    supabase: SupabaseClient,
+    organizationId: string
+  ): Promise<any> {
+    try {
+      const { data, error } = await (supabase as any).rpc('rearm_auto_topup_threshold_atomic', {
+        p_organization_id: organizationId,
+      });
+
+      if (error) {
+        return { success: false, rearmed: false, reason: error.message };
+      }
+      return data;
+    } catch (err: any) {
+      return { success: false, rearmed: false, reason: err.message };
+    }
+  }
+
+  /**
+   * C.5C.2: Irreversible local provider mutation authorization RPC.
+   * Creates/links billing_payment_operations row and transitions trigger status to 'provider_mutation_authorized'.
+   * DOES NOT CALL STRIPE.
+   */
+  static async authorizeAutoTopupProviderMutationAtomic(
+    supabase: SupabaseClient,
+    organizationId: string,
+    triggerId: string
+  ): Promise<any> {
+    try {
+      const { data, error } = await (supabase as any).rpc('authorize_auto_topup_provider_mutation_atomic', {
+        p_organization_id: organizationId,
+        p_trigger_id: triggerId,
+      });
+
+      if (error) {
+        return { success: false, authorized: false, reason: error.message };
+      }
+      return data;
+    } catch (err: any) {
+      return { success: false, authorized: false, reason: err.message };
+    }
+  }
+
+  /**
+   * C.5C.2: Computes authoritative spendable balance in minor units.
+   * Invokes get_spendable_credit_balance_minor RPC.
+   */
+  static async getSpendableCreditBalanceMinor(
+    supabase: SupabaseClient,
+    organizationId: string
+  ): Promise<number> {
+    try {
+      const { data, error } = await (supabase as any).rpc('get_spendable_credit_balance_minor', {
+        p_organization_id: organizationId,
+      });
+
+      if (error) {
+        console.error('[CreditAutoTopupService] getSpendableCreditBalanceMinor RPC error:', error.message);
+        return 0;
+      }
+      return Number(data || 0);
+    } catch (err: any) {
+      console.error('[CreditAutoTopupService] getSpendableCreditBalanceMinor error:', err.message);
+      return 0;
+    }
+  }
 }
