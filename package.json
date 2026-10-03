@@ -13,6 +13,7 @@
     "reconcile:billing": "tsx scripts/reconcile-billing.ts",
     "worker:financial-reconciliation": "tsx src/workers/financialReconciliationWorker.ts",
     "worker:auto-topup": "tsx src/workers/autoTopupWorker.ts",
+    "worker:telecom-pricing-sync": "tsx src/workers/telecomPricingSyncWorker.ts",
     "lint": "eslint"
   },
   "dependencies": {
