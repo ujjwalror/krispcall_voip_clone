@@ -1,4 +1,5 @@
 import twilio from 'twilio';
+import { parseTwilioWholesalePrice } from '../wholesaleMoneyParser';
 
 export interface ExactNumberFallbackResult {
   success: boolean;
@@ -37,26 +38,11 @@ export function parseDecimalToMicroUnits(price: string | number | null | undefin
   if (!str || str === 'null' || str === 'undefined') {
     return BigInt(0);
   }
-  const parsed = parseFloat(str);
-  if (isNaN(parsed) || parsed < 0) {
-    throw new Error(`INVALID_PRICE_DECIMAL: Unable to parse decimal price '${str}'`);
+  const parsed = parseTwilioWholesalePrice(str, undefined, 'exact_number_fallback');
+  if (!parsed.success) {
+    throw new Error(`INVALID_PRICE_DECIMAL: Unable to parse decimal price '${str}': ${parsed.failureReason}`);
   }
-
-  // Use precise decimal splitting to avoid floating point inaccuracies
-  const parts = str.split('.');
-  const whole = BigInt(parts[0] || '0') * BigInt(1000000);
-
-  if (parts.length < 2 || !parts[1]) {
-    return whole;
-  }
-
-  let decimals = parts[1].slice(0, 6);
-  while (decimals.length < 6) {
-    decimals += '0';
-  }
-
-  const decimalMicro = BigInt(decimals);
-  return whole + decimalMicro;
+  return parsed.priceMicroBig;
 }
 
 export class TwilioExactNumberFallback {
