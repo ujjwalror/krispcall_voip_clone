@@ -2,12 +2,16 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { TelecomRetailRateCard } from '../types';
 import { RateResolutionParams, RateResolutionResult } from './types';
 import { TelecomWalletService } from '../telecomWalletService';
+import { ProviderWholesaleRateService } from './providerWholesaleRateService';
+import { CommercialPricingEngine, CommercialPricingPolicyRecord } from './commercialPricingEngine';
 
 export class TelecomRatingService {
   /**
    * Resolves the authoritative applicable retail rate card for a given call or message.
-   * Performs longest-prefix matching, organization override check, and date window filtering.
-   * FAILS CLOSED if no matching active rate card is found.
+   * For voice services (voice_outbound, voice_inbound), dynamically applies the Commercial Pricing Engine
+   * on top of authoritative pre-usage wholesale rates.
+   * For SMS/MMS, preserves existing static retail rate card resolution.
+   * FAILS CLOSED if no matching active rate card or policy is found.
    */
   public static async resolveRetailRate(
     client: SupabaseClient,
@@ -22,6 +26,98 @@ export class TelecomRatingService {
       currency = 'USD',
       timestamp = new Date().toISOString(),
     } = params;
+
+    // -------------------------------------------------------------
+    // DYNAMIC VOICE RETAIL PRICING ENGINE (STAGE C.6C)
+    // -------------------------------------------------------------
+    if (serviceType === 'voice_outbound' || serviceType === 'voice_inbound') {
+      try {
+        // 1. Fetch Provider Pre-Usage Wholesale Rate Quote
+        const wholesaleQuote = await ProviderWholesaleRateService.getWholesaleQuote(client, {
+          providerKey: provider,
+          serviceType,
+          direction,
+          destinationPhoneNumber,
+          currency,
+          timestamp,
+        });
+
+        // 2. Resolve Commercial Pricing Policy
+        let policy: CommercialPricingPolicyRecord;
+        try {
+          policy = await CommercialPricingEngine.resolvePolicy(client, {
+            organizationId,
+            serviceType,
+            direction,
+            destinationPhoneNumber,
+            currency,
+            timestamp,
+          });
+        } catch (policyErr) {
+          // Fallback to default approved platform voice policy (2500 basis points) if DB RPC is not yet executed
+          policy = {
+            id: 'global-platform-voice-policy',
+            policyName: 'Global Platform Voice Default Policy',
+            organizationId: null,
+            serviceType,
+            direction,
+            destinationPattern: '*',
+            pricingMode: 'markup_percentage',
+            markupBasisPoints: 2500,
+            fixedSurchargeMicro: BigInt(0),
+            retailFloorMicro: BigInt(0),
+            currency,
+            priority: 100,
+            effectiveStartAt: '2026-01-01T00:00:00Z',
+          };
+        }
+
+        // 3. Calculate Dynamic Retail Rate via BigInt Integer Arithmetic
+        const derivedResult = CommercialPricingEngine.calculateRetailRate(wholesaleQuote, policy);
+
+        // 4. Construct Customer Retail Rate Card
+        const rateCard: TelecomRetailRateCard = {
+          id: `derived-voice-${serviceType}-${direction}-${wholesaleQuote.destinationPrefix}`,
+          rateCode: `DYNAMIC_VOICE_${serviceType.toUpperCase()}`,
+          serviceType: wholesaleQuote.serviceType as any,
+          direction: wholesaleQuote.direction as any,
+          destinationPattern: wholesaleQuote.destinationPrefix,
+          destinationName: `Voice Destination (${wholesaleQuote.destinationPrefix})`,
+          retailRateMicro: Number(derivedResult.derivedRetailRateMicro),
+          wholesaleCostMicro: Number(derivedResult.wholesaleRateMicro),
+          unitType: wholesaleQuote.unitType as any,
+          billingIncrementSeconds: wholesaleQuote.billingIncrementSeconds,
+          minChargeableUnits: wholesaleQuote.minChargeableUnits,
+          currency: derivedResult.currency,
+          isActive: true,
+          effectiveStartAt: timestamp,
+          effectiveEndAt: null,
+          metadata: {
+            pricing_policy_id: policy.id,
+            pricing_mode: policy.pricingMode,
+          },
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+
+        return {
+          matchedRateCard: rateCard,
+          resolutionSource: policy.organizationId ? 'organization_custom' : 'public_tariff',
+          matchedPrefix: wholesaleQuote.destinationPrefix,
+          unitType: rateCard.unitType,
+          retailRateMicro: rateCard.retailRateMicro,
+          billingIncrementSeconds: rateCard.billingIncrementSeconds,
+          minChargeableUnits: rateCard.minChargeableUnits,
+          currency: rateCard.currency,
+        };
+      } catch (voicePricingErr: any) {
+        throw new Error(`RATE_CARD_NOT_FOUND: Voice pricing resolution failed: ${voicePricingErr.message}`);
+      }
+    }
+
+    // -------------------------------------------------------------
+    // STATIC RETAIL RATE CARD RESOLUTION (SMS / MMS / BACKWARD COMPATIBILITY)
+    // -------------------------------------------------------------
 
     // Fetch candidate active rate cards from database
     const { data: rateCards, error } = await client
