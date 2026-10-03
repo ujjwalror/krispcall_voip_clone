@@ -17,10 +17,11 @@ export interface NormalizedProviderPriceResult {
   success: boolean;
   parsedDecimal: ParsedMonetaryDecimal | null;
   sourceAuthority: 'preliminary_callback' | 'finalized_api_fetch' | 'invoice_reconciled' | 'manual_adjustment';
-  economicEffect: 'charge' | 'credit' | 'correction' | 'unknown';
+  economicEffect: 'charge' | 'credit' | 'correction_increase' | 'correction_decrease' | 'unknown';
   providerCostMicroBig: bigint;
   providerCostMinor: number;
   rawSign: 'positive' | 'negative' | 'zero';
+  costComponent: string;
   rawPriceText: string | null;
   fingerprint: string;
 }
@@ -90,19 +91,20 @@ export function parseMonetaryDecimal(rawStr: string | null | undefined): ParsedM
 
 /**
  * Normalizes a raw Twilio price payload string into explicit economic effect and micro-units.
- * Implements reviewed Stage C.6B-R2 Twilio sign semantics.
+ * Implements reviewed Stage C.6B-R2 Twilio sign semantics & component identity.
  */
 export function normalizeTwilioProviderPrice(
   rawPriceStr: string | null | undefined,
   sourceAuthority: 'preliminary_callback' | 'finalized_api_fetch' | 'invoice_reconciled' | 'manual_adjustment' = 'preliminary_callback',
-  resourceId?: string
+  resourceId?: string,
+  costComponent: string = 'base_usage'
 ): NormalizedProviderPriceResult | null {
   const parsed = parseMonetaryDecimal(rawPriceStr);
   if (!parsed || !parsed.success) {
     return null;
   }
 
-  let economicEffect: 'charge' | 'credit' | 'correction' | 'unknown' = 'unknown';
+  let economicEffect: 'charge' | 'credit' | 'correction_increase' | 'correction_decrease' | 'unknown' = 'unknown';
 
   // Twilio Callback Sign Semantics:
   // Negative price (e.g. "-0.0150") = Account Charge of 15,000 micro-units
@@ -121,7 +123,7 @@ export function normalizeTwilioProviderPrice(
   const providerCostMinor = Number(providerCostMinorBig);
 
   // Deterministic Fingerprint for Idempotency
-  const fingerprint = `${sourceAuthority}:${economicEffect}:${parsed.rawString}:${resourceId || 'no_res'}`;
+  const fingerprint = `${costComponent}:${sourceAuthority}:${economicEffect}:${parsed.rawString}:${resourceId || 'no_res'}`;
 
   return {
     success: true,
@@ -131,6 +133,7 @@ export function normalizeTwilioProviderPrice(
     providerCostMicroBig,
     providerCostMinor,
     rawSign: parsed.rawSign,
+    costComponent,
     rawPriceText: parsed.rawString,
     fingerprint,
   };

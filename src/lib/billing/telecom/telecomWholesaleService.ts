@@ -95,6 +95,7 @@ export class TelecomWholesaleService {
       costSource,
       providerCostMicro,
       rawSign,
+      costComponent = 'base_usage',
       rawProviderPriceText = null,
       fingerprint = null,
       settlementLedgerId = null,
@@ -109,6 +110,17 @@ export class TelecomWholesaleService {
     try {
       const costMicroBigInt = BigInt(providerCostMicro.toString());
 
+      // Strict Allowlisting: Retain ONLY provider financial evidence, strip all PII (From, To, Body)
+      const sanitizedPayload = {
+        Price: rawPayload.Price || rawPayload.price,
+        PriceUnit: rawPayload.PriceUnit || rawPayload.price_unit,
+        SequenceNumber: rawPayload.SequenceNumber || rawPayload.sequence_number,
+        ApiVersion: rawPayload.ApiVersion || rawPayload.api_version,
+        CallStatus: rawPayload.CallStatus,
+        MessageStatus: rawPayload.MessageStatus,
+        ErrorCode: rawPayload.ErrorCode || rawPayload.error_code,
+      };
+
       const { data, error } = await (client as any).rpc(
         'record_provider_cost_observation_atomic',
         {
@@ -119,11 +131,12 @@ export class TelecomWholesaleService {
           p_cost_source: costSource,
           p_provider_cost_micro: costMicroBigInt.toString(),
           p_raw_sign: rawSign,
+          p_cost_component: costComponent,
           p_raw_provider_price_text: rawProviderPriceText,
           p_fingerprint: fingerprint,
           p_settlement_ledger_id: settlementLedgerId,
           p_retail_charge_minor: retailChargeMinor,
-          p_raw_payload: rawPayload,
+          p_raw_payload: sanitizedPayload,
         }
       );
 
@@ -157,6 +170,8 @@ export class TelecomWholesaleService {
       rawPriceText?: string | null;
       costSource: string;
       resourceId?: string;
+      costComponent?: string;
+      sourceAuthority?: 'preliminary_callback' | 'finalized_api_fetch' | 'invoice_reconciled' | 'manual_adjustment';
       settlementLedgerId?: string | null;
       retailChargeMinor?: number | null;
       rawPayload?: Record<string, any>;
@@ -168,6 +183,8 @@ export class TelecomWholesaleService {
       rawPriceText,
       costSource,
       resourceId,
+      costComponent = 'base_usage',
+      sourceAuthority = 'preliminary_callback',
       settlementLedgerId,
       retailChargeMinor,
       rawPayload,
@@ -177,7 +194,7 @@ export class TelecomWholesaleService {
       return { success: true, recorded: false, reason: 'NO_PRICE_EVIDENCE' };
     }
 
-    const norm = normalizeTwilioProviderPrice(rawPriceText, 'preliminary_callback', resourceId);
+    const norm = normalizeTwilioProviderPrice(rawPriceText, sourceAuthority, resourceId, costComponent);
     if (!norm || !norm.success) {
       return { success: false, recorded: false, reason: 'UNPARSEABLE_PRICE_TEXT' };
     }
@@ -190,6 +207,7 @@ export class TelecomWholesaleService {
       costSource,
       providerCostMicro: norm.providerCostMicroBig,
       rawSign: norm.rawSign,
+      costComponent: norm.costComponent,
       rawProviderPriceText: norm.rawPriceText,
       fingerprint: norm.fingerprint,
       settlementLedgerId,

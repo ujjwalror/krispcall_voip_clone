@@ -49,10 +49,11 @@ export interface RecordCostObservationParams {
   organizationId: string;
   internalUsageId: string;
   sourceAuthority: 'preliminary_callback' | 'finalized_api_fetch' | 'invoice_reconciled' | 'manual_adjustment';
-  economicEffect: 'charge' | 'credit' | 'correction' | 'unknown';
+  economicEffect: 'charge' | 'credit' | 'correction_increase' | 'correction_decrease' | 'unknown';
   costSource: string;
   providerCostMicro: number | bigint;
   rawSign: 'positive' | 'negative' | 'zero';
+  costComponent?: string;
   rawProviderPriceText?: string | null;
   fingerprint?: string;
   settlementLedgerId?: string | null;

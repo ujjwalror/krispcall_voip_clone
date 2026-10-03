@@ -1,8 +1,9 @@
 -- ====================================================================
--- MIGRATION: PHASE 13.4.3C SUBPHASE C.6 STAGE C.6B WHOLESALE COST FOUNDATION
+-- MIGRATION: PHASE 13.4.3C SUBPHASE C.6 STAGE C.6B WHOLESALE COST FOUNDATION (REMEDIATED)
 -- Date: 2027-01-05
 -- Establishes server-authoritative confidential telecom wholesale economics,
--- append-only provider cost observation ledger, and defense-in-depth security boundary.
+-- append-only provider cost observation ledger with source authority supersession,
+-- component identity, explicit correction semantics, and privacy hardening.
 -- DO NOT EXECUTE REMOTELY AUTOMATICALLY — Must be applied manually by DBA in Supabase SQL Editor.
 -- ====================================================================
 
@@ -26,8 +27,8 @@ CREATE TABLE IF NOT EXISTS public.telecom_usage_economics (
     -- Retail Charge Snapshot (Non-authoritative Read-Only Reporting Cache)
     retail_charge_minor BIGINT NULL CHECK (retail_charge_minor IS NULL OR retail_charge_minor >= 0),
     
-    -- Net Actual Provider Cost (Derived from Authoritative Observations)
-    net_actual_provider_cost_micro BIGINT NULL CHECK (net_actual_provider_cost_micro IS NULL OR net_actual_provider_cost_micro >= 0),
+    -- Net Actual Provider Cost (Derived from Component Supersession)
+    net_actual_provider_cost_micro BIGINT NULL,
     net_actual_provider_cost_minor BIGINT NULL CHECK (net_actual_provider_cost_minor IS NULL OR net_actual_provider_cost_minor >= 0),
     
     -- Status & Provenance Metadata
@@ -64,13 +65,17 @@ CREATE TABLE IF NOT EXISTS public.telecom_provider_cost_observations (
     organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE RESTRICT,
     economics_id UUID NOT NULL REFERENCES public.telecom_usage_economics(id) ON DELETE RESTRICT,
     
-    -- Provenance & Authority
+    -- Component Identity (Enables additive components vs component supersession)
+    cost_component TEXT NOT NULL DEFAULT 'base_usage',
+    
+    -- Provenance & Authority Rank
     source_authority TEXT NOT NULL 
         CHECK (source_authority IN ('preliminary_callback', 'finalized_api_fetch', 'invoice_reconciled', 'manual_adjustment')),
+    authority_rank INT NOT NULL DEFAULT 10,
     
     -- Explicit Economic Classification
     economic_effect TEXT NOT NULL 
-        CHECK (economic_effect IN ('charge', 'credit', 'correction', 'unknown')),
+        CHECK (economic_effect IN ('charge', 'credit', 'correction_increase', 'correction_decrease', 'unknown')),
         
     cost_source TEXT NOT NULL,
     
@@ -82,14 +87,15 @@ CREATE TABLE IF NOT EXISTS public.telecom_provider_cost_observations (
     -- Idempotency Fingerprint
     fingerprint TEXT NOT NULL CHECK (pg_catalog.length(pg_catalog.btrim(fingerprint)) > 0),
     
+    -- Privacy-Sanitized Financial Payload Only
     raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
     observed_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.now(),
     
     CONSTRAINT uq_telecom_provider_cost_obs_fingerprint UNIQUE (economics_id, fingerprint)
 );
 
-CREATE INDEX IF NOT EXISTS idx_telecom_provider_cost_obs_econ 
-ON public.telecom_provider_cost_observations(economics_id, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_telecom_provider_cost_obs_econ_comp 
+ON public.telecom_provider_cost_observations(economics_id, cost_component, authority_rank DESC, observed_at DESC);
 
 
 -- 3. Defense-in-Depth RLS & Security Boundary
@@ -211,7 +217,7 @@ REVOKE ALL ON FUNCTION public.record_telecom_usage_economics_snapshot_atomic FRO
 GRANT EXECUTE ON FUNCTION public.record_telecom_usage_economics_snapshot_atomic TO service_role;
 
 
--- 5. Atomic RPC: Record Provider Cost Observation & Update Net Wholesale Economics
+-- 5. Atomic RPC: Record Provider Cost Observation with Source Supersession & Privacy Hardening
 CREATE OR REPLACE FUNCTION public.record_provider_cost_observation_atomic(
   p_organization_id UUID,
   p_internal_usage_id TEXT,
@@ -220,6 +226,7 @@ CREATE OR REPLACE FUNCTION public.record_provider_cost_observation_atomic(
   p_cost_source TEXT,
   p_provider_cost_micro BIGINT,
   p_raw_sign TEXT,
+  p_cost_component TEXT DEFAULT 'base_usage',
   p_raw_provider_price_text TEXT DEFAULT NULL,
   p_fingerprint TEXT DEFAULT NULL,
   p_settlement_ledger_id UUID DEFAULT NULL,
@@ -233,6 +240,8 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_clean_usage_id TEXT;
+  v_clean_component TEXT;
+  v_authority_rank INT;
   v_fingerprint TEXT;
   v_econ public.telecom_usage_economics;
   v_existing_obs public.telecom_provider_cost_observations;
@@ -242,8 +251,17 @@ DECLARE
   v_net_cost_micro BIGINT := 0;
   v_net_cost_minor BIGINT := 0;
   v_new_status TEXT := 'cost_recorded';
+  v_sanitized_payload JSONB;
+  v_has_conflict BOOLEAN := FALSE;
+
+  -- Temporary record variable for component aggregation
+  v_comp_record RECORD;
 BEGIN
   v_clean_usage_id := pg_catalog.btrim(COALESCE(p_internal_usage_id, ''));
+  v_clean_component := pg_catalog.lower(pg_catalog.btrim(COALESCE(p_cost_component, 'base_usage')));
+  IF length(v_clean_component) = 0 THEN
+    v_clean_component := 'base_usage';
+  END IF;
 
   IF p_organization_id IS NULL THEN
     RAISE EXCEPTION 'INVALID_ARGUMENT: p_organization_id is required.';
@@ -257,9 +275,18 @@ BEGIN
   IF p_source_authority NOT IN ('preliminary_callback', 'finalized_api_fetch', 'invoice_reconciled', 'manual_adjustment') THEN
     RAISE EXCEPTION 'INVALID_ARGUMENT: Invalid p_source_authority.';
   END IF;
-  IF p_economic_effect NOT IN ('charge', 'credit', 'correction', 'unknown') THEN
+  IF p_economic_effect NOT IN ('charge', 'credit', 'correction_increase', 'correction_decrease', 'unknown') THEN
     RAISE EXCEPTION 'INVALID_ARGUMENT: Invalid p_economic_effect.';
   END IF;
+
+  -- Determine Authority Rank
+  CASE p_source_authority
+    WHEN 'invoice_reconciled' THEN v_authority_rank := 40;
+    WHEN 'manual_adjustment' THEN v_authority_rank := 30;
+    WHEN 'finalized_api_fetch' THEN v_authority_rank := 20;
+    WHEN 'preliminary_callback' THEN v_authority_rank := 10;
+    ELSE v_authority_rank := 10;
+  END CASE;
 
   -- Locate economics row
   SELECT * INTO v_econ
@@ -275,7 +302,7 @@ BEGIN
   v_fingerprint := pg_catalog.btrim(COALESCE(p_fingerprint, ''));
   IF length(v_fingerprint) = 0 THEN
     v_fingerprint := digest(
-      p_source_authority || ':' || p_economic_effect || ':' || p_provider_cost_micro::text || ':' || COALESCE(p_raw_provider_price_text, ''),
+      v_clean_component || ':' || p_source_authority || ':' || p_economic_effect || ':' || p_provider_cost_micro::text || ':' || COALESCE(p_raw_provider_price_text, ''),
       'sha256'
     )::text;
   END IF;
@@ -293,15 +320,35 @@ BEGIN
       'observation_id', v_existing_obs.id,
       'economics_id', v_econ.id,
       'cost_status', v_econ.cost_status,
+      'net_actual_provider_cost_micro', v_econ.net_actual_provider_cost_micro,
       'net_actual_provider_cost_minor', v_econ.net_actual_provider_cost_minor
     );
   END IF;
 
-  -- Insert append-only observation
+  -- Privacy Hardening: Allowlist ONLY financial/reconciliation metadata, strip all PII (From, To, Body, etc.)
+  v_sanitized_payload := jsonb_strip_nulls(jsonb_build_object(
+    'Price', p_raw_payload->>'Price',
+    'price', p_raw_payload->>'price',
+    'PriceUnit', p_raw_payload->>'PriceUnit',
+    'price_unit', p_raw_payload->>'price_unit',
+    'SequenceNumber', p_raw_payload->>'SequenceNumber',
+    'sequence_number', p_raw_payload->>'sequence_number',
+    'ApiVersion', p_raw_payload->>'ApiVersion',
+    'api_version', p_raw_payload->>'api_version',
+    'status', p_raw_payload->>'status',
+    'CallStatus', p_raw_payload->>'CallStatus',
+    'MessageStatus', p_raw_payload->>'MessageStatus',
+    'ErrorCode', p_raw_payload->>'ErrorCode',
+    'error_code', p_raw_payload->>'error_code'
+  ));
+
+  -- Insert append-only observation with component and authority rank
   INSERT INTO public.telecom_provider_cost_observations (
     organization_id,
     economics_id,
+    cost_component,
     source_authority,
+    authority_rank,
     economic_effect,
     cost_source,
     provider_cost_micro,
@@ -313,32 +360,66 @@ BEGIN
   VALUES (
     p_organization_id,
     v_econ.id,
+    v_clean_component,
     p_source_authority,
+    v_authority_rank,
     p_economic_effect,
     p_cost_source,
     p_provider_cost_micro,
     p_raw_sign,
     p_raw_provider_price_text,
     v_fingerprint,
-    COALESCE(p_raw_payload, '{}'::jsonb)
+    v_sanitized_payload
   )
   RETURNING id INTO v_obs_id;
 
-  -- Calculate updated net provider cost micro across all observations
-  SELECT 
-    COALESCE(SUM(provider_cost_micro) FILTER (WHERE economic_effect = 'charge'), 0),
-    COALESCE(SUM(provider_cost_micro) FILTER (WHERE economic_effect = 'credit'), 0)
-  INTO v_gross_charges_micro, v_gross_credits_micro
-  FROM public.telecom_provider_cost_observations
-  WHERE economics_id = v_econ.id;
+  -- SOURCE AUTHORITY SUPERSESSION ALGORITHM:
+  -- For each distinct cost_component under this economics_id,
+  -- select the single highest-authority observation (superseding weaker preliminary evidence).
+  FOR v_comp_record IN
+    WITH ranked_obs AS (
+      SELECT 
+        cost_component,
+        economic_effect,
+        provider_cost_micro,
+        authority_rank,
+        observed_at,
+        ROW_NUMBER() OVER (
+          PARTITION BY cost_component 
+          ORDER BY authority_rank DESC, observed_at DESC, id DESC
+        ) as rank_idx,
+        COUNT(*) OVER (
+          PARTITION BY cost_component, authority_rank
+        ) as rank_count,
+        COUNT(DISTINCT provider_cost_micro) OVER (
+          PARTITION BY cost_component, authority_rank
+        ) as distinct_costs_in_rank
+      FROM public.telecom_provider_cost_observations
+      WHERE economics_id = v_econ.id
+    )
+    SELECT *
+    FROM ranked_obs
+    WHERE rank_idx = 1
+  LOOP
+    -- Check for same-authority conflict
+    IF v_comp_record.distinct_costs_in_rank > 1 THEN
+      v_has_conflict := TRUE;
+    END IF;
 
-  IF v_gross_charges_micro >= v_gross_credits_micro THEN
-    v_net_cost_micro := v_gross_charges_micro - v_gross_credits_micro;
-  ELSE
-    v_net_cost_micro := 0;
-  END IF;
+    -- Aggregate effective economics based on economic_effect
+    IF v_comp_record.economic_effect IN ('charge', 'correction_increase') THEN
+      v_gross_charges_micro := v_gross_charges_micro + v_comp_record.provider_cost_micro;
+    ELSIF v_comp_record.economic_effect IN ('credit', 'correction_decrease') THEN
+      v_gross_credits_micro := v_gross_credits_micro + v_comp_record.provider_cost_micro;
+    ELSIF v_comp_record.economic_effect = 'unknown' THEN
+      v_has_conflict := TRUE;
+    END IF;
+  END LOOP;
 
-  -- Convert net micro to minor cents via BigInt ceiling division: (netMicro + 9999) / 10000
+  -- Net Provider Cost Micro (truthful signed magnitude)
+  v_net_cost_micro := v_gross_charges_micro - v_gross_credits_micro;
+
+  -- Convert positive net micro to minor cents via BigInt ceiling division: (netMicro + 9999) / 10000
   IF v_net_cost_micro > 0 THEN
     v_net_cost_minor := (v_net_cost_micro + 9999) / 10000;
   ELSE
@@ -346,7 +427,7 @@ BEGIN
   END IF;
 
   -- Determine cost status
-  IF p_economic_effect = 'unknown' THEN
+  IF v_has_conflict OR p_economic_effect = 'unknown' THEN
     v_new_status := 'cost_conflict';
   ELSIF p_source_authority = 'invoice_reconciled' THEN
     v_new_status := 'cost_reconciled';
