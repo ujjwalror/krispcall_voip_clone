@@ -241,6 +241,35 @@ async function runStageC6D4PricingSyncTests() {
   assert(!keys.includes('provider') && !keys.includes('wholesaleCostMicro') && !keys.includes('markupBasisPoints'),
     'Customer DTO strictly redacts provider name, wholesale cost, and markup basis points');
 
+  // ------------------------------------------------------------------
+  // 7. Out-of-Order Observation Protection & Scope Retirement Tests
+  // ------------------------------------------------------------------
+  console.log('\n--- 7. Out-of-Order Observation Protection & Scope Retirement ---');
+
+  const outOfOrderDbClient: any = {
+    rpc: async (func: string) => {
+      if (func === 'upsert_provider_voice_pricing_record_atomic') {
+        return { data: { status: 'out_of_order_skipped', version: 1, price_changed: false, reason: 'Active record is newer than input observation' }, error: null };
+      }
+      if (func === 'retire_missing_provider_voice_pricing_records_atomic') {
+        return { data: { success: true, retired_count: 2 }, error: null };
+      }
+      return { data: null, error: null };
+    },
+  };
+
+  const outOfOrderResult = await syncService.ingestParsedRecordsAtomic(outOfOrderDbClient, usParsed);
+  assert(outOfOrderResult.refreshed === 4 && outOfOrderResult.inserted === 0 && outOfOrderResult.versioned === 0,
+    'Out-of-order older provider observation safely skipped without deactivating newer active price (4 skipped/retained)');
+
+  const retiredCount = await syncService.retireMissingRecordsInScopeAtomic(outOfOrderDbClient, {
+    serviceType: 'voice_outbound',
+    direction: 'outbound',
+    isoCountry: 'US',
+    observedFingerprints: ['fp1', 'fp2'],
+  });
+  assert(retiredCount === 2, 'Scope retirement RPC safely deactivates unobserved rates in completed scope (2 retired)');
+
   console.log('\n================================================================');
   console.log(`TEST RESULTS: ${passed} PASSED, ${failed} FAILED`);
   console.log('================================================================\n');

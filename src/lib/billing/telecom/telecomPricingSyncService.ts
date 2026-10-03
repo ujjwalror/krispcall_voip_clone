@@ -316,6 +316,8 @@ export class TelecomProviderPricingSyncService {
           refreshed++;
         } else if (data?.status === 'versioned') {
           versioned++;
+        } else if (data?.status === 'out_of_order_skipped') {
+          refreshed++;
         }
       } catch (err: any) {
         console.error('[TelecomPricingSyncService] Exception during record ingestion:', err.message || err);
@@ -324,5 +326,50 @@ export class TelecomProviderPricingSyncService {
     }
 
     return { inserted, refreshed, versioned, rejected };
+  }
+
+  /**
+   * Safely retires missing pricing records in an authoritative completed scope via atomic RPC.
+   */
+  public async retireMissingRecordsInScopeAtomic(
+    client: SupabaseClient,
+    params: {
+      providerAccountId?: string;
+      providerKey?: string;
+      serviceType: 'voice_outbound' | 'voice_inbound';
+      direction: 'outbound' | 'inbound';
+      isoCountry: string;
+      observedFingerprints: string[];
+    }
+  ): Promise<number> {
+    const {
+      providerAccountId = 'default',
+      providerKey = this.adapter.providerKey,
+      serviceType,
+      direction,
+      isoCountry,
+      observedFingerprints,
+    } = params;
+
+    try {
+      const { data, error } = await (client as any).rpc('retire_missing_provider_voice_pricing_records_atomic', {
+        p_provider_account_id: providerAccountId,
+        p_provider_key: providerKey,
+        p_service_type: serviceType,
+        p_direction: direction,
+        p_iso_country: isoCountry,
+        p_observed_fingerprints: observedFingerprints,
+      });
+
+      if (error) {
+        console.error('[TelecomPricingSyncService] Scope retirement RPC error:', error.message);
+        return 0;
+      }
+
+      return Number(data?.retired_count || 0);
+    } catch (err: any) {
+      console.error('[TelecomPricingSyncService] Exception during scope retirement:', err.message || err);
+      return 0;
+    }
   }
 }

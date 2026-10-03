@@ -1,12 +1,13 @@
 -- ============================================================================
--- PHASE 13.4.3C STAGE C.6D.4: DURABLE TWILIO VOICE PRICING SYNC ENGINE
--- Isolated Forward-Only Migration
+-- PHASE 13.4.3C STAGE C.6D.4A: DURABLE TWILIO VOICE PRICING SYNC ENGINE
+-- Isolated Forward-Only Migration (Remediated for Stage C.6D.4A Audit)
 -- DO NOT APPLY REMOTELY AUTOMATICALLY — USER MANDATED MANUAL SQL REVIEW
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
 -- 1. Atomic Versioned Wholesale Pricing Cache Upsert Function
--- Guarantees concurrency safety, version preservation, and idempotency.
+-- Guarantees concurrency safety via advisory xact locking, out-of-order observation
+-- protection, version preservation, freshness window validation, and idempotency.
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.upsert_provider_voice_pricing_record_atomic(
     p_provider_account_id TEXT DEFAULT 'default',
@@ -47,9 +48,10 @@ DECLARE
     v_existing_price BIGINT;
     v_existing_base BIGINT;
     v_existing_version INT;
+    v_existing_fetched_at TIMESTAMPTZ;
     v_new_version INT;
 BEGIN
-    -- Input validations
+    -- 1. Input validations
     IF p_current_price_micro < 0 THEN
         RAISE EXCEPTION 'INVALID_WHOLESALE_PRICE: current_price_micro cannot be negative (%)', p_current_price_micro;
     END IF;
@@ -58,9 +60,19 @@ BEGIN
         RAISE EXCEPTION 'INVALID_BASE_PRICE: base_price_micro cannot be negative (%)', p_base_price_micro;
     END IF;
 
-    -- Lock active pricing record for complete pricing key (if exists)
-    SELECT id, current_price_micro, base_price_micro, version
-    INTO v_existing_id, v_existing_price, v_existing_base, v_existing_version
+    IF p_fetched_at > p_soft_stale_at OR p_soft_stale_at > p_hard_expires_at THEN
+        RAISE EXCEPTION 'INVALID_FRESHNESS_WINDOW: Timestamps must satisfy fetched_at <= soft_stale_at <= hard_expires_at';
+    END IF;
+
+    -- 2. Deterministic Transaction Advisory Lock on Complete Pricing Key
+    -- Prevents first-insert concurrency race conditions between parallel sync workers
+    PERFORM pg_advisory_xact_lock(
+        hashtext('pricing_key:' || v_clean_account || ':' || v_clean_provider || ':' || p_service_type || ':' || p_direction || ':' || v_clean_country || ':' || v_clean_dest || ':' || v_clean_orig || ':' || COALESCE(v_clean_num_type, 'any'))
+    );
+
+    -- 3. Lock active pricing record for complete pricing key (if exists)
+    SELECT id, current_price_micro, base_price_micro, version, fetched_at
+    INTO v_existing_id, v_existing_price, v_existing_base, v_existing_version, v_existing_fetched_at
     FROM public.provider_voice_pricing_cache
     WHERE provider_account_id = v_clean_account
       AND provider_key = v_clean_provider
@@ -74,6 +86,18 @@ BEGIN
     FOR UPDATE;
 
     IF FOUND THEN
+        -- Out-of-Order Provider Observation Protection:
+        -- If active record was fetched from a NEWER provider observation (fetched_at > p_fetched_at), ignore older observation.
+        IF v_existing_fetched_at > p_fetched_at THEN
+            RETURN jsonb_build_object(
+                'status', 'out_of_order_skipped',
+                'record_id', v_existing_id,
+                'version', v_existing_version,
+                'price_changed', false,
+                'reason', 'Active record is newer than input observation'
+            );
+        END IF;
+
         -- Case A: Idempotent Refresh (Price is unchanged)
         IF v_existing_price = p_current_price_micro AND (v_existing_base IS NOT DISTINCT FROM p_base_price_micro) THEN
             UPDATE public.provider_voice_pricing_cache
@@ -217,8 +241,56 @@ GRANT EXECUTE ON FUNCTION public.upsert_provider_voice_pricing_record_atomic TO 
 
 
 -- ----------------------------------------------------------------------------
--- 2. Atomic Sync Run Logging Function
--- Durable audit log recording for synchronization runs
+-- 2. Scope-Isolated Authoritative Rate Retirement Function
+-- Safely deactivates missing rates ONLY when an entire authoritative scope completes.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.retire_missing_provider_voice_pricing_records_atomic(
+    p_provider_account_id TEXT DEFAULT 'default',
+    p_provider_key TEXT DEFAULT 'twilio',
+    p_service_type TEXT DEFAULT 'voice_outbound',
+    p_direction TEXT DEFAULT 'outbound',
+    p_iso_country VARCHAR(2) DEFAULT 'US',
+    p_observed_fingerprints TEXT[] DEFAULT '{}'::TEXT[]
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_clean_account TEXT := COALESCE(NULLIF(TRIM(p_provider_account_id), ''), 'default');
+    v_clean_provider TEXT := LOWER(COALESCE(NULLIF(TRIM(p_provider_key), ''), 'twilio'));
+    v_clean_country VARCHAR(2) := UPPER(COALESCE(NULLIF(TRIM(p_iso_country), ''), 'US'));
+    v_retired_count INT := 0;
+BEGIN
+    UPDATE public.provider_voice_pricing_cache
+    SET is_active = false,
+        updated_at = now()
+    WHERE provider_account_id = v_clean_account
+      AND provider_key = v_clean_provider
+      AND service_type = p_service_type
+      AND direction = p_direction
+      AND iso_country = v_clean_country
+      AND is_active = true
+      AND (pricing_fingerprint IS NULL OR NOT (pricing_fingerprint = ANY(p_observed_fingerprints)));
+
+    GET DIAGNOSTICS v_retired_count = ROW_COUNT;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'retired_count', v_retired_count
+    );
+END;
+$$;
+
+-- Security Grants: Strictly service_role internal
+REVOKE ALL ON FUNCTION public.retire_missing_provider_voice_pricing_records_atomic FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.retire_missing_provider_voice_pricing_records_atomic TO service_role;
+
+
+-- ----------------------------------------------------------------------------
+-- 3. Atomic Sync Run Logging Function
+-- Durable audit log recording for synchronization runs with full diagnostic details
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.record_provider_voice_price_sync_run_atomic(
     p_provider_account_id TEXT DEFAULT 'default',
