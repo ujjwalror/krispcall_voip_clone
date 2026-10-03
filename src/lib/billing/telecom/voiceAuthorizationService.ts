@@ -218,6 +218,7 @@ export class VoiceAuthorizationService {
           currency: matchedRate.currency || 'USD',
           prefix: matchedRate.matchedPrefix,
           source: matchedRate.resolutionSource,
+          pricingPolicyId: matchedRate.matchedRateCard.metadata?.pricing_policy_id,
         },
         metadata: {
           sessionId,
@@ -251,6 +252,10 @@ export class VoiceAuthorizationService {
           minChargeableUnits: matchedRate.matchedRateCard.minChargeableUnits || 1,
           unitType: matchedRate.matchedRateCard.unitType || 'minute',
         }),
+        metadata: {
+          pricing_policy_id: matchedRate.matchedRateCard.metadata?.pricing_policy_id,
+          pricing_mode: matchedRate.matchedRateCard.metadata?.pricing_mode,
+        },
       });
 
       // Step D: Transition experiment authorization CLAIMED -> CONSUMED ONLY after initial financial protection succeeds

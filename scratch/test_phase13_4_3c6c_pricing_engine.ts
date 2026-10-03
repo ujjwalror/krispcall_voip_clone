@@ -221,6 +221,41 @@ async function runC6CTestCampaign() {
   );
 
   // -------------------------------------------------------------
+  // TEST GROUP 5: EXPLICIT PRECISION CASES & PROVENANCE METADATA
+  // -------------------------------------------------------------
+  console.log('\n--- Test Group 5: Explicit Precision Cases & Provenance Metadata ---');
+
+  // Test 5.1: wholesale 4 micro-units -> markup = ceil(4 * 2500 / 10000) = 1 micro-unit -> retail 5 micro-units
+  const q4 = { ...quote1, wholesaleRateMicro: BigInt(4) };
+  const res4 = CommercialPricingEngine.calculateRetailRate(q4, policy25Pct);
+  assert(
+    res4.markupAmountMicro === BigInt(1) && res4.derivedRetailRateMicro === BigInt(5),
+    '5.1 Wholesale 4 micro-units + 25% markup = 1 micro-unit markup (retail 5 micro-units)'
+  );
+
+  // Test 5.2: wholesale 10,001 micro-units -> markup = ceil(10001 * 2500 / 10000) = 2501 micro-units -> retail 12,502 micro-units
+  const q10001 = { ...quote1, wholesaleRateMicro: BigInt(10001) };
+  const res10001 = CommercialPricingEngine.calculateRetailRate(q10001, policy25Pct);
+  assert(
+    res10001.markupAmountMicro === BigInt(2501) && res10001.derivedRetailRateMicro === BigInt(12502),
+    '5.2 Wholesale 10,001 micro-units + 25% markup (ceil 2501 micro) = 12,502 micro-units'
+  );
+
+  // Test 5.3: wholesale 9,999 micro-units -> markup = ceil(9999 * 2500 / 10000) = 2500 micro-units -> retail 12,499 micro-units
+  const q9999 = { ...quote1, wholesaleRateMicro: BigInt(9999) };
+  const res9999 = CommercialPricingEngine.calculateRetailRate(q9999, policy25Pct);
+  assert(
+    res9999.markupAmountMicro === BigInt(2500) && res9999.derivedRetailRateMicro === BigInt(12499),
+    '5.3 Wholesale 9,999 micro-units + 25% markup (ceil 2500 micro) = 12,499 micro-units'
+  );
+
+  // Test 5.4: Policy Provenance Preservation
+  assert(
+    res1.policyId === policy25Pct.id && res1.pricingMode === 'markup_percentage' && res1.markupBasisPoints === 2500,
+    '5.4 Commercial pricing engine output preserves durable policy provenance (policyId, pricingMode, markupBasisPoints)'
+  );
+
+  // -------------------------------------------------------------
   // SUMMARY REPORT
   // -------------------------------------------------------------
   console.log('\n=============================================================');

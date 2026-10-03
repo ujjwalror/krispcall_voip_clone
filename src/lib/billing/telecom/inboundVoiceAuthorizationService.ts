@@ -229,6 +229,10 @@ export class InboundVoiceAuthorizationService {
           billingIncrementSeconds: 60,
           minChargeableUnits: 1,
         }),
+        metadata: {
+          pricing_policy_id: rateSnapshot.matchedRateCard?.metadata?.pricing_policy_id,
+          pricing_mode: rateSnapshot.matchedRateCard?.metadata?.pricing_mode,
+        },
       });
     }
 
