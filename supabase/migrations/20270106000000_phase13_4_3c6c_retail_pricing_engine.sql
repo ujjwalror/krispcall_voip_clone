@@ -129,9 +129,9 @@ DECLARE
   v_eval_time TIMESTAMPTZ;
   v_clean_currency TEXT;
   v_clean_dest TEXT;
-  v_matching_policies RECORD;
   v_selected_policy public.telecom_retail_pricing_policies;
-  v_conflict_count INT := 0;
+  v_top_count INT := 0;
+  v_distinct_rules_count INT := 0;
 BEGIN
   v_eval_time := COALESCE(p_timestamp, pg_catalog.now());
   v_clean_currency := pg_catalog.upper(pg_catalog.btrim(COALESCE(p_currency, 'USD')));
@@ -141,7 +141,7 @@ BEGIN
     RAISE EXCEPTION 'INVALID_ARGUMENT: Invalid p_service_type %', p_service_type;
   END IF;
 
-  -- Query active effective policies for service_type/direction/currency
+  -- Single-statement PL/pgSQL resolution with combined CTEs
   WITH candidate_policies AS (
     SELECT 
       *,
@@ -168,40 +168,71 @@ BEGIN
       DENSE_RANK() OVER (ORDER BY match_score DESC, priority DESC) as rank_pos
     FROM candidate_policies
     WHERE match_score > 0
+  ),
+  top_rank AS (
+    SELECT *
+    FROM ranked_policies
+    WHERE rank_pos = 1
+  ),
+  summary_metrics AS (
+    SELECT 
+      COUNT(*) as top_count,
+      COUNT(DISTINCT (markup_basis_points, fixed_surcharge_micro, retail_floor_micro, pricing_mode)) as distinct_rules_count
+    FROM top_rank
   )
-  SELECT COUNT(*) INTO v_conflict_count
-  FROM ranked_policies
-  WHERE rank_pos = 1;
+  SELECT 
+    tr.id,
+    tr.organization_id,
+    tr.policy_name,
+    tr.service_type,
+    tr.direction,
+    tr.destination_pattern,
+    tr.pricing_mode,
+    tr.markup_basis_points,
+    tr.fixed_surcharge_micro,
+    tr.retail_floor_micro,
+    tr.currency,
+    tr.priority,
+    tr.is_active,
+    tr.effective_start_at,
+    tr.effective_end_at,
+    tr.metadata,
+    tr.created_at,
+    tr.updated_at,
+    COALESCE(sm.top_count, 0),
+    COALESCE(sm.distinct_rules_count, 0)
+  INTO 
+    v_selected_policy.id,
+    v_selected_policy.organization_id,
+    v_selected_policy.policy_name,
+    v_selected_policy.service_type,
+    v_selected_policy.direction,
+    v_selected_policy.destination_pattern,
+    v_selected_policy.pricing_mode,
+    v_selected_policy.markup_basis_points,
+    v_selected_policy.fixed_surcharge_micro,
+    v_selected_policy.retail_floor_micro,
+    v_selected_policy.currency,
+    v_selected_policy.priority,
+    v_selected_policy.is_active,
+    v_selected_policy.effective_start_at,
+    v_selected_policy.effective_end_at,
+    v_selected_policy.metadata,
+    v_selected_policy.created_at,
+    v_selected_policy.updated_at,
+    v_top_count,
+    v_distinct_rules_count
+  FROM summary_metrics sm
+  LEFT JOIN top_rank tr ON true
+  ORDER BY tr.created_at DESC
+  LIMIT 1;
 
-  IF v_conflict_count = 0 THEN
+  IF v_top_count = 0 OR v_selected_policy.id IS NULL THEN
     RAISE EXCEPTION 'PRICING_POLICY_NOT_FOUND: No active pricing policy found for service % direction % destination %', p_service_type, p_direction, v_clean_dest;
   END IF;
 
-  -- Select single top-ranked policy
-  SELECT * INTO v_selected_policy
-  FROM (
-    SELECT *
-    FROM candidate_policies
-    WHERE match_score > 0
-    ORDER BY match_score DESC, priority DESC, created_at DESC
-    LIMIT 1
-  ) t;
-
-  -- Detect ambiguity conflict if multiple distinct policies share top precedence & priority
-  IF v_conflict_count > 1 THEN
-    -- Check if differing financial rules exist among top rank
-    SELECT COUNT(DISTINCT (markup_basis_points, fixed_surcharge_micro, retail_floor_micro, pricing_mode)) INTO v_conflict_count
-    FROM (
-      SELECT *
-      FROM candidate_policies
-      WHERE match_score > 0
-      ORDER BY match_score DESC, priority DESC
-      LIMIT 10
-    ) t;
-
-    IF v_conflict_count > 1 THEN
-      RAISE EXCEPTION 'PRICING_POLICY_CONFLICT: Multiple conflicting active policies found for service % direction %', p_service_type, p_direction;
-    END IF;
+  IF v_top_count > 1 AND v_distinct_rules_count > 1 THEN
+    RAISE EXCEPTION 'PRICING_POLICY_CONFLICT: Multiple conflicting active policies found for service % direction %', p_service_type, p_direction;
   END IF;
 
   RETURN jsonb_build_object(
