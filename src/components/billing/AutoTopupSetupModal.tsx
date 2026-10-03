@@ -32,12 +32,14 @@ export interface AutoTopupSetupModalProps {
 function SetupFormContent({
   thresholdMajor,
   rechargeAmountMajor,
+  attemptToken,
   setupIntentId,
   onClose,
   onSuccess,
 }: {
   thresholdMajor: number;
   rechargeAmountMajor: number;
+  attemptToken: string;
   setupIntentId: string;
   onClose: () => void;
   onSuccess: () => void;
@@ -78,14 +80,13 @@ function SetupFormContent({
       }
 
       if (setupIntent && setupIntent.status === 'succeeded') {
-        // 2. Complete enrolment on server
+        // 2. Complete enrolment on server using durable attemptToken and setupIntentId
         const res = await fetch('/api/billing/credit/auto-topup/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            attemptToken,
             setupIntentId: setupIntent.id,
-            thresholdMajor,
-            rechargeAmountMajor,
           }),
         });
 
@@ -202,6 +203,7 @@ export function AutoTopupSetupModal({
   const [loadingSetup, setLoadingSetup] = useState(false);
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [setupIntentId, setSetupIntentId] = useState<string | null>(null);
+  const [attemptToken, setAttemptToken] = useState<string | null>(null);
   const [setupError, setSetupError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -209,6 +211,7 @@ export function AutoTopupSetupModal({
       setStep('config');
       setClientSecret(null);
       setSetupIntentId(null);
+      setAttemptToken(null);
       setSetupError(null);
     }
   }, [isOpen]);
@@ -222,6 +225,11 @@ export function AutoTopupSetupModal({
     try {
       const res = await fetch('/api/billing/credit/auto-topup/setup-intent', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          thresholdMajor,
+          rechargeAmountMajor,
+        }),
       });
       const data = await res.json();
 
@@ -233,6 +241,7 @@ export function AutoTopupSetupModal({
 
       setClientSecret(data.clientSecret);
       setSetupIntentId(data.setupIntentId);
+      setAttemptToken(data.attemptToken);
       setStep('stripe');
       setLoadingSetup(false);
     } catch (err: any) {
@@ -339,7 +348,7 @@ export function AutoTopupSetupModal({
                 </button>
               </div>
             </div>
-          ) : clientSecret && stripePromise && setupIntentId ? (
+          ) : clientSecret && stripePromise && setupIntentId && attemptToken ? (
             <Elements
               stripe={stripePromise}
               options={{
@@ -353,6 +362,7 @@ export function AutoTopupSetupModal({
               <SetupFormContent
                 thresholdMajor={thresholdMajor}
                 rechargeAmountMajor={rechargeAmountMajor}
+                attemptToken={attemptToken}
                 setupIntentId={setupIntentId}
                 onClose={onClose}
                 onSuccess={onSuccess}
