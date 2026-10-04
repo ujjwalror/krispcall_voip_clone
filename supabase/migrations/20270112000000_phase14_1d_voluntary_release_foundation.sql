@@ -1,5 +1,5 @@
 -- ====================================================================
--- MIGRATION: PHASE 14.1D VOLUNTARY PHONE NUMBER RELEASE FOUNDATION
+-- MIGRATION: PHASE 14.1D VOLUNTARY PHONE NUMBER RELEASE FOUNDATION (HARDENED)
 -- Date: 2027-01-12
 -- Establishes durable public.number_release_operations table,
 -- active-release partial uniqueness index, server-only RLS boundaries,
@@ -56,11 +56,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_number_release_ops_active_phone
 ON public.number_release_operations (phone_number_id)
 WHERE status NOT IN ('released', 'failed', 'canceled');
 
--- Updated_at trigger
+-- Relation-scoped updated_at trigger
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM pg_trigger WHERE tgname = 'update_number_release_operations_updated_at'
+        SELECT 1 FROM pg_trigger
+        WHERE tgname = 'update_number_release_operations_updated_at'
+          AND tgrelid = 'public.number_release_operations'::regclass
     ) THEN
         CREATE TRIGGER update_number_release_operations_updated_at
             BEFORE UPDATE ON public.number_release_operations
@@ -78,7 +80,7 @@ REVOKE ALL ON public.number_release_operations FROM PUBLIC, anon, authenticated;
 -- Grant FULL permissions strictly to service_role
 GRANT ALL ON public.number_release_operations TO service_role;
 
--- 3. Create Atomic Completion RPC
+-- 3. Create Hardened Atomic Completion RPC
 CREATE OR REPLACE FUNCTION public.complete_number_release_atomic(
     p_operation_id UUID,
     p_organization_id UUID,
@@ -93,6 +95,7 @@ AS $$
 DECLARE
     v_op RECORD;
     v_phone RECORD;
+    v_map RECORD;
     v_released_ts TIMESTAMPTZ;
 BEGIN
     v_released_ts := COALESCE(p_released_at, NOW());
@@ -136,8 +139,9 @@ BEGIN
         RAISE EXCEPTION 'PHONE_NUMBER_NOT_FOUND: Phone number % for operation % not found or organization mismatch.', v_op.phone_number_id, p_operation_id;
     END IF;
 
-    IF v_phone.status = 'ported_out' THEN
-        RAISE EXCEPTION 'PHONE_NUMBER_ALREADY_PORTED_OUT: Phone number % is ported out.', v_phone.phone_number;
+    -- Fail closed if phone is already in a terminal state
+    IF v_phone.status IN ('released', 'ported_out') THEN
+        RAISE EXCEPTION 'PHONE_NUMBER_TERMINAL_STATE: Phone number % is already in terminal status ''%''.', v_phone.phone_number, v_phone.status;
     END IF;
 
     -- E.164 consistency validation
@@ -145,7 +149,33 @@ BEGIN
         RAISE EXCEPTION 'E164_MISMATCH: Op E164 % does not match phone table E164 %.', v_op.phone_number_e164, v_phone.phone_number;
     END IF;
 
-    -- 5. Execute Atomic Local Completion Mutations
+    -- 5. Lock and validate specific provider resource mapping if referenced on operation
+    IF v_op.provider_resource_mapping_id IS NOT NULL THEN
+        SELECT * INTO v_map
+        FROM public.number_provider_mappings
+        WHERE id = v_op.provider_resource_mapping_id
+          AND phone_number_id = v_phone.id
+          AND provider_status = 'active'
+        FOR UPDATE;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'INVALID_PROVIDER_MAPPING: Mapping % referenced by operation % is not active or does not belong to phone %.', v_op.provider_resource_mapping_id, p_operation_id, v_phone.id;
+        END IF;
+
+        UPDATE public.number_provider_mappings
+        SET provider_status = 'historical',
+            updated_at = NOW()
+        WHERE id = v_map.id;
+    ELSE
+        -- Fallback for legacy operations: mark active mapping for phone historical
+        UPDATE public.number_provider_mappings
+        SET provider_status = 'historical',
+            updated_at = NOW()
+        WHERE phone_number_id = v_phone.id
+          AND provider_status = 'active';
+    END IF;
+
+    -- 6. Execute Atomic Local Completion Mutations
     -- A. Update release operation
     UPDATE public.number_release_operations
     SET status = 'released',
@@ -154,39 +184,22 @@ BEGIN
         updated_at = NOW()
     WHERE id = p_operation_id;
 
-    -- B. Update phone number status -> released, active/is_active = false
+    -- B. Update phone number status -> released, active = false (using canonical active column only)
     UPDATE public.phone_numbers
     SET status = 'released',
         active = false,
         updated_at = NOW()
     WHERE id = v_phone.id;
 
-    -- Update is_active if column exists dynamically
-    BEGIN
-        UPDATE public.phone_numbers
-        SET is_active = false
-        WHERE id = v_phone.id;
-    EXCEPTION WHEN OTHERS THEN
-        -- Column is_active may not exist in some local test environments; active=false is canonical.
-        NULL;
-    END;
-
-    -- C. Terminate organization billable resource -> status = terminated
+    -- C. Terminate organization billable resource -> status = terminated (UUID resource_id identity only)
     UPDATE public.organization_billable_resources
     SET status = 'terminated',
         effective_end_at = v_released_ts,
         updated_at = NOW()
     WHERE organization_id = p_organization_id
       AND resource_type = 'phone_number'
-      AND (resource_id = v_phone.id::text OR resource_id = v_phone.phone_number)
+      AND resource_id = v_phone.id::text
       AND status = 'active';
-
-    -- D. Mark provider mapping historical -> provider_status = historical
-    UPDATE public.number_provider_mappings
-    SET provider_status = 'historical',
-        updated_at = NOW()
-    WHERE phone_number_id = v_phone.id
-      AND provider_status = 'active';
 
     RETURN jsonb_build_object(
         'success', true,

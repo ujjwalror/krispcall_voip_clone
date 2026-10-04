@@ -105,7 +105,19 @@ export class VoluntaryReleaseService {
       blockers.push('ALREADY_PORTED_OUT: Phone number is already ported out.');
     }
 
-    // 4. Port-Out Conflict Protection (14.1C)
+    // 4. Provider Mapping Provenance Check
+    const { data: providerMapping } = await this.dbClient
+      .from('number_provider_mappings')
+      .select('id, provider_status')
+      .eq('phone_number_id', phoneNumberId)
+      .eq('provider_status', 'active')
+      .maybeSingle();
+
+    if (!providerMapping) {
+      blockers.push('MISSING_PROVIDER_MAPPING: Active provider mapping required before voluntary release.');
+    }
+
+    // 5. Port-Out Conflict Protection (14.1C)
     // Block release if Port-Out is requested, instructions_ready, port_out_pending, or carrier_processing
     const { data: portOutOps } = await this.dbClient
       .from('number_port_operations')
@@ -121,7 +133,7 @@ export class VoluntaryReleaseService {
       );
     }
 
-    // 5. Port-In Conflict Protection (14.1B)
+    // 6. Port-In Conflict Protection (14.1B)
     const { data: portInOps } = await this.dbClient
       .from('number_port_operations')
       .select('id, status')
@@ -144,7 +156,7 @@ export class VoluntaryReleaseService {
       );
     }
 
-    // 6. Active Release Conflict Protection
+    // 7. Active Release Conflict Protection
     const { data: activeReleaseOps } = await this.dbClient
       .from('number_release_operations')
       .select('id, status')
@@ -236,7 +248,11 @@ export class VoluntaryReleaseService {
       .select('id, provider, provider_resource_id, provider_account_id, provider_status')
       .eq('phone_number_id', phoneNumberId)
       .eq('provider_status', 'active')
-      .maybeSingle();
+      .single();
+
+    if (!providerMapping || !providerMapping.id) {
+      throw new Error(`MISSING_PROVIDER_MAPPING: Active provider mapping required for voluntary release.`);
+    }
 
     // 5. Insert Operation Record (Initial Status: 'requested')
     const { data: op, error: insertErr } = await this.dbClient
@@ -249,8 +265,8 @@ export class VoluntaryReleaseService {
         status: 'requested',
         idempotency_key: idempotencyKey || null,
         initiated_by_user_id: userId,
-        provider: providerMapping?.provider || 'twilio',
-        provider_resource_mapping_id: providerMapping?.id || null,
+        provider: providerMapping.provider || 'twilio',
+        provider_resource_mapping_id: providerMapping.id,
         customer_safe_status: 'Release requested',
       })
       .select('*')
@@ -283,10 +299,10 @@ export class VoluntaryReleaseService {
       organizationId,
       phoneNumberId,
       phoneNumberE164,
-      providerResourceMappingId: providerMapping?.id,
-      providerResourceId: providerMapping?.provider_resource_id,
-      providerAccountId: providerMapping?.provider_account_id,
-      providerName: providerMapping?.provider || 'twilio',
+      providerResourceMappingId: providerMapping.id,
+      providerResourceId: providerMapping.provider_resource_id,
+      providerAccountId: providerMapping.provider_account_id,
+      providerName: providerMapping.provider || 'twilio',
       idempotencyKey,
     });
 
