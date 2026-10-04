@@ -76,6 +76,54 @@ export interface CustomerPortOperationDTO {
   createdAt: string;
 }
 
+export interface ProviderPortOutInstructionFacts {
+  phoneNumberE164: string;
+  workflowMode: ProviderWorkflowMode;
+  credentialsAuthoritative: boolean;
+  carrierAccountIdentifier: string | null;
+  carrierPortingPinEncrypted: string | null;
+  carrierPortingPinMasked: string | null;
+  customerName: string | null;
+  serviceAddress: Record<string, any> | null;
+  billingTelephoneNumber: string;
+  instructionText: string;
+  notes: string[];
+}
+
+export interface PortOutEligibilityParams {
+  organizationId: string;
+  phoneNumberId: string;
+  phoneNumberE164: string;
+  userRole: string;
+  numberStatus: string;
+  isReleased: boolean;
+  isPortedOut: boolean;
+  hasActivePortIn: boolean;
+  hasActivePortOut: boolean;
+  hasPendingRelease: boolean;
+  hasLegalHold: boolean;
+}
+
+export interface PortOutEligibilityResult {
+  eligible: boolean;
+  reason: string;
+  blockers: string[];
+}
+
+export interface PortOutEvidenceParams {
+  actorIdentity: string;
+  evidenceReference: string;
+  auditReason: string;
+  timestamp: string;
+  evidenceType: 'provider_webhook' | 'carrier_loa_foc' | 'admin_manual_audit' | 'carrier_rejection';
+}
+
+export interface ProviderOwnershipReconciliationResult {
+  stillOwnedByProvider: boolean;
+  reconciliationStatus: 'reconciled_cessation' | 'provider_exposure_reconciliation_required' | 'unknown';
+  details: string;
+}
+
 export interface AutomaticReleaseEvaluationParams {
   organizationId: string;
   phoneNumberId: string;
@@ -95,3 +143,4 @@ export interface AutomaticReleaseEvaluationResult {
   reason: string;
   blockers: string[];
 }
+
