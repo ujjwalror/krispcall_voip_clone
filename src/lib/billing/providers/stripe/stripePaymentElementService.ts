@@ -5,6 +5,9 @@ import Stripe from 'stripe';
 import { getStripeClient } from './stripeClient';
 import { StripeClientFactory } from './stripeClientFactory';
 import { StripeCustomerService } from './stripeCustomerService';
+import { ProviderAccountResolver } from '../providerAccountResolver';
+import { ProviderCredentialRegistry } from './providerCredentialRegistry';
+import { isExpectedLegacySchemaMissingError } from '../../schemaUtils';
 import { RetailPricingService } from '@/lib/telephony/marketplace/pricingService';
 import { inventoryProvider } from '@/lib/telephony/marketplace/inventoryProvider';
 import { RegulatoryPreCheckService } from '@/lib/telephony/marketplace/regulatoryPreCheckService';
@@ -187,6 +190,10 @@ export class StripePaymentElementService {
     );
     const opIdempotencyKey = `chk_op_${fingerprint}`;
 
+    // 4b. Resolve Active Provider Account
+    const env = ProviderCredentialRegistry.resolveServerRuntimeEnvironment();
+    const providerAccount = await ProviderAccountResolver.resolveActiveAccount(supabase, 'stripe', env);
+
     // 5. Atomic Claim / Create Operation in public.billing_payment_operations
     const { data: existingOp } = await (supabase as any)
       .from('billing_payment_operations')
@@ -209,34 +216,48 @@ export class StripePaymentElementService {
         calculatedAt: new Date().toISOString(),
       };
 
-      const { data: newOp, error: insertErr } = await (supabase as any)
-        .from('billing_payment_operations')
-        .insert({
-          organization_id: organizationId,
-          operation_type: 'number_purchase',
-          provider: 'stripe',
-          status: 'pending',
-          amount_minor: monthlyRetailMinor,
-          currency: currency.toUpperCase(),
-          idempotency_key: opIdempotencyKey,
-          request_fingerprint: fingerprint,
-          price_snapshot_payload: priceSnapshot,
-          metadata: {
-            selectionContext: {
-              phoneNumber,
-              countryCode: cc,
-              numberType: type,
-              monthlyRetailMinor,
-              currency,
-              billingInterval: 'monthly',
-              bundleSid,
-            },
-            consentToSaveMethod,
-            createdByUserId: userId,
+      const opPayload: any = {
+        organization_id: organizationId,
+        operation_type: 'number_purchase',
+        provider: 'stripe',
+        provider_account_id: providerAccount.id,
+        status: 'pending',
+        amount_minor: monthlyRetailMinor,
+        currency: currency.toUpperCase(),
+        idempotency_key: opIdempotencyKey,
+        request_fingerprint: fingerprint,
+        price_snapshot_payload: priceSnapshot,
+        metadata: {
+          selectionContext: {
+            phoneNumber,
+            countryCode: cc,
+            numberType: type,
+            monthlyRetailMinor,
+            currency,
+            billingInterval: 'monthly',
+            bundleSid,
           },
-        })
+          consentToSaveMethod,
+          createdByUserId: userId,
+        },
+      };
+
+      let { data: newOp, error: insertErr } = await (supabase as any)
+        .from('billing_payment_operations')
+        .insert(opPayload)
         .select('*')
         .single();
+
+      if (insertErr && isExpectedLegacySchemaMissingError(insertErr)) {
+        delete opPayload.provider_account_id;
+        const retry = await (supabase as any)
+          .from('billing_payment_operations')
+          .insert(opPayload)
+          .select('*')
+          .single();
+        newOp = retry.data;
+        insertErr = retry.error;
+      }
 
       if (insertErr) {
         if (insertErr.code === '23505') {
@@ -260,6 +281,10 @@ export class StripePaymentElementService {
       } else {
         op = newOp;
       }
+    }
+
+    if (op && (!op.provider_account_id || !op.provider_account_id.trim())) {
+      op.provider_account_id = providerAccount.id;
     }
 
     if (!op) {
