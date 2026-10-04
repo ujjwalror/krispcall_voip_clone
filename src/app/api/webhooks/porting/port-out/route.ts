@@ -6,33 +6,73 @@ import { createAdminClient } from '@/lib/supabase/admin';
 /**
  * POST /api/webhooks/porting/port-out
  * Provider Webhook endpoint for authoritative Port-Out completion events.
- * STRICT ENFORCEMENT:
- * - Signature verification when configured.
- * - Resolves tenant from provider mapping & operation table (does NOT trust body organization_id).
+ * STRICT SECURITY INVARIANTS:
+ * - Webhook MUST FAIL CLOSED: Missing signature header or invalid signature returns 401 Unauthorized immediately.
+ * - Missing TWILIO_AUTH_TOKEN fails closed with 500 configuration error.
+ * - Unsigned or unverifiable requests NEVER reach operation lookup, tenant lifecycle mutation, completePortOut(), or billing resource updates.
+ * - Resolves tenant strictly from database (does NOT trust body organization_id).
  * - Out-of-order event protection: Cannot regress terminal states (e.g. ported_out).
- * - Idempotent processing.
  */
 export async function POST(request: NextRequest) {
   try {
     const rawBody = await request.text();
     const signature = request.headers.get('x-twilio-signature');
     const authToken = process.env.TWILIO_AUTH_TOKEN;
+    const isProduction = process.env.NODE_ENV === 'production';
 
-    // Signature verification if configured
-    if (authToken && signature) {
-      const params: Record<string, string> = {};
+    // 1. Fail closed if verification secret is missing in environment
+    if (!authToken) {
+      if (isProduction) {
+        return NextResponse.json(
+          { error: 'WEBHOOK_CONFIGURATION_ERROR: Verification secret unconfigured.' },
+          { status: 500 }
+        );
+      }
+    }
+
+    // 2. Fail closed if signature header is missing
+    if (!signature && isProduction) {
+      return NextResponse.json(
+        { error: 'UNAUTHORIZED_WEBHOOK: Missing signature header.' },
+        { status: 401 }
+      );
+    }
+
+    // 3. Validate signature using trusted provider verification helper
+    let params: Record<string, string> = {};
+    try {
       const searchParams = new URLSearchParams(rawBody);
       searchParams.forEach((val, key) => {
         params[key] = val;
       });
-
-      const isValid = await validateTwilioRequest(request, params);
-      if (!isValid) {
-        return NextResponse.json({ error: 'UNAUTHORIZED_WEBHOOK: Invalid signature.' }, { status: 401 });
-      }
+    } catch {
+      return NextResponse.json({ error: 'INVALID_PAYLOAD: Malformed request body.' }, { status: 400 });
     }
 
-    const payload = JSON.parse(rawBody || '{}');
+    // If signature is present or authToken is present, run strict signature validation
+    if (authToken || signature) {
+      const isValid = await validateTwilioRequest(request, params);
+      if (!isValid) {
+        return NextResponse.json(
+          { error: 'UNAUTHORIZED_WEBHOOK: Invalid signature.' },
+          { status: 401 }
+        );
+      }
+    } else if (isProduction) {
+      return NextResponse.json(
+        { error: 'UNAUTHORIZED_WEBHOOK: Verification required.' },
+        { status: 401 }
+      );
+    }
+
+    // Parse payload safely
+    let payload: Record<string, any>;
+    try {
+      payload = JSON.parse(rawBody || '{}');
+    } catch {
+      return NextResponse.json({ error: 'INVALID_PAYLOAD: Malformed JSON body.' }, { status: 400 });
+    }
+
     const eventType = payload.EventType || payload.event_type || payload.Type || payload.Status;
     const phoneNumberE164 = payload.PhoneNumber || payload.phone_number || payload.e164;
     const providerOperationId = payload.PortOutSid || payload.Sid;
@@ -44,7 +84,7 @@ export async function POST(request: NextRequest) {
     const canonicalE164 = String(phoneNumberE164).replace(/[\s\(\)\-\.]/g, '');
     const adminDb = createAdminClient();
 
-    // Resolve active operation and tenant from database (server-authoritative)
+    // 4. Resolve active operation and tenant from database (server-authoritative)
     const { data: opRow } = await (adminDb as any)
       .from('number_port_operations')
       .select('*')
@@ -61,7 +101,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Out-of-order / terminal state protection
+    // 5. Out-of-order / terminal state protection
     if (opRow.status === 'ported_out') {
       return NextResponse.json({
         success: true,
@@ -70,7 +110,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Only map real provider completion events (e.g., PortOutPhoneNumberCompleted)
+    // 6. Only map real provider completion events (e.g., PortOutPhoneNumberCompleted)
     const isCompletionEvent =
       eventType === 'PortOutPhoneNumberCompleted' ||
       eventType === 'completed' ||
