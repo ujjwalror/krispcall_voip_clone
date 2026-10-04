@@ -1,9 +1,10 @@
 -- ====================================================================
--- MIGRATION: PHASE 14.1A PROVIDER-NEUTRAL NUMBER PORTING FOUNDATION
+-- MIGRATION: PHASE 14.1A PROVIDER-NEUTRAL NUMBER PORTING FOUNDATION (REMEDIATED)
 -- Date: 2027-01-09
 -- Establishes durable, multi-tenant number_port_operations table,
 -- provider-neutral workflow modes, domain status constraints,
--- and strict server-authoritative RLS security policies.
+-- tenant-scoped idempotency, active E.164 concurrency index,
+-- and strict server-only (service_role) privilege boundaries.
 -- LOCAL MIGRATION ONLY — DO NOT EXECUTE REMOTELY AUTOMATICALLY.
 -- ====================================================================
 
@@ -26,7 +27,7 @@ CREATE TABLE IF NOT EXISTS public.number_port_operations (
     workflow_mode TEXT NOT NULL DEFAULT 'unknown' CHECK (
         workflow_mode IN ('automated_api', 'assisted_manual', 'unsupported', 'requires_recheck', 'unknown')
     ),
-    idempotency_key TEXT UNIQUE,
+    idempotency_key TEXT NULL,
     request_fingerprint TEXT NULL,
     provider TEXT NOT NULL DEFAULT 'twilio',
     provider_port_id TEXT NULL,
@@ -49,7 +50,8 @@ CREATE TABLE IF NOT EXISTS public.number_port_operations (
     completed_at TIMESTAMPTZ NULL,
     last_reconciled_at TIMESTAMPTZ NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT unique_org_number_port_op_idempotency UNIQUE (organization_id, idempotency_key)
 );
 
 -- Indexes for performance & query isolation
@@ -58,6 +60,12 @@ CREATE INDEX IF NOT EXISTS idx_number_port_ops_phone_e164 ON public.number_port_
 CREATE INDEX IF NOT EXISTS idx_number_port_ops_status ON public.number_port_operations(status);
 CREATE INDEX IF NOT EXISTS idx_number_port_ops_direction_status ON public.number_port_operations(direction, status);
 CREATE INDEX IF NOT EXISTS idx_number_port_ops_provider_port_id ON public.number_port_operations(provider, provider_port_id) WHERE provider_port_id IS NOT NULL;
+
+-- CONCURRENCY INVARIANT: Active E.164 Port Operation Partial Unique Index
+-- Prevents duplicate or conflicting LIVE port operations on the same physical phone number
+CREATE UNIQUE INDEX IF NOT EXISTS idx_number_port_ops_active_e164
+ON public.number_port_operations (phone_number_e164)
+WHERE status NOT IN ('completed', 'ported_out', 'canceled', 'failed');
 
 -- Updated_at trigger
 DO $$
@@ -71,32 +79,13 @@ BEGIN
     END IF;
 END $$;
 
--- 2. Row Level Security (RLS)
+-- 2. Row Level Security (RLS) & Server-Only Privilege Boundaries
 ALTER TABLE public.number_port_operations ENABLE ROW LEVEL SECURITY;
 
--- Revoke mutation rights from PUBLIC, anon, authenticated
+-- Revoke ALL table privileges from PUBLIC, anon, and authenticated roles.
+-- public.number_port_operations is a SERVER-ONLY infrastructure table.
+-- Customer sessions MUST NOT have direct SELECT, INSERT, UPDATE, or DELETE access.
 REVOKE ALL ON public.number_port_operations FROM PUBLIC, anon, authenticated;
 
--- Grant SELECT to authenticated users (evaluated by RLS policy)
-GRANT SELECT ON public.number_port_operations TO authenticated;
-
--- Grant FULL permissions to service_role (used by server-side services)
+-- Grant FULL permissions strictly to service_role (used exclusively by backend server APIs)
 GRANT ALL ON public.number_port_operations TO service_role;
-
--- SELECT policy for Owner and Admin roles
-DO $$
-BEGIN
-    DROP POLICY IF EXISTS "Owner and Admin read number port operations" ON public.number_port_operations;
-    CREATE POLICY "Owner and Admin read number port operations"
-    ON public.number_port_operations
-    FOR SELECT
-    TO authenticated
-    USING (
-        EXISTS (
-            SELECT 1 FROM public.profiles p
-            WHERE p.id = auth.uid()
-              AND p.organization_id = number_port_operations.organization_id
-              AND p.role IN ('owner', 'admin')
-        )
-    );
-END $$;

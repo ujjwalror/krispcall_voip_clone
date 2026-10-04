@@ -16,6 +16,7 @@ export interface CreatePortOperationParams {
   status?: PortInDomainState | PortOutDomainState;
   workflowMode?: ProviderWorkflowMode;
   idempotencyKey?: string | null;
+  requestFingerprint?: string | null;
   provider?: string;
   carrierName?: string | null;
   complianceProfileId?: string | null;
@@ -37,18 +38,22 @@ export class PortOperationService {
     if (!params.organizationId) {
       throw new Error('INVALID_ORGANIZATION_ID: organizationId is required.');
     }
-    if (!params.phoneNumberE164 || !/^\+[1-9]\d{1,14}$/.test(params.phoneNumberE164)) {
+
+    const rawE164 = params.phoneNumberE164 ? String(params.phoneNumberE164).replace(/[\s\(\)\-\.]/g, '') : '';
+    if (!rawE164 || !/^\+[1-9]\d{1,14}$/.test(rawE164)) {
       throw new Error('INVALID_PHONE_NUMBER: Valid E.164 phone number is required.');
     }
+    const canonicalE164 = rawE164;
 
     const db = client || createAdminClient();
     const provider = (params.provider || 'twilio').toLowerCase();
     const direction = params.direction;
     const initialStatus = params.status || (direction === 'port_in' ? 'draft' : 'requested');
     const workflowMode = params.workflowMode || 'unknown';
+    const requestFingerprint = params.requestFingerprint || null;
     const nowIso = new Date().toISOString();
 
-    // Idempotency check if idempotencyKey supplied
+    // Idempotency check if idempotencyKey supplied (tenant-scoped)
     if (params.idempotencyKey) {
       const { data: existing } = await (db as any)
         .from('number_port_operations')
@@ -58,6 +63,13 @@ export class PortOperationService {
         .maybeSingle();
 
       if (existing) {
+        if (
+          requestFingerprint &&
+          existing.request_fingerprint &&
+          existing.request_fingerprint !== requestFingerprint
+        ) {
+          throw new Error('IDEMPOTENCY_CONFLICT: Request fingerprint does not match existing idempotency key.');
+        }
         return existing;
       }
     }
@@ -65,11 +77,12 @@ export class PortOperationService {
     const insertPayload: Record<string, any> = {
       organization_id: params.organizationId,
       phone_number_id: params.phoneNumberId || null,
-      phone_number_e164: params.phoneNumberE164,
+      phone_number_e164: canonicalE164,
       direction,
       status: initialStatus,
       workflow_mode: workflowMode,
       idempotency_key: params.idempotencyKey || null,
+      request_fingerprint: requestFingerprint,
       provider,
       carrier_name: params.carrierName || null,
       compliance_profile_id: params.complianceProfileId || null,
