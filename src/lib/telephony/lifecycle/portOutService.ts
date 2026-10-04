@@ -280,6 +280,27 @@ export class PortOutService {
       throw new Error('EVIDENCE_REQUIRED: Authoritative completion requires valid evidence parameters.');
     }
 
+    // Idempotent check
+    if (opRow.status === 'ported_out') {
+      const providerReconcile = await ProviderPortOutAdapter.reconcileProviderOwnership(
+        opRow.phone_number_e164,
+        opRow.provider || 'twilio',
+        db
+      );
+      return {
+        operation: PortOperationService.toCustomerSafeDTO(opRow),
+        routingDisabled: true,
+        providerReconciliation: providerReconcile.reconciliationStatus,
+      };
+    }
+
+    // Source Status Guard
+    if (!['port_out_pending', 'carrier_processing'].includes(opRow.status)) {
+      throw new Error(
+        `INVALID_SOURCE_STATUS: Cannot complete Port-Out operation from current status '${opRow.status}'. Completion requires port_out_pending or carrier_processing.`
+      );
+    }
+
     const canonicalE164 = opRow.phone_number_e164;
     const nowIso = new Date().toISOString();
 
@@ -290,6 +311,13 @@ export class PortOutService {
       p_completed_at: nowIso,
       p_customer_message: 'Number transfer completed successfully to receiving carrier.',
     });
+
+    if (rpcErr && rpcErr.message?.includes('INVALID_SOURCE_STATUS')) {
+      throw new Error(`INVALID_SOURCE_STATUS: ${rpcErr.message}`);
+    }
+    if (rpcErr && rpcErr.message?.includes('PHONE_NUMBER_NOT_FOUND')) {
+      throw new Error(`PHONE_NUMBER_NOT_FOUND: ${rpcErr.message}`);
+    }
 
     let updatedOpRow = opRow;
 
