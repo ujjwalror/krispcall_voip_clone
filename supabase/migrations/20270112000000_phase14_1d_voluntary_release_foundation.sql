@@ -1,9 +1,9 @@
 -- ====================================================================
--- MIGRATION: PHASE 14.1D VOLUNTARY PHONE NUMBER RELEASE FOUNDATION (HARDENED)
+-- MIGRATION: PHASE 14.1D VOLUNTARY PHONE NUMBER RELEASE FOUNDATION (FAIL-CLOSED)
 -- Date: 2027-01-12
 -- Establishes durable public.number_release_operations table,
 -- active-release partial uniqueness index, server-only RLS boundaries,
--- and hardened atomic release completion RPC (public.complete_number_release_atomic).
+-- and fail-closed atomic release completion RPC (public.complete_number_release_atomic).
 -- LOCAL MIGRATION ONLY — DO NOT EXECUTE REMOTELY AUTOMATICALLY.
 -- ====================================================================
 
@@ -80,7 +80,7 @@ REVOKE ALL ON public.number_release_operations FROM PUBLIC, anon, authenticated;
 -- Grant FULL permissions strictly to service_role
 GRANT ALL ON public.number_release_operations TO service_role;
 
--- 3. Create Hardened Atomic Completion RPC
+-- 3. Create Fail-Closed Atomic Completion RPC
 CREATE OR REPLACE FUNCTION public.complete_number_release_atomic(
     p_operation_id UUID,
     p_organization_id UUID,
@@ -136,7 +136,7 @@ BEGIN
     FOR UPDATE;
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'PHONE_NUMBER_NOT_FOUND: Phone number % for operation % not found or organization mismatch.', v_op.phone_number_id, p_operation_id;
+        RAISE EXCEPTION 'PHONE_NUMBER_NOT_FOUND: Phone number % for operation % not found or organization mismatch.', v_op.phone_number_id, p_organization_id;
     END IF;
 
     -- Fail closed if phone is already in a terminal state
@@ -149,34 +149,35 @@ BEGIN
         RAISE EXCEPTION 'E164_MISMATCH: Op E164 % does not match phone table E164 %.', v_op.phone_number_e164, v_phone.phone_number;
     END IF;
 
-    -- 5. Lock and validate specific provider resource mapping if referenced on operation
-    IF v_op.provider_resource_mapping_id IS NOT NULL THEN
-        SELECT * INTO v_map
-        FROM public.number_provider_mappings
-        WHERE id = v_op.provider_resource_mapping_id
-          AND phone_number_id = v_phone.id
-          AND provider_status = 'active'
-        FOR UPDATE;
+    -- 5. Lock and validate exact authoritative provider resource mapping (STRICT FAIL-CLOSED)
+    IF v_op.provider_resource_mapping_id IS NULL THEN
+        RAISE EXCEPTION 'MISSING_PROVIDER_MAPPING: Operation % has no associated provider_resource_mapping_id.', p_operation_id;
+    END IF;
 
-        IF NOT FOUND THEN
-            RAISE EXCEPTION 'INVALID_PROVIDER_MAPPING: Mapping % referenced by operation % is not active or does not belong to phone %.', v_op.provider_resource_mapping_id, p_operation_id, v_phone.id;
-        END IF;
+    SELECT * INTO v_map
+    FROM public.number_provider_mappings
+    WHERE id = v_op.provider_resource_mapping_id
+      AND phone_number_id = v_phone.id
+      AND provider_status = 'active'
+    FOR UPDATE;
 
-        UPDATE public.number_provider_mappings
-        SET provider_status = 'historical',
-            updated_at = NOW()
-        WHERE id = v_map.id;
-    ELSE
-        -- Fallback for legacy operations: mark active mapping for phone historical
-        UPDATE public.number_provider_mappings
-        SET provider_status = 'historical',
-            updated_at = NOW()
-        WHERE phone_number_id = v_phone.id
-          AND provider_status = 'active';
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'INVALID_PROVIDER_MAPPING: Mapping % referenced by operation % is not active or does not belong to phone %.', v_op.provider_resource_mapping_id, p_operation_id, v_phone.id;
+    END IF;
+
+    -- Provider identity validation
+    IF v_map.provider <> v_op.provider THEN
+        RAISE EXCEPTION 'INVALID_PROVIDER_MAPPING: Mapping provider % does not match operation provider %.', v_map.provider, v_op.provider;
     END IF;
 
     -- 6. Execute Atomic Local Completion Mutations
-    -- A. Update release operation
+    -- A. Update exact validated mapping to historical
+    UPDATE public.number_provider_mappings
+    SET provider_status = 'historical',
+        updated_at = NOW()
+    WHERE id = v_map.id;
+
+    -- B. Update release operation
     UPDATE public.number_release_operations
     SET status = 'released',
         customer_safe_status = 'Number successfully released',
@@ -184,14 +185,14 @@ BEGIN
         updated_at = NOW()
     WHERE id = p_operation_id;
 
-    -- B. Update phone number status -> released, active = false (using canonical active column only)
+    -- C. Update phone number status -> released, active = false (canonical active column)
     UPDATE public.phone_numbers
     SET status = 'released',
         active = false,
         updated_at = NOW()
     WHERE id = v_phone.id;
 
-    -- C. Terminate organization billable resource -> status = terminated (UUID resource_id identity only)
+    -- D. Terminate organization billable resource -> status = terminated (UUID resource_id identity)
     UPDATE public.organization_billable_resources
     SET status = 'terminated',
         effective_end_at = v_released_ts,
