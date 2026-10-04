@@ -236,9 +236,9 @@ export class TwilioInventoryProvider {
           postalCode: item.postalCode || null,
           addressRequirements: item.addressRequirements || 'none',
           capabilities: {
-            voice: Boolean(rawCap.voice),
-            sms: Boolean(rawCap.sms),
-            mms: Boolean(rawCap.mms),
+            voice: Boolean(rawCap.voice ?? rawCap.Voice),
+            sms: Boolean(rawCap.sms ?? rawCap.SMS ?? rawCap.Sms),
+            mms: Boolean(rawCap.mms ?? rawCap.MMS ?? rawCap.Mms),
           },
           beta: item.beta !== undefined ? Boolean(item.beta) : null,
           regulatoryMetadata: {

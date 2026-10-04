@@ -95,11 +95,16 @@ export async function GET(request: Request) {
       );
     }
 
-    // Filter out platform-global active owned numbers and active purchase operation locks
+    // Filter out platform-global active owned numbers, active purchase operation locks,
+    // and apply defensive server-side fail-closed capability verification
     const suppressedSet = suppressionRes.suppressedSet;
-    const cleanNumbers = rawNumbers.filter(
-      (item) => !suppressedSet.has(item.phoneNumber)
-    );
+    const cleanNumbers = rawNumbers.filter((item) => {
+      if (suppressedSet.has(item.phoneNumber)) return false;
+      if (voiceEnabled === true && !item.capabilities.voice) return false;
+      if (smsEnabled === true && !item.capabilities.sms) return false;
+      if (mmsEnabled === true && !item.capabilities.mms) return false;
+      return true;
+    });
 
     // Entitlement resolution for UI awareness
     const adminSupabase = createAdminClient();
