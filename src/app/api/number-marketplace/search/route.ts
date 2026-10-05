@@ -54,8 +54,8 @@ export async function GET(request: Request) {
     const smsEnabled = smsParam === 'true' ? true : smsParam === 'false' ? false : undefined;
     const mmsEnabled = mmsParam === 'true' ? true : mmsParam === 'false' ? false : undefined;
 
-    const limitParam = parseInt(searchParams.get('limit') || '20', 10);
-    const limit = Math.min(Math.max(isNaN(limitParam) ? 20 : limitParam, 1), 50);
+    const limitParam = parseInt(searchParams.get('limit') || '50', 10);
+    const limit = Math.min(Math.max(isNaN(limitParam) ? 50 : limitParam, 1), 100);
 
     const provider = new TwilioInventoryProvider();
 

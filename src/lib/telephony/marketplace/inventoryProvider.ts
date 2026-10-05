@@ -171,7 +171,7 @@ export class TwilioInventoryProvider {
   async searchAvailableNumbers(query: InventorySearchQuery): Promise<InventoryNumberItem[]> {
     const countryCode = (query.countryCode || 'US').toUpperCase();
     const numberType: NumberCategory = query.numberType || 'local';
-    const limit = Math.min(Math.max(query.limit || 20, 1), 50);
+    const limit = Math.min(Math.max(query.limit || 50, 1), 100);
 
     const capabilitiesMap = this.getFilterCapabilities(countryCode, numberType);
 

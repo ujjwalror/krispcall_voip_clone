@@ -150,6 +150,11 @@ export default function NumberMarketplacePage() {
   });
   const [entitlements, setEntitlements] = useState<EntitlementsInfo | null>(null);
 
+  // Pagination State
+  const [searchLimit, setSearchLimit] = useState<number>(50);
+  const [hasMore, setHasMore] = useState<boolean>(false);
+  const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
+
   // Loading & Error States
   const [isLoadingCountries, setIsLoadingCountries] = useState<boolean>(true);
   const [isSearching, setIsSearching] = useState<boolean>(false);
@@ -382,14 +387,32 @@ export default function NumberMarketplacePage() {
     }
   }, [selectedCountry, supportedNumberTypes, selectedType]);
 
+  // Reset search limit to 50 whenever filters change
+  useEffect(() => {
+    setSearchLimit(50);
+  }, [
+    selectedCountry,
+    selectedType,
+    containsInput,
+    areaCodeInput,
+    localityInput,
+    regionInput,
+    postalCodeInput,
+    voiceOnly,
+    smsOnly,
+    mmsOnly,
+  ]);
+
   // 2. Perform inventory search
-  const performSearch = useCallback(async () => {
+  const performSearch = useCallback(async (targetLimit?: number) => {
+    const limitToUse = targetLimit || searchLimit;
     setIsSearching(true);
     setSearchError(null);
     try {
       const queryParams = new URLSearchParams();
       queryParams.set('country', selectedCountry);
       queryParams.set('type', selectedType);
+      queryParams.set('limit', limitToUse.toString());
       if (containsInput.trim()) queryParams.set('contains', containsInput.trim());
       if (areaCodeInput.trim()) queryParams.set('areaCode', areaCodeInput.trim());
       if (localityInput.trim()) queryParams.set('locality', localityInput.trim());
@@ -403,7 +426,9 @@ export default function NumberMarketplacePage() {
       const json = await res.json();
 
       if (res.ok && json.success) {
-        setNumbers(json.numbers || []);
+        const fetchedNumbers: InventoryNumberItem[] = json.numbers || [];
+        setNumbers(fetchedNumbers);
+        setHasMore(fetchedNumbers.length >= limitToUse && limitToUse < 100);
         if (json.filterCapabilities) {
           setFilterCapabilities(json.filterCapabilities);
         }
@@ -418,10 +443,12 @@ export default function NumberMarketplacePage() {
       setSearchError('Network error searching inventory. Please try again.');
     } finally {
       setIsSearching(false);
+      setIsLoadingMore(false);
     }
   }, [
     selectedCountry,
     selectedType,
+    searchLimit,
     containsInput,
     areaCodeInput,
     localityInput,
@@ -431,6 +458,13 @@ export default function NumberMarketplacePage() {
     smsOnly,
     mmsOnly,
   ]);
+
+  const handleLoadMore = async () => {
+    setIsLoadingMore(true);
+    const nextLimit = Math.min(searchLimit + 50, 100);
+    setSearchLimit(nextLimit);
+    await performSearch(nextLimit);
+  };
 
   useEffect(() => {
     performSearch();
@@ -934,7 +968,7 @@ export default function NumberMarketplacePage() {
           </div>
 
           <Button
-            onClick={performSearch}
+            onClick={() => performSearch()}
             disabled={isSearching}
             className="text-xs px-4 h-9 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg flex items-center gap-2"
           >
@@ -953,8 +987,8 @@ export default function NumberMarketplacePage() {
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
             <span>Available Numbers</span>
-            <span className="px-2 py-0.5 rounded-full text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
-              {numbers.length} Found
+            <span className="px-2 py-0.5 rounded-full text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-semibold">
+              Showing {numbers.length} {numbers.length === 1 ? 'Number' : 'Numbers'}
             </span>
           </h2>
         </div>
@@ -976,7 +1010,7 @@ export default function NumberMarketplacePage() {
                 </h4>
                 <p className="text-xs text-rose-700 dark:text-rose-300 mt-1">{searchError}</p>
                 <Button
-                  onClick={performSearch}
+                  onClick={() => performSearch()}
                   variant="outline"
                   className="mt-3 text-xs border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-200"
                 >
@@ -999,86 +1033,108 @@ export default function NumberMarketplacePage() {
             </p>
           </Card>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {numbers.map((num) => {
-              const locationParts = [num.locality, num.region, num.countryCode].filter(Boolean);
-              const locationStr = locationParts.join(', ');
-              const reqAddress = num.addressRequirements && num.addressRequirements !== 'none';
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {numbers.map((num) => {
+                const locationParts = [num.locality, num.region, num.countryCode].filter(Boolean);
+                const locationStr = locationParts.join(', ');
+                const reqAddress = num.addressRequirements && num.addressRequirements !== 'none';
 
-              return (
-                <Card
-                  key={num.phoneNumber}
-                  className="p-4 flex flex-col justify-between space-y-3 border-slate-200/80 dark:border-slate-800/80 hover:border-blue-500/50 dark:hover:border-blue-500/50 transition-all"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-base font-bold text-slate-900 dark:text-slate-100 tracking-tight">
-                          {num.friendlyDisplay || num.phoneNumber}
-                        </span>
-                        <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-                          {num.numberType.replace('_', ' ')}
-                        </span>
-                      </div>
-                      {locationStr && (
-                        <div className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400 mt-1">
-                          <MapPin className="w-3 h-3 shrink-0 text-slate-400" />
-                          <span>{locationStr}</span>
+                return (
+                  <Card
+                    key={num.phoneNumber}
+                    className="p-4 flex flex-col justify-between space-y-3 border-slate-200/80 dark:border-slate-800/80 hover:border-blue-500/50 dark:hover:border-blue-500/50 transition-all"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-base font-bold text-slate-900 dark:text-slate-100 tracking-tight">
+                            {num.friendlyDisplay || num.phoneNumber}
+                          </span>
+                          <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                            {num.numberType.replace('_', ' ')}
+                          </span>
                         </div>
+                        {locationStr && (
+                          <div className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400 mt-1">
+                            <MapPin className="w-3 h-3 shrink-0 text-slate-400" />
+                            <span>{locationStr}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {reqAddress && (
+                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/60 shrink-0">
+                          Address Req.
+                        </span>
                       )}
                     </div>
 
-                    {reqAddress && (
-                      <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/60 shrink-0">
-                        Address Req.
-                      </span>
-                    )}
-                  </div>
+                    {/* Capabilities Indicators & Select Action */}
+                    <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800/80">
+                      <div className="flex items-center gap-3 text-xs font-medium text-slate-600 dark:text-slate-400">
+                        <span
+                          className={`flex items-center gap-1 ${
+                            num.capabilities.voice
+                              ? 'text-emerald-600 dark:text-emerald-400 font-semibold'
+                              : 'text-slate-400 line-through'
+                          }`}
+                        >
+                          <Phone className="w-3 h-3" /> Voice
+                        </span>
+                        <span
+                          className={`flex items-center gap-1 ${
+                            num.capabilities.sms
+                              ? 'text-emerald-600 dark:text-emerald-400 font-semibold'
+                              : 'text-slate-400 line-through'
+                          }`}
+                        >
+                          <MessageSquare className="w-3 h-3" /> SMS
+                        </span>
+                        <span
+                          className={`flex items-center gap-1 ${
+                            num.capabilities.mms
+                              ? 'text-emerald-600 dark:text-emerald-400 font-semibold'
+                              : 'text-slate-400 opacity-60'
+                          }`}
+                        >
+                          <Volume2 className="w-3 h-3" /> MMS
+                        </span>
+                      </div>
 
-                  {/* Capabilities Indicators & Select Action */}
-                  <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800/80">
-                    <div className="flex items-center gap-3 text-xs font-medium text-slate-600 dark:text-slate-400">
-                      <span
-                        className={`flex items-center gap-1 ${
-                          num.capabilities.voice
-                            ? 'text-emerald-600 dark:text-emerald-400 font-semibold'
-                            : 'text-slate-400 line-through'
-                        }`}
+                      <Button
+                        size="sm"
+                        onClick={() => handleOpenNumberModal(num)}
+                        className="text-xs px-3 h-7 bg-blue-600 hover:bg-blue-700 text-white font-semibold flex items-center gap-1.5"
                       >
-                        <Phone className="w-3 h-3" /> Voice
-                      </span>
-                      <span
-                        className={`flex items-center gap-1 ${
-                          num.capabilities.sms
-                            ? 'text-emerald-600 dark:text-emerald-400 font-semibold'
-                            : 'text-slate-400 line-through'
-                        }`}
-                      >
-                        <MessageSquare className="w-3 h-3" /> SMS
-                      </span>
-                      <span
-                        className={`flex items-center gap-1 ${
-                          num.capabilities.mms
-                            ? 'text-emerald-600 dark:text-emerald-400 font-semibold'
-                            : 'text-slate-400 opacity-60'
-                        }`}
-                      >
-                        <Volume2 className="w-3 h-3" /> MMS
-                      </span>
+                        <span>View Details</span>
+                      </Button>
                     </div>
+                  </Card>
+                );
+              })}
+            </div>
 
-                    <Button
-                      size="sm"
-                      onClick={() => handleOpenNumberModal(num)}
-                      className="text-xs px-3 h-7 bg-blue-600 hover:bg-blue-700 text-white font-semibold flex items-center gap-1.5"
-                    >
-                      <span>View Details</span>
-                    </Button>
-                  </div>
-                </Card>
-              );
-            })}
-          </div>
+            {hasMore && (
+              <div className="pt-4 text-center">
+                <Button
+                  onClick={handleLoadMore}
+                  disabled={isLoadingMore || isSearching}
+                  variant="outline"
+                  className="text-xs px-6 py-2 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg inline-flex items-center gap-2"
+                >
+                  {isLoadingMore ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />
+                      <span>Loading more numbers...</span>
+                    </>
+                  ) : (
+                    <span>Load More Numbers</span>
+                  )}
+                </Button>
+              </div>
+            )}
+          </>
         )}
       </div>
 
