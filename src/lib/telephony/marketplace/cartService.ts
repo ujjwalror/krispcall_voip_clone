@@ -122,30 +122,9 @@ export class MarketplaceCartService {
       console.warn('[MarketplaceCartService] Entitlement check warning:', err.message || err);
     }
 
-    // 4. Live Provider Availability Re-check
-    let inventoryAvailable = true;
-    try {
-      const provider = new TwilioInventoryProvider();
-      const searchRes = await provider.searchAvailableNumbers({
-        countryCode: candidate.countryCode,
-        numberType: candidate.numberType,
-        contains: candidate.phoneNumber,
-        limit: 10,
-      });
-      const freshResults = searchRes.numbers || [];
-
-      // Check if candidate number is present in fresh provider inventory search
-      const match = freshResults.find(
-        (res: any) => res.phoneNumber === candidate.phoneNumber || res.providerReference === candidate.phoneNumber
-      );
-
-      if (!match && freshResults.length > 0) {
-        // If specific number search didn't return it, attempt exact search without contains filter if possible
-        inventoryAvailable = true; // Temporary cart does not hard-fail if inventory search was coarse
-      }
-    } catch (err: any) {
-      console.warn('[MarketplaceCartService] Live provider re-check warning:', err.message || err);
-    }
+    // 4. Live Provider Availability Status
+    // Candidate was selected from live inventory search. Exact E.164 availability is revalidated at purchase readiness / purchase boundary.
+    const inventoryAvailable = true;
 
     const valid = entitlementAllowed && price.hasConfiguredPrice && commercialEnablement.launchEnabled;
 

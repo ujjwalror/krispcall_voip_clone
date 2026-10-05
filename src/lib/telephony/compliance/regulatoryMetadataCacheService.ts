@@ -105,6 +105,14 @@ const inFlightPromises = new Map<string, Promise<NormalizedRegulatoryPreCheckRes
  */
 export class RegulatoryMetadataCacheService {
   /**
+   * Clears in-memory L1 cache and in-flight promise registry.
+   */
+  static clearL1Cache(): void {
+    l1MemoryCache.clear();
+    inFlightPromises.clear();
+  }
+
+  /**
    * Generates a isolated provider/account/country/type cache key.
    */
   static generateCacheKey(params: CacheLookupParams): string {

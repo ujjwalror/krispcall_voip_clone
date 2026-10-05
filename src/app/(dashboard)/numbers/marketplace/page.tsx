@@ -521,50 +521,22 @@ export default function NumberMarketplacePage() {
         setPreCheckResult(cached);
         setIsEvaluatingPreCheck(false);
       } else {
-        setPreCheckResult(null); // Clear stale requirements immediately!
+        setPreCheckResult(null); // Clear stale requirements when un-cached!
         setIsEvaluatingPreCheck(true);
       }
 
-      try {
-        const fetchPromises: Promise<any>[] = [
-          fetch('/api/number-marketplace/cart', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              candidate: {
-                phoneNumber: num.phoneNumber,
-                countryCode: num.countryCode,
-                numberType: num.numberType,
-                friendlyDisplay: num.friendlyDisplay,
-                endUserType: userType,
-                locality: num.locality,
-                region: num.region,
-                capabilities: num.capabilities,
-              },
-            }),
-          }),
-        ];
-
-        if (!cached) {
-          fetchPromises.unshift(
-            fetch(`/api/number-marketplace/regulatory-precheck?countryCode=${num.countryCode}&numberType=${num.numberType}&endUserType=${userType}`)
+      // 1. Regulatory Precheck Promise (If un-cached, resolves category regulatory status immediately)
+      const regPromise = (async () => {
+        if (cached) return;
+        try {
+          const res = await fetch(
+            `/api/number-marketplace/regulatory-precheck?countryCode=${num.countryCode}&numberType=${num.numberType}&endUserType=${userType}`
           );
-        }
-
-        const responses = await Promise.all(fetchPromises);
-        if (currentReqId !== preCheckReqIdRef.current) {
-          // Stale request! Discard because user rapidly switched registration type again.
-          return;
-        }
-
-        let preCheckRes = !cached ? responses[0] : null;
-        let cartValRes = !cached ? responses[1] : responses[0];
-
-        if (preCheckRes) {
-          const preCheckJson = await preCheckRes.json();
-          if (preCheckRes.ok && preCheckJson.success && preCheckJson.preCheck) {
-            preCheckCacheRef.current[cacheKey] = preCheckJson.preCheck;
-            setPreCheckResult(preCheckJson.preCheck);
+          if (currentReqId !== preCheckReqIdRef.current) return;
+          const json = await res.json();
+          if (res.ok && json.success && json.preCheck) {
+            preCheckCacheRef.current[cacheKey] = json.preCheck;
+            setPreCheckResult(json.preCheck);
           } else {
             setPreCheckResult({
               status: 'unavailable',
@@ -579,15 +551,54 @@ export default function NumberMarketplacePage() {
               message: 'Verification requirement lookup is temporarily unavailable.',
             });
           }
+        } catch (err) {
+          if (currentReqId !== preCheckReqIdRef.current) return;
+          console.error('[Marketplace] Error evaluating regulatory precheck:', err);
+          setPreCheckResult({
+            status: 'error',
+            regulationId: null,
+            countryCode: num.countryCode,
+            numberType: num.numberType,
+            endUserType: userType,
+            addressRequirement: null,
+            endUserRequirements: [],
+            supportingDocumentRequirements: [],
+            bundleRequired: false,
+            message: 'Error looking up verification requirements. Click to retry.',
+          });
+        } finally {
+          if (currentReqId === preCheckReqIdRef.current) {
+            setIsEvaluatingPreCheck(false);
+          }
         }
+      })();
 
-        if (cartValRes) {
-          const cartValJson = await cartValRes.json();
-          if (cartValRes.ok && cartValJson.success && cartValJson.validation) {
+      // 2. Authoritative Retail Price Resolution (Runs concurrently)
+      const pricePromise = (async () => {
+        try {
+          const res = await fetch('/api/number-marketplace/cart', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              candidate: {
+                phoneNumber: num.phoneNumber,
+                countryCode: num.countryCode,
+                numberType: num.numberType,
+                friendlyDisplay: num.friendlyDisplay,
+                endUserType: userType,
+                locality: num.locality,
+                region: num.region,
+                capabilities: num.capabilities,
+              },
+            }),
+          });
+          if (currentReqId !== preCheckReqIdRef.current) return;
+          const json = await res.json();
+          if (res.ok && json.success && json.validation) {
             setResolvedPrice({
-              hasConfiguredPrice: cartValJson.validation.price.hasConfiguredPrice,
-              monthlyPriceFormatted: cartValJson.validation.price.monthlyPriceFormatted,
-              currency: cartValJson.validation.price.currency,
+              hasConfiguredPrice: json.validation.price.hasConfiguredPrice,
+              monthlyPriceFormatted: json.validation.price.monthlyPriceFormatted,
+              currency: json.validation.price.currency,
             });
           } else {
             setResolvedPrice({
@@ -596,33 +607,22 @@ export default function NumberMarketplacePage() {
               currency: 'USD',
             });
           }
+        } catch (err) {
+          if (currentReqId !== preCheckReqIdRef.current) return;
+          console.error('[Marketplace] Error resolving retail price:', err);
+          setResolvedPrice({
+            hasConfiguredPrice: false,
+            monthlyPriceFormatted: null,
+            currency: 'USD',
+          });
+        } finally {
+          if (currentReqId === preCheckReqIdRef.current) {
+            setIsResolvingPrice(false);
+          }
         }
-      } catch (err) {
-        if (currentReqId !== preCheckReqIdRef.current) return;
-        console.error('[Marketplace] Error evaluating pre-check & pricing:', err);
-        setResolvedPrice({
-          hasConfiguredPrice: false,
-          monthlyPriceFormatted: null,
-          currency: 'USD',
-        });
-        setPreCheckResult({
-          status: 'error',
-          regulationId: null,
-          countryCode: num.countryCode,
-          numberType: num.numberType,
-          endUserType: userType,
-          addressRequirement: null,
-          endUserRequirements: [],
-          supportingDocumentRequirements: [],
-          bundleRequired: false,
-          message: 'Error looking up verification requirements. Click to retry.',
-        });
-      } finally {
-        if (currentReqId === preCheckReqIdRef.current) {
-          setIsEvaluatingPreCheck(false);
-          setIsResolvingPrice(false);
-        }
-      }
+      })();
+
+      await Promise.allSettled([regPromise, pricePromise]);
     },
     []
   );
