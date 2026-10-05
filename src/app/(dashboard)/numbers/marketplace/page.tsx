@@ -379,7 +379,7 @@ export default function NumberMarketplacePage() {
 
   // Derive supported number types for currently selected country
   const currentCountryObj = countries.find((c) => c.countryCode === selectedCountry);
-  const supportedNumberTypes = currentCountryObj?.supportedTypes || ['local', 'mobile', 'toll_free'];
+  const supportedNumberTypes = currentCountryObj?.supportedTypes || [];
 
   useEffect(() => {
     if (!supportedNumberTypes.includes(selectedType)) {

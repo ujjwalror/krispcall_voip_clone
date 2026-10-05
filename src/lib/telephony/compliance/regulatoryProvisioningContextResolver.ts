@@ -1,6 +1,7 @@
 import 'server-only';
 import { createClient } from '@supabase/supabase-js';
 import { RegulatoryProvisioningContext } from '../commerce/types';
+import { RegulatoryPreCheckService } from '../marketplace/regulatoryPreCheckService';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
@@ -26,7 +27,7 @@ export class RegulatoryProvisioningContextResolver {
   /**
    * Evaluates and resolves the authoritative regulatory provisioning context immediately prior to purchase dispatch.
    * STRICT FAIL-CLOSED: Rejects stale, pending, rejected, incompatible, or missing required regulatory resources.
-   * Does NOT manufacture fake SIDs for countries where verification is not required.
+   * Dynamically evaluates provider regulatory requirements without relying on hardcoded country lists.
    */
   static async resolveProvisioningContext(
     params: ResolveRegulatoryContextParams
@@ -38,11 +39,24 @@ export class RegulatoryProvisioningContextResolver {
     const provider = 'twilio';
     const countryCode = params.countryCode.toUpperCase();
     const numberType = params.numberType.toLowerCase();
+    const endUserType = params.endUserType || 'business';
     const nowIso = new Date().toISOString();
 
-    // Countries requiring regulatory bundle verification (e.g., DE, AU, GB, FR, etc.)
-    const REGULATORY_REQUIRED_COUNTRIES = new Set(['AU', 'DE', 'GB', 'FR', 'IT', 'ES', 'NL', 'BE', 'SG', 'JP']);
-    const isVerificationRequired = REGULATORY_REQUIRED_COUNTRIES.has(countryCode);
+    // Dynamically evaluate provider regulatory requirements via Regulations API
+    const preCheck = await RegulatoryPreCheckService.evaluateRequirements(
+      countryCode,
+      numberType,
+      endUserType
+    );
+
+    // Fail-closed safety: If provider regulatory check timed out, errored, or returned unavailable state
+    if (preCheck.status === 'error' || preCheck.status === 'unavailable') {
+      throw new Error(
+        `REGULATORY_RESOURCE_UNAVAILABLE: Unable to verify provider regulatory compliance requirements for country ${countryCode} (${numberType}).`
+      );
+    }
+
+    const isVerificationRequired = preCheck.bundleRequired || preCheck.status === 'requirements_found';
 
     if (!isVerificationRequired) {
       // No verification required path -> Return explicit no-additional-verification context without fake SIDs
@@ -51,8 +65,8 @@ export class RegulatoryProvisioningContextResolver {
           provider,
           countryCode,
           numberType,
-          endUserType: params.endUserType || null,
-          regulationSid: null,
+          endUserType,
+          regulationSid: preCheck.regulationId || null,
           complianceProfileId: null,
           bundleSid: null,
           addressSid: null,

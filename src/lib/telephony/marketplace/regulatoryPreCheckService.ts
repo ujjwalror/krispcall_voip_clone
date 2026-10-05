@@ -460,134 +460,6 @@ export class RegulatoryPreCheckService {
     } catch (err: any) {
       console.warn('[RegulatoryPreCheckService] Provider Regulations API query failed:', err.message || err);
 
-      // In local dev or automated test environment without live Twilio credentials, provide offline canonical regulation snapshot for AU
-      if (cc === 'AU') {
-        if (endUserType === 'business') {
-          return {
-            status: 'requirements_found',
-            regulationId: 'RN_MOCK_AU_LOCAL_BUSINESS',
-            countryCode: cc,
-            numberType: domainNumberType,
-            endUserType,
-            addressRequirement: 'any',
-            endUserRequirements: [
-              {
-                fieldKey: 'business_name',
-                groupKey: 'business_info',
-                friendlyName: 'Legal Business Name',
-                required: true,
-                description: 'Official registered name of the business.',
-                inputType: 'text',
-              },
-              {
-                fieldKey: 'business_registration_number',
-                groupKey: 'business_info',
-                friendlyName: 'Business Registration Number',
-                required: true,
-                description: 'Official business registration number (ABN/ACN).',
-                inputType: 'text',
-              },
-              {
-                fieldKey: 'first_name',
-                groupKey: 'business_info',
-                friendlyName: 'Authorized Representative First Name',
-                required: true,
-                description: 'First name of authorized representative.',
-                inputType: 'text',
-              },
-              {
-                fieldKey: 'last_name',
-                groupKey: 'business_info',
-                friendlyName: 'Authorized Representative Last Name',
-                required: true,
-                description: 'Last name of authorized representative.',
-                inputType: 'text',
-              },
-              {
-                fieldKey: 'business_identity',
-                groupKey: 'business_info',
-                friendlyName: 'Business Classification',
-                required: true,
-                description: 'Provider business classification [DIRECT_CUSTOMER, INDEPENDENT_SOFTWARE_VENDOR]',
-                inputType: 'radio',
-                options: [
-                  { label: 'Direct Customer', value: 'DIRECT_CUSTOMER' },
-                  { label: 'Independent Software Vendor', value: 'INDEPENDENT_SOFTWARE_VENDOR' },
-                ],
-              },
-              {
-                fieldKey: 'is_subassigned',
-                groupKey: 'business_info',
-                friendlyName: 'Is Subassigned',
-                required: true,
-                description: 'Is this number assigned to end customer? [YES, NO]',
-                inputType: 'radio',
-                options: [
-                  { label: 'Yes', value: 'YES' },
-                  { label: 'No', value: 'NO' },
-                ],
-              },
-            ],
-            supportingDocumentRequirements: [
-              {
-                requirementKey: 'business_name_info',
-                name: 'Business Name Proof',
-                description: 'Official document showing legal business name.',
-                acceptedDocuments: [{ name: 'Commercial Register Extract', type: 'business_registration' }],
-                fileEvidenceRequired: true,
-              },
-              {
-                requirementKey: 'business_address_proof_info',
-                name: 'Business Address Proof',
-                description: 'Utility bill or bank statement showing business address.',
-                acceptedDocuments: [{ name: 'Utility Bill', type: 'utility_bill' }],
-                fileEvidenceRequired: true,
-              },
-            ],
-            bundleRequired: true,
-            message: 'Regulatory requirements identified for Australia Local Business.',
-          };
-        } else {
-          return {
-            status: 'requirements_found',
-            regulationId: 'RN_MOCK_AU_LOCAL_INDIVIDUAL',
-            countryCode: cc,
-            numberType: domainNumberType,
-            endUserType: 'individual',
-            addressRequirement: 'any',
-            endUserRequirements: [
-              {
-                fieldKey: 'first_name',
-                groupKey: 'individual_info',
-                friendlyName: 'Legal First Name',
-                required: true,
-                description: 'First name as shown on official ID.',
-                inputType: 'text',
-              },
-              {
-                fieldKey: 'last_name',
-                groupKey: 'individual_info',
-                friendlyName: 'Legal Last Name',
-                required: true,
-                description: 'Last name as shown on official ID.',
-                inputType: 'text',
-              },
-            ],
-            supportingDocumentRequirements: [
-              {
-                requirementKey: 'individual_identity_proof',
-                name: 'Identity Document',
-                description: 'Passport or Drivers License.',
-                acceptedDocuments: [{ name: 'Passport', type: 'passport' }],
-                fileEvidenceRequired: true,
-              },
-            ],
-            bundleRequired: true,
-            message: 'Regulatory requirements identified for Australia Local Individual.',
-          };
-        }
-      }
-
       return {
         status: 'unavailable',
         regulationId: null,
@@ -598,7 +470,7 @@ export class RegulatoryPreCheckService {
         endUserRequirements: [],
         supportingDocumentRequirements: [],
         bundleRequired: false,
-        message: 'Provider regulatory pre-check is temporarily unavailable.',
+        message: 'Verification requirements are temporarily unavailable. Please try again.',
       };
     }
   }
