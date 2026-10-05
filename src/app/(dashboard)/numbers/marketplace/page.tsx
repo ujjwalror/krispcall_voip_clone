@@ -679,7 +679,7 @@ export default function NumberMarketplacePage() {
       if (res.ok && json.success && json.validation) {
         const val = json.validation;
         const isVerifReq = val.preCheck.bundleRequired || val.preCheck.status === 'requirements_found';
-        const isNoReq = val.preCheck.status === 'no_requirements';
+        const isNoReq = val.preCheck.status === 'no_additional_requirements' || val.preCheck.status === 'no_requirements';
 
         const newItem: CartItem = {
           id: `${selectedNumber.phoneNumber}_${endUserType}_${Date.now()}`,
