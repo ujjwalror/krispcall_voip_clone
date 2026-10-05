@@ -85,6 +85,18 @@ export class InboundVoiceAuthorizationService {
       );
     }
 
+    // Offboarding Telecom Eligibility Interlock
+    const { TelecomEligibilityService } = await import('@/lib/telephony/lifecycle/telecomEligibilityService');
+    const eligibility = await TelecomEligibilityService.canUseTelecom({
+      organizationId: phoneRecord.organization_id,
+      phoneNumberId: phoneRecord.id,
+      phoneNumberE164: cleanCalled,
+    });
+
+    if (!eligibility.allowed) {
+      throw new InboundVoiceAuthorizationError(eligibility.reason, 403, 'SERVICE_SUSPENDED');
+    }
+
     const organizationId = phoneRecord.organization_id;
     const trustedNumberType = phoneRecord.type || null;
     const trustedCountryCode = phoneRecord.country_code || 'US';

@@ -94,6 +94,17 @@ export class SmsAuthorizationService {
       throw new SmsAuthorizationError('Forbidden. Authenticated user profile or organization unconfigured.', 403);
     }
 
+    // Offboarding Telecom Eligibility Interlock
+    const { TelecomEligibilityService } = await import('@/lib/telephony/lifecycle/telecomEligibilityService');
+    const eligibility = await TelecomEligibilityService.canUseTelecom({
+      organizationId,
+      phoneNumberE164: fromNumber,
+    });
+
+    if (!eligibility.allowed) {
+      throw new SmsAuthorizationError(eligibility.reason, 403);
+    }
+
     const cleanSendId = (clientSendId || '').trim();
     if (!cleanSendId) {
       throw new SmsAuthorizationError('Client send request identifier (clientSendId) is required.', 400);

@@ -60,6 +60,21 @@ export class VoiceAuthorizationService {
       };
     }
 
+    // Offboarding Telecom Eligibility Interlock
+    const { TelecomEligibilityService } = await import('@/lib/telephony/lifecycle/telecomEligibilityService');
+    const eligibility = await TelecomEligibilityService.canUseTelecom({
+      organizationId,
+      phoneNumberE164: fromNumber,
+    });
+
+    if (!eligibility.allowed) {
+      return {
+        authorized: false,
+        failureReason: 'SERVICE_SUSPENDED',
+        customerMessage: eligibility.reason,
+      };
+    }
+
     // 1. Resolve exposure policy & enforcement mode
     let policyConfig: ExposurePolicyConfig;
     try {

@@ -240,4 +240,92 @@ export interface UnfundedCompanyLiabilityRecord {
   reason: string;
 }
 
+// ====================================================================
+// PHASE 14.3 OFFBOARDING LIFECYCLE ORCHESTRATION TYPES
+// ====================================================================
+
+export type OffboardingNextAction =
+  | 'NO_ACTION'
+  | 'ENTER_PAST_DUE'
+  | 'SUSPEND_SERVICE'
+  | 'ENTER_RELEASE_PENDING'
+  | 'MARK_ELIGIBLE_FOR_RELEASE'
+  | 'RESTORE_SERVICE'
+  | 'BLOCKED_BY_PORT_OUT'
+  | 'BLOCKED_BY_RECONCILIATION'
+  | 'BLOCKED_BY_POLICY'
+  | 'MANUAL_REVIEW_REQUIRED';
+
+export interface OffboardingEvaluationParams {
+  organizationId: string;
+  phoneNumberId: string;
+  phoneNumberE164: string;
+  saasEntitlementStatus?: SaaSEntitlementStatus;
+  paidThroughAt?: Date | string | null;
+  serviceEndedAt?: Date | string | null;
+  pastDueStartedAt?: Date | string | null;
+  suspendedAt?: Date | string | null;
+  releasePendingStartedAt?: Date | string | null;
+  currentLifecycleState?: NumberOffboardingState;
+  policy?: OffboardingPolicyRecord | null;
+  hasActivePortOut?: boolean;
+  hasProviderAmbiguity?: boolean;
+  hasLegalHold?: boolean;
+  finalReleaseNoticeSent?: boolean;
+}
+
+export interface OffboardingEvaluationResult {
+  nextAction: OffboardingNextAction;
+  reason: string;
+  blockers: string[];
+  targetState?: NumberOffboardingState;
+  shouldEmitNotification?: boolean;
+  notificationEventType?: OffboardingNotificationEventType;
+}
+
+export interface OffboardingExecutionResult {
+  success: boolean;
+  previousState: NumberOffboardingState;
+  newState: NumberOffboardingState;
+  nextAction: OffboardingNextAction;
+  notificationCreated: boolean;
+  notificationEventType?: OffboardingNotificationEventType;
+  reason: string;
+}
+
+export interface OffboardingBatchResult {
+  totalProcessed: number;
+  transitions: number;
+  blockedByPolicy: number;
+  blockedByPortOut: number;
+  blockedByReconciliation: number;
+  restored: number;
+  errors: number;
+}
+
+export interface CustomerOffboardingStatusDTO {
+  phoneNumberId: string;
+  phoneNumberE164: string;
+  status: NumberOffboardingState;
+  paidThroughAt: string | null;
+  serviceEndedAt: string | null;
+  actionRequired: boolean;
+  actionMessage: string;
+  numberAtRisk: boolean;
+  portOutOptionsAvailable: boolean;
+}
+
+export interface AdminOffboardingSummaryDTO {
+  totalTracked: number;
+  activeCount: number;
+  pastDueCount: number;
+  suspendedCount: number;
+  releasePendingCount: number;
+  releaseEligibleCount: number;
+  unfundedCompanyLiabilityCount: number;
+  blockedByPortOutCount: number;
+  reconciliationRequiredCount: number;
+}
+
+
 
