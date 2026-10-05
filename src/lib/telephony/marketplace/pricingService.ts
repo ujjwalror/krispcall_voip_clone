@@ -21,17 +21,28 @@ export interface ServerRetailPriceResult {
   note?: string;
 }
 
+const serverPriceL1Cache = new Map<string, { result: ServerRetailPriceResult; expiresAt: number }>();
+const PRICE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes TTL
+
 /**
  * Service for resolving authoritative server-side retail prices for business phone numbers.
  * Supports explicit price overrides and server-authoritative pricing policy rules.
  */
 export class RetailPricingService {
   /**
+   * Clears server-side L1 price cache.
+   */
+  static clearL1Cache(): void {
+    serverPriceL1Cache.clear();
+  }
+
+  /**
    * Resolves the authoritative active retail price for a phone number category in a country.
    * Hierarchy:
-   * 1. Explicit active override in public.phone_number_retail_prices.
-   * 2. Active pricing policy in public.phone_number_pricing_policies + provider wholesale cost.
-   * 3. Fail-closed: returns hasConfiguredPrice: false.
+   * 1. In-memory L1 Cache.
+   * 2. Explicit active override in public.phone_number_retail_prices.
+   * 3. Active pricing policy in public.phone_number_pricing_policies + provider wholesale cost.
+   * 4. Fail-closed: returns hasConfiguredPrice: false.
    */
   static async resolveRetailPrice(
     countryCode: string,
@@ -41,6 +52,12 @@ export class RetailPricingService {
     const cc = (countryCode || '').toUpperCase();
     const curr = (currency || 'USD').toUpperCase();
     const type = normalizeNumberType(numberType);
+
+    const cacheKey = `${cc}__${type}__${curr}`;
+    const cached = serverPriceL1Cache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.result;
+    }
 
     try {
       const supabase = createAdminClient();
@@ -63,7 +80,7 @@ export class RetailPricingService {
           currency: overrideData.currency || curr,
         }).format(major);
 
-        return {
+        const resObj: ServerRetailPriceResult = {
           hasConfiguredPrice: true,
           currency: overrideData.currency || curr,
           monthlyPriceMinor: minor,
@@ -73,6 +90,8 @@ export class RetailPricingService {
             pricingSource: 'explicit_override',
           },
         };
+        serverPriceL1Cache.set(cacheKey, { result: resObj, expiresAt: Date.now() + PRICE_CACHE_TTL_MS });
+        return resObj;
       }
 
       // 2. Check Active Pricing Policy
@@ -141,7 +160,7 @@ export class RetailPricingService {
             currency: curr,
           }).format(major);
 
-          return {
+          const resObj: ServerRetailPriceResult = {
             hasConfiguredPrice: true,
             currency: curr,
             monthlyPriceMinor: rawDerivedMinor,
@@ -155,6 +174,8 @@ export class RetailPricingService {
               grossMarginMinor: marginMinor,
             },
           };
+          serverPriceL1Cache.set(cacheKey, { result: resObj, expiresAt: Date.now() + PRICE_CACHE_TTL_MS });
+          return resObj;
         }
       }
 
@@ -192,7 +213,7 @@ export class RetailPricingService {
           currency: curr,
         }).format(major);
 
-        return {
+        const fallbackObj: ServerRetailPriceResult = {
           hasConfiguredPrice: true,
           currency: curr,
           monthlyPriceMinor: rawDerivedMinor,
@@ -206,6 +227,8 @@ export class RetailPricingService {
             grossMarginMinor: marginMinor,
           },
         };
+        serverPriceL1Cache.set(cacheKey, { result: fallbackObj, expiresAt: Date.now() + PRICE_CACHE_TTL_MS });
+        return fallbackObj;
       }
 
       // 4. Fail-Closed Default

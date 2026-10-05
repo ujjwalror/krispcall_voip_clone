@@ -506,28 +506,36 @@ export default function NumberMarketplacePage() {
 
   const preCheckReqIdRef = useRef(0);
   const preCheckCacheRef = useRef<Record<string, PreCheckResult>>({});
+  const priceCacheRef = useRef<Record<string, { hasConfiguredPrice: boolean; monthlyPriceFormatted: string | null; currency: string }>>({});
 
   // 3. Evaluate regulatory pre-check & server price when modal opens / endUserType changes
   const evaluatePreCheckAndPrice = useCallback(
     async (num: InventoryNumberItem, userType: 'business' | 'individual') => {
       const currentReqId = ++preCheckReqIdRef.current;
-      const cacheKey = `${num.countryCode}__${num.numberType}__${userType}`;
+      const regCacheKey = `${num.countryCode}__${num.numberType}__${userType}`;
+      const priceCacheKey = `${num.countryCode}__${num.numberType}`;
 
-      setIsResolvingPrice(true);
-      setResolvedPrice(null);
-
-      const cached = preCheckCacheRef.current[cacheKey];
-      if (cached) {
-        setPreCheckResult(cached);
+      const cachedReg = preCheckCacheRef.current[regCacheKey];
+      if (cachedReg) {
+        setPreCheckResult(cachedReg);
         setIsEvaluatingPreCheck(false);
       } else {
         setPreCheckResult(null); // Clear stale requirements when un-cached!
         setIsEvaluatingPreCheck(true);
       }
 
+      const cachedPrice = priceCacheRef.current[priceCacheKey];
+      if (cachedPrice) {
+        setResolvedPrice(cachedPrice);
+        setIsResolvingPrice(false);
+      } else {
+        setResolvedPrice(null);
+        setIsResolvingPrice(true);
+      }
+
       // 1. Regulatory Precheck Promise (If un-cached, resolves category regulatory status immediately)
       const regPromise = (async () => {
-        if (cached) return;
+        if (cachedReg) return;
         try {
           const res = await fetch(
             `/api/number-marketplace/regulatory-precheck?countryCode=${num.countryCode}&numberType=${num.numberType}&endUserType=${userType}`
@@ -535,7 +543,7 @@ export default function NumberMarketplacePage() {
           if (currentReqId !== preCheckReqIdRef.current) return;
           const json = await res.json();
           if (res.ok && json.success && json.preCheck) {
-            preCheckCacheRef.current[cacheKey] = json.preCheck;
+            preCheckCacheRef.current[regCacheKey] = json.preCheck;
             setPreCheckResult(json.preCheck);
           } else {
             setPreCheckResult({
@@ -573,8 +581,9 @@ export default function NumberMarketplacePage() {
         }
       })();
 
-      // 2. Authoritative Retail Price Resolution (Runs concurrently)
+      // 2. Authoritative Retail Price Resolution (If un-cached, runs concurrently)
       const pricePromise = (async () => {
+        if (cachedPrice) return;
         try {
           const res = await fetch('/api/number-marketplace/cart', {
             method: 'POST',
@@ -595,11 +604,13 @@ export default function NumberMarketplacePage() {
           if (currentReqId !== preCheckReqIdRef.current) return;
           const json = await res.json();
           if (res.ok && json.success && json.validation) {
-            setResolvedPrice({
+            const priceObj = {
               hasConfiguredPrice: json.validation.price.hasConfiguredPrice,
               monthlyPriceFormatted: json.validation.price.monthlyPriceFormatted,
               currency: json.validation.price.currency,
-            });
+            };
+            priceCacheRef.current[priceCacheKey] = priceObj;
+            setResolvedPrice(priceObj);
           } else {
             setResolvedPrice({
               hasConfiguredPrice: false,
@@ -628,7 +639,6 @@ export default function NumberMarketplacePage() {
   );
 
   const handleOpenNumberModal = (num: InventoryNumberItem) => {
-    preCheckCacheRef.current = {}; // Reset cache when selecting a new number
     setSelectedNumber(num);
     setCartFeedback(null);
     evaluatePreCheckAndPrice(num, endUserType);
