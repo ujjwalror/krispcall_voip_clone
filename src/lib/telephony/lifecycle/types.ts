@@ -144,3 +144,100 @@ export interface AutomaticReleaseEvaluationResult {
   blockers: string[];
 }
 
+// ====================================================================
+// PHASE 14.2 OFFBOARDING & FINANCIAL-LOSS-PREVENTION TYPES
+// ====================================================================
+
+export type NumberOffboardingState =
+  | 'active'
+  | 'past_due'
+  | 'suspended'
+  | 'release_pending'
+  | 'released';
+
+export type SaaSEntitlementStatus =
+  | 'active'
+  | 'canceling'
+  | 'canceled'
+  | 'expired'
+  | 'past_due';
+
+export type OffboardingNotificationEventType =
+  | 'saas_cancellation_received'
+  | 'service_end_approaching'
+  | 'retention_grace_warning'
+  | 'payment_renewal_required'
+  | 'service_suspended'
+  | 'number_release_pending'
+  | 'final_release_warning'
+  | 'number_released'
+  | 'service_restored'
+  | 'port_out_blocking_release';
+
+export interface OffboardingPolicyRecord {
+  id?: string;
+  organizationId?: string | null;
+  policyName: string;
+  advanceCancellationNoticeDays?: number | null;
+  pastDueRetentionDays?: number | null;
+  suspensionThresholdDays?: number | null;
+  releasePendingDurationDays?: number | null;
+  finalReleaseEligibilityDays?: number | null;
+  allowNumberOnlyRetention: boolean;
+  isActive: boolean;
+}
+
+export interface PhoneLifecycleStateRecord {
+  id?: string;
+  organizationId: string;
+  phoneNumberId: string;
+  phoneNumberE164: string;
+  lifecycleState: NumberOffboardingState;
+  saasEntitlementStatus: SaaSEntitlementStatus;
+  paidThroughAt?: string | Date | null;
+  serviceEndedAt?: string | Date | null;
+  pastDueStartedAt?: string | Date | null;
+  suspendedAt?: string | Date | null;
+  releasePendingStartedAt?: string | Date | null;
+  releasedAt?: string | Date | null;
+  unfundedCompanyLiability: boolean;
+  allowTelecomUsage: boolean;
+  policyId?: string | null;
+}
+
+export interface OffboardingNotificationRecord {
+  id?: string;
+  organizationId: string;
+  phoneNumberId: string;
+  phoneNumberE164: string;
+  eventType: OffboardingNotificationEventType;
+  idempotencyKey: string;
+  deliveryStatus: 'pending' | 'delivered' | 'failed' | 'skipped';
+  channel: 'in_app' | 'email' | 'sms' | 'system';
+  metadata?: Record<string, any>;
+  createdAt?: string;
+  deliveredAt?: string | null;
+}
+
+export interface TelecomEligibilityResult {
+  allowed: boolean;
+  lifecycleState: NumberOffboardingState;
+  saasEntitlementStatus: SaaSEntitlementStatus;
+  reason: string;
+  blockers: string[];
+}
+
+export interface UnfundedCompanyLiabilityRecord {
+  phoneNumberId: string;
+  phoneNumberE164: string;
+  organizationId: string;
+  lifecycleState: NumberOffboardingState;
+  saasEntitlementStatus: SaaSEntitlementStatus;
+  monthlyWholesaleCostMinor: number;
+  monthlyRetailPriceMinor: number;
+  currency: string;
+  unfundedDays: number;
+  reason: string;
+}
+
+
