@@ -137,12 +137,13 @@ export class StripePaymentElementService {
 
     // 2. Authoritative Exact Phone Number Availability Recheck
     const digitsOnly = phoneNumber.replace(/[^0-9]/g, '');
-    const inventory = await inventoryProvider.searchAvailableNumbers({
+    const inventoryResult = await inventoryProvider.searchAvailableNumbers({
       countryCode: cc,
       numberType: type as any,
       contains: digitsOnly,
       limit: 10,
     });
+    const inventory = inventoryResult.numbers || [];
 
     const isAvailable = inventory.some(
       (item: any) =>

@@ -126,16 +126,17 @@ export class MarketplaceCartService {
     let inventoryAvailable = true;
     try {
       const provider = new TwilioInventoryProvider();
-      const freshResults = await provider.searchAvailableNumbers({
+      const searchRes = await provider.searchAvailableNumbers({
         countryCode: candidate.countryCode,
         numberType: candidate.numberType,
         contains: candidate.phoneNumber,
         limit: 10,
       });
+      const freshResults = searchRes.numbers || [];
 
       // Check if candidate number is present in fresh provider inventory search
       const match = freshResults.find(
-        (res) => res.phoneNumber === candidate.phoneNumber || res.providerReference === candidate.phoneNumber
+        (res: any) => res.phoneNumber === candidate.phoneNumber || res.providerReference === candidate.phoneNumber
       );
 
       if (!match && freshResults.length > 0) {

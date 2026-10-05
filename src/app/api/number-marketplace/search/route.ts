@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireActiveSession } from '@/lib/auth/requireActiveSession';
 import { getOrganizationEntitlements } from '@/lib/entitlements/server';
-import { TwilioInventoryProvider, NumberCategory } from '@/lib/telephony/marketplace/inventoryProvider';
+import { TwilioInventoryProvider, NumberCategory, InvalidContinuationTokenError } from '@/lib/telephony/marketplace/inventoryProvider';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { MarketplaceSuppressionService } from '@/lib/telephony/marketplace/marketplaceSuppressionService';
 
@@ -56,14 +56,15 @@ export async function GET(request: Request) {
 
     const limitParam = parseInt(searchParams.get('limit') || '50', 10);
     const limit = Math.min(Math.max(isNaN(limitParam) ? 50 : limitParam, 1), 100);
+    const pageToken = searchParams.get('pageToken') || undefined;
 
     const provider = new TwilioInventoryProvider();
 
     // Evaluate dynamic filter capabilities for selected country + numberType
     const filterCapabilities = provider.getFilterCapabilities(countryCode, numberType);
 
-    // Execute live provider inventory search using applicable search parameters
-    const rawNumbers = await provider.searchAvailableNumbers({
+    // Execute live provider inventory search using applicable search parameters & pageToken
+    const searchResult = await provider.searchAvailableNumbers({
       countryCode,
       numberType,
       contains,
@@ -75,7 +76,10 @@ export async function GET(request: Request) {
       smsEnabled,
       mmsEnabled,
       limit,
+      pageToken,
     });
+
+    const rawNumbers = searchResult.numbers || [];
 
     // PLATFORM-GLOBAL MARKETPLACE SUPPRESSION
     // Extract returned candidate E.164 strings for suppression evaluation
@@ -134,6 +138,8 @@ export async function GET(request: Request) {
       filterCapabilities,
       numbers: cleanNumbers,
       count: cleanNumbers.length,
+      hasMore: searchResult.hasMore,
+      continuationToken: searchResult.continuationToken,
       entitlements: {
         currentActive: currentActiveNumbers || 0,
         maxActive: maxActiveNumbers,
@@ -146,6 +152,14 @@ export async function GET(request: Request) {
       },
     });
   } catch (error: any) {
+    if (error instanceof InvalidContinuationTokenError || error.name === 'InvalidContinuationTokenError') {
+      console.warn('[GET /api/number-marketplace/search] Invalid continuation token:', error.code, error.message);
+      return NextResponse.json(
+        { error: 'Invalid or expired continuation token. Please refresh your search.' },
+        { status: 400 }
+      );
+    }
+
     console.error('[GET /api/number-marketplace/search] Exception:', error.message || error);
     return NextResponse.json(
       { error: 'Internal server error searching number marketplace.' },

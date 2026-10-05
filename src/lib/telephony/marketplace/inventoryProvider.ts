@@ -1,4 +1,5 @@
 import 'server-only';
+import crypto from 'crypto';
 import { createTwilioServerClient } from '@/lib/twilio/client';
 
 export type NumberCategory = 'local' | 'mobile' | 'toll_free';
@@ -32,6 +33,13 @@ export interface InventorySearchQuery {
   smsEnabled?: boolean;
   mmsEnabled?: boolean;
   limit?: number;
+  pageToken?: string;
+}
+
+export interface InventorySearchResult {
+  numbers: InventoryNumberItem[];
+  hasMore: boolean;
+  continuationToken?: string;
 }
 
 export interface InventoryNumberItem {
@@ -68,6 +76,105 @@ export interface ProviderPricingAuditResult {
     currentPrice: number | null;
   }>;
   note: string;
+}
+
+export class InvalidContinuationTokenError extends Error {
+  public code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = 'InvalidContinuationTokenError';
+    this.code = code;
+  }
+}
+
+function computeQueryHash(query: InventorySearchQuery): string {
+  const parts = [
+    (query.countryCode || 'US').toUpperCase(),
+    query.numberType || 'local',
+    (query.contains || '').trim(),
+    (query.areaCode || '').trim(),
+    (query.locality || '').trim(),
+    (query.region || '').trim(),
+    (query.postalCode || '').trim(),
+    query.voiceEnabled === true ? 'v1' : query.voiceEnabled === false ? 'v0' : 'vX',
+    query.smsEnabled === true ? 's1' : query.smsEnabled === false ? 's0' : 'sX',
+    query.mmsEnabled === true ? 'm1' : query.mmsEnabled === false ? 'm0' : 'mX',
+  ];
+  return crypto.createHash('sha256').update(parts.join('|')).digest('hex').substring(0, 16);
+}
+
+function getContinuationHmacKey(): string {
+  return (
+    process.env.TELECOM_EXPERIMENT_HMAC_KEY ||
+    process.env.TWILIO_API_KEY_SECRET ||
+    process.env.TWILIO_AUTH_TOKEN ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    'krispcall-marketplace-continuation-v1'
+  );
+}
+
+function computeTokenHmac(version: number, pageNumber: number, filterHash: string, expiry: number): string {
+  const secret = getContinuationHmacKey();
+  const canonicalString = `v=${version}&p=${pageNumber}&h=${filterHash}&e=${expiry}`;
+  return crypto.createHmac('sha256', secret).update(canonicalString).digest('hex').substring(0, 16);
+}
+
+export function encodeContinuationToken(pageNumber: number, query: InventorySearchQuery): string {
+  const version = 1;
+  const filterHash = computeQueryHash(query);
+  const expiry = Date.now() + 24 * 60 * 60 * 1000; // 24-hour expiry
+  const sig = computeTokenHmac(version, pageNumber, filterHash, expiry);
+
+  const payload = {
+    v: version,
+    p: pageNumber,
+    h: filterHash,
+    e: expiry,
+    sig,
+  };
+  return Buffer.from(JSON.stringify(payload)).toString('base64url');
+}
+
+export function decodeContinuationToken(token: string | undefined, currentQuery: InventorySearchQuery): number {
+  if (!token) return 0;
+
+  let parsed: any;
+  try {
+    const jsonStr = Buffer.from(token, 'base64url').toString('utf8');
+    parsed = JSON.parse(jsonStr);
+  } catch (e) {
+    throw new InvalidContinuationTokenError('MALFORMED_TOKEN', 'Malformed continuation token structure.');
+  }
+
+  if (!parsed || typeof parsed !== 'object' || typeof parsed.p !== 'number' || parsed.p < 0) {
+    throw new InvalidContinuationTokenError('MALFORMED_TOKEN', 'Invalid continuation token fields.');
+  }
+
+  if (parsed.v !== 1) {
+    throw new InvalidContinuationTokenError('UNSUPPORTED_VERSION', 'Unsupported continuation token version.');
+  }
+
+  if (typeof parsed.e !== 'number' || Date.now() > parsed.e) {
+    throw new InvalidContinuationTokenError('EXPIRED_TOKEN', 'Expired continuation token.');
+  }
+
+  const expectedHash = computeQueryHash(currentQuery);
+  if (typeof parsed.h !== 'string' || parsed.h !== expectedHash) {
+    throw new InvalidContinuationTokenError('FILTER_MISMATCH', 'Continuation token does not match active search filters.');
+  }
+
+  const expectedSig = computeTokenHmac(parsed.v, parsed.p, parsed.h, parsed.e);
+  if (typeof parsed.sig !== 'string' || parsed.sig.length !== expectedSig.length) {
+    throw new InvalidContinuationTokenError('TAMPERED_TOKEN', 'Invalid continuation token signature.');
+  }
+
+  const sigBuffer = Buffer.from(parsed.sig, 'utf8');
+  const expectedBuffer = Buffer.from(expectedSig, 'utf8');
+  if (!crypto.timingSafeEqual(sigBuffer, expectedBuffer)) {
+    throw new InvalidContinuationTokenError('TAMPERED_TOKEN', 'Invalid continuation token signature.');
+  }
+
+  return parsed.p;
 }
 
 /**
@@ -165,18 +272,22 @@ export class TwilioInventoryProvider {
   }
 
   /**
-   * Searches live Twilio available phone number inventory using applicable filters only.
+   * Searches live Twilio available phone number inventory using provider-native pagination.
    * Strict integrity: Never broadens search or strips user filters if provider query fails or returns zero matches.
    */
-  async searchAvailableNumbers(query: InventorySearchQuery): Promise<InventoryNumberItem[]> {
+  async searchAvailableNumbers(query: InventorySearchQuery): Promise<InventorySearchResult> {
     const countryCode = (query.countryCode || 'US').toUpperCase();
     const numberType: NumberCategory = query.numberType || 'local';
-    const limit = Math.min(Math.max(query.limit || 50, 1), 100);
+    const targetPageSize = Math.min(Math.max(query.limit || 50, 1), 100);
 
+    const targetPageNumber = decodeContinuationToken(query.pageToken, query);
     const capabilitiesMap = this.getFilterCapabilities(countryCode, numberType);
 
     // Build Twilio API search params using ONLY applicable filters
-    const searchParams: Record<string, any> = { limit };
+    const searchParams: Record<string, any> = {
+      pageNumber: targetPageNumber,
+      pageSize: targetPageSize,
+    };
 
     if (capabilitiesMap.contains && query.contains && query.contains.trim()) {
       searchParams.contains = query.contains.trim();
@@ -214,15 +325,16 @@ export class TwilioInventoryProvider {
       const countryResource = client.availablePhoneNumbers(countryCode);
       const subResource = (countryResource as any)[twilioCategory];
 
-      if (!subResource || typeof subResource.list !== 'function') {
+      if (!subResource || typeof subResource.page !== 'function') {
         console.warn(`[TwilioInventoryProvider] Subresource ${twilioCategory} not available for ${countryCode}`);
-        return [];
+        return { numbers: [], hasMore: false };
       }
 
-      // Execute search strictly with user-specified search parameters
-      const rawResults = await subResource.list(searchParams);
+      // Execute provider-native page query strictly with user search parameters
+      const pageResult = await subResource.page(searchParams);
+      const rawInstances = pageResult?.instances || pageResult?.availablePhoneNumbers || [];
 
-      return (rawResults || []).map((item: any): InventoryNumberItem => {
+      const rawMapped = (rawInstances || []).map((item: any): InventoryNumberItem => {
         const rawCap = item.capabilities || {};
         return {
           provider: 'twilio',
@@ -251,10 +363,31 @@ export class TwilioInventoryProvider {
           },
         };
       });
+
+      // Deduplicate numbers by normalized E.164 within returned page
+      const seenE164 = new Set<string>();
+      const deduplicatedNumbers: InventoryNumberItem[] = [];
+      for (const num of rawMapped) {
+        if (num.phoneNumber && !seenE164.has(num.phoneNumber)) {
+          seenE164.add(num.phoneNumber);
+          deduplicatedNumbers.push(num);
+        }
+      }
+
+      // Determine hasMore:
+      // Twilio AvailablePhoneNumbers returns batches of up to 30 items per page.
+      // If items were returned and page count matches/exceeds batch threshold, or nextPageUrl exists, hasMore is true.
+      const hasMore = (rawInstances.length > 0 && rawInstances.length >= 30) || Boolean(pageResult?.nextPageUrl);
+      const continuationToken = hasMore ? encodeContinuationToken(targetPageNumber + 1, query) : undefined;
+
+      return {
+        numbers: deduplicatedNumbers,
+        hasMore,
+        continuationToken,
+      };
     } catch (err: any) {
       console.error('[TwilioInventoryProvider] Live inventory search error:', err.message || err);
-      // Return clean empty array rather than failing tenant search request or returning unconstrained results
-      return [];
+      return { numbers: [], hasMore: false };
     }
   }
 

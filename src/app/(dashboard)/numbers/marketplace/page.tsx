@@ -151,7 +151,7 @@ export default function NumberMarketplacePage() {
   const [entitlements, setEntitlements] = useState<EntitlementsInfo | null>(null);
 
   // Pagination State
-  const [searchLimit, setSearchLimit] = useState<number>(50);
+  const [continuationToken, setContinuationToken] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState<boolean>(false);
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
 
@@ -387,9 +387,10 @@ export default function NumberMarketplacePage() {
     }
   }, [selectedCountry, supportedNumberTypes, selectedType]);
 
-  // Reset search limit to 50 whenever filters change
+  // Reset continuation token whenever search filters change
   useEffect(() => {
-    setSearchLimit(50);
+    setContinuationToken(null);
+    setHasMore(false);
   }, [
     selectedCountry,
     selectedType,
@@ -403,16 +404,16 @@ export default function NumberMarketplacePage() {
     mmsOnly,
   ]);
 
-  // 2. Perform inventory search
-  const performSearch = useCallback(async (targetLimit?: number) => {
-    const limitToUse = targetLimit || searchLimit;
+  // 2. Perform initial inventory search
+  const performSearch = useCallback(async () => {
     setIsSearching(true);
     setSearchError(null);
+    setContinuationToken(null);
     try {
       const queryParams = new URLSearchParams();
       queryParams.set('country', selectedCountry);
       queryParams.set('type', selectedType);
-      queryParams.set('limit', limitToUse.toString());
+      queryParams.set('limit', '50');
       if (containsInput.trim()) queryParams.set('contains', containsInput.trim());
       if (areaCodeInput.trim()) queryParams.set('areaCode', areaCodeInput.trim());
       if (localityInput.trim()) queryParams.set('locality', localityInput.trim());
@@ -428,7 +429,8 @@ export default function NumberMarketplacePage() {
       if (res.ok && json.success) {
         const fetchedNumbers: InventoryNumberItem[] = json.numbers || [];
         setNumbers(fetchedNumbers);
-        setHasMore(fetchedNumbers.length >= limitToUse && limitToUse < 100);
+        setHasMore(Boolean(json.hasMore));
+        setContinuationToken(json.continuationToken || null);
         if (json.filterCapabilities) {
           setFilterCapabilities(json.filterCapabilities);
         }
@@ -443,12 +445,10 @@ export default function NumberMarketplacePage() {
       setSearchError('Network error searching inventory. Please try again.');
     } finally {
       setIsSearching(false);
-      setIsLoadingMore(false);
     }
   }, [
     selectedCountry,
     selectedType,
-    searchLimit,
     containsInput,
     areaCodeInput,
     localityInput,
@@ -459,11 +459,45 @@ export default function NumberMarketplacePage() {
     mmsOnly,
   ]);
 
+  // Load next provider page via continuation token
   const handleLoadMore = async () => {
+    if (!hasMore || !continuationToken || isLoadingMore) return;
     setIsLoadingMore(true);
-    const nextLimit = Math.min(searchLimit + 50, 100);
-    setSearchLimit(nextLimit);
-    await performSearch(nextLimit);
+    try {
+      const queryParams = new URLSearchParams();
+      queryParams.set('country', selectedCountry);
+      queryParams.set('type', selectedType);
+      queryParams.set('limit', '50');
+      queryParams.set('pageToken', continuationToken);
+      if (containsInput.trim()) queryParams.set('contains', containsInput.trim());
+      if (areaCodeInput.trim()) queryParams.set('areaCode', areaCodeInput.trim());
+      if (localityInput.trim()) queryParams.set('locality', localityInput.trim());
+      if (regionInput.trim()) queryParams.set('region', regionInput.trim());
+      if (postalCodeInput.trim()) queryParams.set('postalCode', postalCodeInput.trim());
+      if (voiceOnly) queryParams.set('voice', 'true');
+      if (smsOnly) queryParams.set('sms', 'true');
+      if (mmsOnly) queryParams.set('mms', 'true');
+
+      const res = await fetch(`/api/number-marketplace/search?${queryParams.toString()}`);
+      const json = await res.json();
+
+      if (res.ok && json.success) {
+        const newNumbers: InventoryNumberItem[] = json.numbers || [];
+        setNumbers((prevNumbers) => {
+          const existingSet = new Set(prevNumbers.map((item) => item.phoneNumber));
+          const uniqueNewItems = newNumbers.filter((item) => !existingSet.has(item.phoneNumber));
+          return [...prevNumbers, ...uniqueNewItems];
+        });
+        setHasMore(Boolean(json.hasMore));
+        setContinuationToken(json.continuationToken || null);
+      } else {
+        console.warn('[Marketplace] Load More failed:', json.error);
+      }
+    } catch (err) {
+      console.error('[Marketplace] Load More network error:', err);
+    } finally {
+      setIsLoadingMore(false);
+    }
   };
 
   useEffect(() => {
