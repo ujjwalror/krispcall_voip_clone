@@ -8,6 +8,11 @@ import {
   SupportingDocumentAcceptedOption,
 } from '@/lib/telephony/compliance/types';
 
+import {
+  RegulatoryMetadataCacheService,
+  CacheEvalOptions,
+} from '@/lib/telephony/compliance/regulatoryMetadataCacheService';
+
 export type RegulatoryPreCheckStatus =
   | 'not_evaluated'
   | 'checking'
@@ -15,6 +20,11 @@ export type RegulatoryPreCheckStatus =
   | 'requirements_found'
   | 'unavailable'
   | 'error';
+
+export interface RegulatoryPreCheckOptions extends CacheEvalOptions {
+  providerAccountId?: string;
+  provider?: string;
+}
 
 export interface EndUserRequirementItem {
   type: string;
@@ -151,9 +161,32 @@ function deriveCanonicalInputType(
  */
 export class RegulatoryPreCheckService {
   /**
-   * Evaluates dynamic regulatory requirements via Twilio Regulations API for a given country, number type, and end-user type.
+   * Evaluates dynamic regulatory requirements via RegulatoryMetadataCacheService (for UI/browsing)
+   * or directly from live provider (when bypassCache: true / cachePolicy: 'bypass' is requested).
    */
   static async evaluateRequirements(
+    countryCode: string,
+    domainNumberType: string,
+    endUserType: 'business' | 'individual' = 'business',
+    options?: RegulatoryPreCheckOptions
+  ): Promise<NormalizedRegulatoryPreCheckResult> {
+    const params = {
+      countryCode,
+      numberType: domainNumberType,
+      endUserType,
+      provider: options?.provider || 'twilio',
+      providerAccountId: options?.providerAccountId || 'default',
+    };
+
+    return RegulatoryMetadataCacheService.getOrFetchRequirements(params, options, () =>
+      this.queryLiveProvider(countryCode, domainNumberType, endUserType)
+    );
+  }
+
+  /**
+   * Queries live provider Regulations API directly.
+   */
+  private static async queryLiveProvider(
     countryCode: string,
     domainNumberType: string,
     endUserType: 'business' | 'individual' = 'business'

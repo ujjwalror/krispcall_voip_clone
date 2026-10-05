@@ -42,11 +42,12 @@ export class RegulatoryProvisioningContextResolver {
     const endUserType = params.endUserType || 'business';
     const nowIso = new Date().toISOString();
 
-    // Dynamically evaluate provider regulatory requirements via Regulations API
+    // MANDATORY FRESH LOOKUP AT PURCHASE BOUNDARY: Always bypass cache prior to live provisioning
     const preCheck = await RegulatoryPreCheckService.evaluateRequirements(
       countryCode,
       numberType,
-      endUserType
+      endUserType,
+      { bypassCache: true }
     );
 
     // Fail-closed safety: If provider regulatory check timed out, errored, or returned unavailable state
