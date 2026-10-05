@@ -678,6 +678,9 @@ export default function NumberMarketplacePage() {
       const json = await res.json();
       if (res.ok && json.success && json.validation) {
         const val = json.validation;
+        const isVerifReq = val.preCheck.bundleRequired || val.preCheck.status === 'requirements_found';
+        const isNoReq = val.preCheck.status === 'no_requirements';
+
         const newItem: CartItem = {
           id: `${selectedNumber.phoneNumber}_${endUserType}_${Date.now()}`,
           phoneNumber: selectedNumber.phoneNumber,
@@ -692,14 +695,18 @@ export default function NumberMarketplacePage() {
           hasConfiguredPrice: val.price.hasConfiguredPrice,
           preCheckStatus: val.preCheck.status,
           bundleRequired: val.preCheck.bundleRequired,
+          readinessState: isVerifReq ? 'verification_required' : isNoReq ? 'ready_for_next_step' : 'regulatory_check_unavailable',
+          nextAction: isVerifReq ? 'verification' : isNoReq ? 'payment' : 'unavailable',
+          readinessMessage: isVerifReq
+            ? 'Additional verification is required before this number can be activated.'
+            : isNoReq
+            ? 'No additional regulatory documents are required for this category. This number is eligible for checkout (unreserved).'
+            : 'Regulatory verification status is currently unavailable.',
         };
 
         setCart((prev) => [...prev.filter((i) => i.phoneNumber !== newItem.phoneNumber), newItem]);
         setSelectedNumber(null);
         setIsCartOpen(true);
-
-        // Automatically trigger purchase readiness evaluation in the background!
-        handleCheckReadiness(newItem);
       } else {
         setCartFeedback(json.error || 'Failed to add number to cart.');
       }
@@ -1459,7 +1466,7 @@ export default function NumberMarketplacePage() {
                         {isChecking ? (
                           <div className="p-2.5 rounded-lg text-xs font-medium border bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-300 flex items-center gap-2">
                             <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
-                            <span>Checking availability and requirements...</span>
+                            <span>Evaluating purchase readiness...</span>
                           </div>
                         ) : item.readinessState ? (
                           <div
@@ -1473,7 +1480,7 @@ export default function NumberMarketplacePage() {
                           >
                             <div className="font-bold text-[11px] uppercase tracking-wider mb-0.5">
                               {isReady
-                                ? 'Verification Complete'
+                                ? 'No Additional Verification Required'
                                 : isVerificationReq
                                 ? 'Verification Required'
                                 : 'Purchase Blocked'}
@@ -1481,7 +1488,7 @@ export default function NumberMarketplacePage() {
                             <p className="text-[11px]">
                               {isVerificationReq
                                 ? 'Additional verification is required before this number can be activated.'
-                                : item.readinessMessage}
+                                : item.readinessMessage || 'No additional regulatory documents are required for this category. This number is eligible for checkout (unreserved).'}
                             </p>
                           </div>
                         ) : null}

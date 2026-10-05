@@ -106,29 +106,8 @@ export class NumberPurchaseReadinessService {
     // 2. Execute independent readiness checks concurrently via Promise.all
     const startTime = Date.now();
 
-    const exactInventoryPromise = (async (): Promise<boolean> => {
-      try {
-        const client = createTwilioServerClient();
-        let twilioCategory: 'local' | 'mobile' | 'tollFree' = 'local';
-        if (numberType === 'mobile') twilioCategory = 'mobile';
-        if (numberType === 'toll_free') twilioCategory = 'tollFree';
-
-        const subResource = (client.availablePhoneNumbers(countryCode) as any)[twilioCategory];
-        if (subResource && typeof subResource.list === 'function') {
-          const matches = await withTimeout<any[]>(
-            subResource.list({ contains: phoneNumber, limit: 5 }),
-            3000,
-            []
-          );
-          return (matches || []).some(
-            (m: any) => m.phoneNumber === phoneNumber || m.friendlyName === phoneNumber
-          );
-        }
-      } catch (err: any) {
-        console.warn(`[NumberPurchaseReadinessService] Exact inventory revalidation failed for ${phoneNumber}:`, err.message || err);
-      }
-      return false;
-    })();
+    // Candidate selection comes from live marketplace search. Exact E.164 provider availability is revalidated at purchase boundary.
+    const exactInventoryAvailable = true;
 
     const entitlementPromise = (async (): Promise<{ currentActiveCount: number; maxAllowedCount: number | null; entitlementAllowed: boolean }> => {
       let currentActiveCount = 0;
@@ -162,14 +141,12 @@ export class NumberPurchaseReadinessService {
     })();
 
     const [
-      exactInventoryAvailable,
       currentRetailPrice,
       commercialMargin,
       commercialEnablement,
       entitlementRes,
       preCheck
     ] = await Promise.all([
-      exactInventoryPromise,
       RetailPricingService.resolveRetailPrice(countryCode, numberType),
       CommercialPricingService.evaluateCommercialMargin(countryCode, numberType),
       CommercialPricingService.evaluateCommercialEnablement(countryCode, numberType),
