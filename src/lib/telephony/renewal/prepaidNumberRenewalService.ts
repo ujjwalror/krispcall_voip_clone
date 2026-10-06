@@ -136,7 +136,9 @@ export class PrepaidNumberRenewalService {
         providerCycleSource: exposureInfo.providerCycleSource,
         providerCycleStatus: exposureInfo.providerCycleStatus,
         wholesaleCostMinor: mapping?.monthly_wholesale_cost_minor || 100,
-        retailPriceMinor: billableRes?.contracted_retail_minor ? Number(billableRes.contracted_retail_minor) : 315,
+        retailPriceMinor: (billableRes?.contracted_retail_minor !== undefined && billableRes?.contracted_retail_minor !== null)
+          ? Number(billableRes.contracted_retail_minor)
+          : null,
         currency: billableRes?.currency || 'USD',
         autopayEnabled: Boolean(lcState?.metadata?.autopayEnabled ?? true),
         renewalStatus: lcState?.lifecycle_state || 'active',
@@ -229,6 +231,11 @@ export class PrepaidNumberRenewalService {
     // Interlock 5: Ambiguous / pending payment in progress?
     if (record.paymentAttemptState === 'pending') {
       blockers.push('PAYMENT_ATTEMPT_PENDING');
+    }
+
+    // Interlock 6: Unbound commercial retail price?
+    if (record.retailPriceMinor === null || record.retailPriceMinor === undefined || record.retailPriceMinor <= 0) {
+      blockers.push('PRICE_NOT_BOUND');
     }
 
     // Return immediately if released
@@ -327,6 +334,14 @@ export class PrepaidNumberRenewalService {
     const record = await this.getPerNumberRenewalRecord(phoneNumberId);
     if (!record) {
       return { success: false, message: 'Phone number record not found.' };
+    }
+
+    if (record.retailPriceMinor === null || record.retailPriceMinor === undefined || record.retailPriceMinor <= 0) {
+      return {
+        success: false,
+        failureReason: 'unknown',
+        message: 'PRICE_NOT_BOUND: Phone number has no contracted retail price bound in organization_billable_resources.',
+      };
     }
 
     const supabase = createAdminClient();
