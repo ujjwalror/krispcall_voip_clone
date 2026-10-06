@@ -21,6 +21,45 @@ export class PreRenewalPolicyService {
   };
 
   /**
+   * Validates internal safety consistency of a policy configuration.
+   * Rejects impossible or dangerous timing sequences.
+   */
+  static validatePolicy(config: Partial<PreRenewalPolicyConfig>): { valid: boolean; errors: string[] } {
+    const errors: string[] = [];
+
+    const preNotice = config.preRenewalNoticeLeadHours ?? 72;
+    const autopayLead = config.autopayAttemptLeadHours ?? 48;
+    const retryWindow = config.paymentRetryWindowHours ?? 96;
+    const strongWarning = config.strongerWarningLeadHours ?? 24;
+    const finalWarning = config.finalWarningLeadHours ?? 12;
+    const releaseBoundary = config.releaseEligibilityBoundaryHours ?? 168;
+
+    if (preNotice <= 0) errors.push('preRenewalNoticeLeadHours must be greater than 0.');
+    if (autopayLead <= 0) errors.push('autopayAttemptLeadHours must be greater than 0.');
+    if (retryWindow <= 0) errors.push('paymentRetryWindowHours must be greater than 0.');
+    if (strongWarning <= 0) errors.push('strongerWarningLeadHours must be greater than 0.');
+    if (finalWarning <= 0) errors.push('finalWarningLeadHours must be greater than 0.');
+    if (releaseBoundary <= 0) errors.push('releaseEligibilityBoundaryHours must be greater than 0.');
+
+    if (autopayLead > preNotice) {
+      errors.push('INVALID_SEQUENCE: Autopay attempt lead hours cannot exceed advance notice lead hours.');
+    }
+
+    if (finalWarning > strongWarning) {
+      errors.push('INVALID_SEQUENCE: Final warning lead hours cannot exceed stronger warning lead hours.');
+    }
+
+    if (releaseBoundary <= retryWindow) {
+      errors.push('UNSAFE_CARRIER_EXPOSURE: Release eligibility boundary must be strictly greater than payment retry window to prevent premature release.');
+    }
+
+    return {
+      valid: errors.length === 0,
+      errors,
+    };
+  }
+
+  /**
    * Resolves the active pre-renewal commercial policy from DB or fallback.
    */
   static async getActivePolicy(organizationId?: string): Promise<PreRenewalPolicyConfig> {
@@ -79,6 +118,14 @@ export class PreRenewalPolicyService {
       return {
         success: false,
         error: 'FORBIDDEN: Commercial timing policies can only be managed by authorized PLATFORM administration.',
+      };
+    }
+
+    const validation = this.validatePolicy(newConfig);
+    if (!validation.valid) {
+      return {
+        success: false,
+        error: `INVALID_POLICY_CONFIGURATION: ${validation.errors.join(' ')}`,
       };
     }
 
