@@ -102,6 +102,22 @@ export async function POST(request: Request) {
 
     const organizationId = phoneRow.organization_id;
 
+    // Offboarding Telecom Eligibility Interlock
+    const { TelecomEligibilityService } = await import('@/lib/telephony/lifecycle/telecomEligibilityService');
+    const eligibility = await TelecomEligibilityService.canUseTelecom({
+      organizationId,
+      phoneNumberE164: normalizedTo,
+    });
+
+    if (!eligibility.allowed) {
+      console.warn(`[Twilio Inbound SMS Webhook] Inbound SMS rejected for ${normalizedTo}: ${eligibility.reason}`);
+      const response = new twilio.twiml.MessagingResponse();
+      return new NextResponse(response.toString(), {
+        status: 200,
+        headers: { 'Content-Type': 'text/xml' },
+      });
+    }
+
     // 6. Block-list check for inbound sender
     const { data: blockedRecord } = await (adminSupabase as any)
       .from('blocked_numbers')
