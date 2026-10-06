@@ -185,6 +185,27 @@ export class PrepaidNumberRenewalService {
 
     const blockers: string[] = [];
 
+    // Interlock 0: Is legacy quarantined?
+    if (record.renewalStatus === ('legacy_quarantined' as any)) {
+      blockers.push('LEGACY_RECONCILIATION_QUARANTINE');
+      return {
+        phoneNumberId: record.phoneNumberId,
+        phoneNumberE164: record.phoneNumberE164,
+        organizationId: record.organizationId,
+        renewalStatus: 'legacy_quarantined' as any,
+        nextAction: 'NO_ACTION',
+        customerFundedThroughAt: record.customerFundedThroughAt,
+        providerNextExposureAt: record.providerNextExposureAt,
+        providerCycleSource: record.providerCycleSource,
+        providerCycleStatus: record.providerCycleStatus,
+        effectiveDeadlineAt: null,
+        isUnfundedLiability: false,
+        unfundedHours: 0,
+        reason: 'Number is in legacy reconciliation quarantine.',
+        blockers,
+      };
+    }
+
     // Interlock 1: Is already released?
     if (record.isReleased) {
       blockers.push('ALREADY_RELEASED');

@@ -153,7 +153,9 @@ export type NumberOffboardingState =
   | 'past_due'
   | 'suspended'
   | 'release_pending'
-  | 'released';
+  | 'released'
+  | 'ported_out'
+  | 'legacy_quarantined';
 
 export type SaaSEntitlementStatus =
   | 'active'
