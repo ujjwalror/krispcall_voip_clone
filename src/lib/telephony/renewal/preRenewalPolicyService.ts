@@ -7,50 +7,71 @@ export class PreRenewalPolicyService {
    * Default fallback pre-renewal policy configuration.
    * NO timing values are hardcoded frozen constants — all timings derive from policy version.
    */
+  /**
+   * Default Approved Policy V1 configuration.
+   * Represents versioned policy configuration — NOT scattered hardcoded constants.
+   * Policy status is APPROVED, but isActive is false in production (active count remains 0).
+   */
   private static DEFAULT_POLICY: PreRenewalPolicyConfig = {
-    policyId: 'policy_v1_default',
+    policyId: 'policy_v1_approved',
     policyVersion: 1,
-    preRenewalNoticeLeadHours: 72, // Advance notice before funded-through date (e.g. 3 days)
-    autopayAttemptLeadHours: 48, // Autopay attempt before carrier exposure boundary (e.g. 2 days)
-    paymentRetryWindowHours: 96, // Retry window after initial failure before final warning (e.g. 4 days)
-    strongerWarningLeadHours: 24, // Stronger warning lead (e.g. 24h before expiry)
-    finalWarningLeadHours: 12, // Final critical warning lead (e.g. 12h)
-    releaseEligibilityBoundaryHours: 168, // Release eligibility boundary after grace/retries (e.g. 7 days)
+    status: 'APPROVED',
+    preRenewalNoticeLeadHours: 168, // T-7 (168h before T0)
+    autopayAttemptLeadHours: 120, // T-5 (120h before T0)
+    paymentRetryWindowHours: 72, // T-3 (72h before T0)
+    strongerWarningLeadHours: 48, // T-2 (48h before T0)
+    finalWarningLeadHours: 24, // T-1 (24h before T0)
+    releaseEligibilityBoundaryHours: 0, // T0 (0h before T0)
     allowNumberOnlyRetention: true,
-    isActive: true,
+    isActive: false,
   };
 
   /**
+   * Returns Approved Policy V1 configuration object.
+   */
+  static getApprovedPolicyV1(): PreRenewalPolicyConfig {
+    return { ...this.DEFAULT_POLICY };
+  }
+
+  /**
    * Validates internal safety consistency of a policy configuration.
-   * Rejects impossible or dangerous timing sequences.
+   * Rejects impossible or inverted timing sequences.
    */
   static validatePolicy(config: Partial<PreRenewalPolicyConfig>): { valid: boolean; errors: string[] } {
     const errors: string[] = [];
 
-    const preNotice = config.preRenewalNoticeLeadHours ?? 72;
-    const autopayLead = config.autopayAttemptLeadHours ?? 48;
-    const retryWindow = config.paymentRetryWindowHours ?? 96;
-    const strongWarning = config.strongerWarningLeadHours ?? 24;
-    const finalWarning = config.finalWarningLeadHours ?? 12;
-    const releaseBoundary = config.releaseEligibilityBoundaryHours ?? 168;
+    const preNotice = config.preRenewalNoticeLeadHours ?? 168;
+    const autopayLead = config.autopayAttemptLeadHours ?? 120;
+    const retryWindow = config.paymentRetryWindowHours ?? 72;
+    const strongWarning = config.strongerWarningLeadHours ?? 48;
+    const finalWarning = config.finalWarningLeadHours ?? 24;
+    const releaseBoundary = config.releaseEligibilityBoundaryHours ?? 0;
 
-    if (preNotice <= 0) errors.push('preRenewalNoticeLeadHours must be greater than 0.');
-    if (autopayLead <= 0) errors.push('autopayAttemptLeadHours must be greater than 0.');
-    if (retryWindow <= 0) errors.push('paymentRetryWindowHours must be greater than 0.');
-    if (strongWarning <= 0) errors.push('strongerWarningLeadHours must be greater than 0.');
-    if (finalWarning <= 0) errors.push('finalWarningLeadHours must be greater than 0.');
-    if (releaseBoundary <= 0) errors.push('releaseEligibilityBoundaryHours must be greater than 0.');
+    if (preNotice < 0) errors.push('preRenewalNoticeLeadHours must be non-negative.');
+    if (autopayLead < 0) errors.push('autopayAttemptLeadHours must be non-negative.');
+    if (retryWindow < 0) errors.push('paymentRetryWindowHours must be non-negative.');
+    if (strongWarning < 0) errors.push('strongerWarningLeadHours must be non-negative.');
+    if (finalWarning < 0) errors.push('finalWarningLeadHours must be non-negative.');
+    if (releaseBoundary < 0) errors.push('releaseEligibilityBoundaryHours must be non-negative.');
 
     if (autopayLead > preNotice) {
-      errors.push('INVALID_SEQUENCE: Autopay attempt lead hours cannot exceed advance notice lead hours.');
+      errors.push('INVALID_SEQUENCE: Autopay attempt lead hours (T-5) cannot exceed advance notice lead hours (T-7).');
+    }
+
+    if (retryWindow > autopayLead) {
+      errors.push('INVALID_SEQUENCE: Payment retry lead hours (T-3) cannot exceed autopay lead hours (T-5).');
+    }
+
+    if (strongWarning > retryWindow) {
+      errors.push('INVALID_SEQUENCE: Stronger warning lead hours (T-2) cannot exceed payment retry lead hours (T-3).');
     }
 
     if (finalWarning > strongWarning) {
-      errors.push('INVALID_SEQUENCE: Final warning lead hours cannot exceed stronger warning lead hours.');
+      errors.push('INVALID_SEQUENCE: Final warning lead hours (T-1) cannot exceed stronger warning lead hours (T-2).');
     }
 
-    if (releaseBoundary <= retryWindow) {
-      errors.push('UNSAFE_CARRIER_EXPOSURE: Release eligibility boundary must be strictly greater than payment retry window to prevent premature release.');
+    if (releaseBoundary > finalWarning) {
+      errors.push('INVALID_SEQUENCE: Release eligibility boundary (T0) cannot exceed final warning lead hours (T-1).');
     }
 
     return {
@@ -78,14 +99,15 @@ export class PreRenewalPolicyService {
         return {
           policyId: row.id || 'policy_db_v1',
           policyVersion: row.policy_version || meta.policyVersion || 1,
-          preRenewalNoticeLeadHours: meta.preRenewalNoticeLeadHours ?? 72,
-          autopayAttemptLeadHours: meta.autopayAttemptLeadHours ?? 48,
-          paymentRetryWindowHours: meta.paymentRetryWindowHours ?? 96,
-          strongerWarningLeadHours: meta.strongerWarningLeadHours ?? 24,
-          finalWarningLeadHours: meta.finalWarningLeadHours ?? 12,
-          releaseEligibilityBoundaryHours: meta.releaseEligibilityBoundaryHours ?? 168,
+          status: (row.status || meta.status || 'ACTIVE') as any,
+          preRenewalNoticeLeadHours: meta.preRenewalNoticeLeadHours ?? 168,
+          autopayAttemptLeadHours: meta.autopayAttemptLeadHours ?? 120,
+          paymentRetryWindowHours: meta.paymentRetryWindowHours ?? 72,
+          strongerWarningLeadHours: meta.strongerWarningLeadHours ?? 48,
+          finalWarningLeadHours: meta.finalWarningLeadHours ?? 24,
+          releaseEligibilityBoundaryHours: meta.releaseEligibilityBoundaryHours ?? 0,
           allowNumberOnlyRetention: Boolean(row.allow_number_only_retention ?? true),
-          isActive: true,
+          isActive: Boolean(row.is_active),
         };
       }
     } catch (err) {

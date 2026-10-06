@@ -104,13 +104,13 @@ export class PolicySimulationEngine {
 
     const providerExposureMs = providerNextExposureAt ? new Date(providerNextExposureAt).getTime() : fundedThroughMs;
 
-    // Calculate stage timestamps dynamically relative to policy & number dates
-    const upcomingNoticeMs = fundedThroughMs - policy.preRenewalNoticeLeadHours * 3600 * 1000;
+    // Calculate stage timestamps dynamically relative to provider exposure boundary T0
+    const upcomingNoticeMs = providerExposureMs - policy.preRenewalNoticeLeadHours * 3600 * 1000;
     const autopayAttemptMs = providerExposureMs - policy.autopayAttemptLeadHours * 3600 * 1000;
-    const retryWindowEndMs = fundedThroughMs + policy.paymentRetryWindowHours * 3600 * 1000;
-    const strongerWarningMs = retryWindowEndMs;
-    const finalWarningMs = retryWindowEndMs + policy.strongerWarningLeadHours * 3600 * 1000;
-    const releaseEligibilityMs = fundedThroughMs + policy.releaseEligibilityBoundaryHours * 3600 * 1000;
+    const retryWindowEndMs = providerExposureMs - policy.paymentRetryWindowHours * 3600 * 1000;
+    const strongerWarningMs = providerExposureMs - policy.strongerWarningLeadHours * 3600 * 1000;
+    const finalWarningMs = providerExposureMs - policy.finalWarningLeadHours * 3600 * 1000;
+    const releaseEligibilityMs = providerExposureMs + policy.releaseEligibilityBoundaryHours * 3600 * 1000;
 
     const timeline: SimulationTimelineStage[] = [];
     const blockers: string[] = [];
@@ -134,20 +134,20 @@ export class PolicySimulationEngine {
       timeline.push({
         stage: 'UPCOMING_RENEWAL_NOTICE',
         timestamp: new Date(upcomingNoticeMs).toISOString(),
-        description: `Advance notice sent to customer ${policy.preRenewalNoticeLeadHours}h before funded-through date.`,
+        description: `Advance notice sent to customer ${policy.preRenewalNoticeLeadHours}h before T0.`,
         status: asOfMs >= upcomingNoticeMs ? 'completed' : 'pending',
       });
       timeline.push({
         stage: 'AUTOPAY_ATTEMPT',
         timestamp: new Date(autopayAttemptMs).toISOString(),
-        description: `Autopay attempt scheduled ${policy.autopayAttemptLeadHours}h before carrier exposure boundary.`,
+        description: `Autopay attempt scheduled ${policy.autopayAttemptLeadHours}h before T0.`,
         status: isPaymentSuccessful ? 'completed' : asOfMs >= autopayAttemptMs ? 'completed' : 'pending',
       });
     } else {
       timeline.push({
         stage: 'PAYMENT_REQUIRED_WARNING',
         timestamp: new Date(upcomingNoticeMs).toISOString(),
-        description: `Advance payment requirement notice sent to customer ${policy.preRenewalNoticeLeadHours}h before funded-through date.`,
+        description: `Advance payment requirement notice sent to customer ${policy.preRenewalNoticeLeadHours}h before T0.`,
         status: asOfMs >= upcomingNoticeMs ? 'completed' : 'pending',
       });
     }
@@ -155,29 +155,29 @@ export class PolicySimulationEngine {
     if (!isPaymentSuccessful) {
       timeline.push({
         stage: 'PAYMENT_FAILURE_RECOVERY',
-        timestamp: new Date(fundedThroughMs).toISOString(),
-        description: `Payment recovery window active. Retries permitted for ${policy.paymentRetryWindowHours}h.`,
-        status: asOfMs >= fundedThroughMs ? 'completed' : 'pending',
+        timestamp: new Date(retryWindowEndMs).toISOString(),
+        description: `Payment retry reminder scheduled at T-3 (${policy.paymentRetryWindowHours}h before T0).`,
+        status: asOfMs >= retryWindowEndMs ? 'completed' : 'pending',
       });
 
       timeline.push({
         stage: 'STRONGER_WARNING',
         timestamp: new Date(strongerWarningMs).toISOString(),
-        description: `Stronger warning issued after retry window elapsed.`,
+        description: `Stronger warning issued at T-2 (${policy.strongerWarningLeadHours}h before T0).`,
         status: asOfMs >= strongerWarningMs ? 'completed' : 'pending',
       });
 
       timeline.push({
         stage: 'FINAL_CRITICAL_WARNING',
         timestamp: new Date(finalWarningMs).toISOString(),
-        description: `Final critical notice issued before release eligibility boundary.`,
+        description: `Final critical notice issued at T-1 (${policy.finalWarningLeadHours}h before T0).`,
         status: asOfMs >= finalWarningMs ? 'completed' : 'pending',
       });
 
       timeline.push({
         stage: 'RELEASE_ELIGIBILITY_EVALUATION',
         timestamp: providerCycleStatus === 'verified' && providerNextExposureAt ? new Date(releaseEligibilityMs).toISOString() : null,
-        description: `Release eligibility evaluation boundary (${policy.releaseEligibilityBoundaryHours}h post-expiry). Safety interlocks evaluated.`,
+        description: `Release eligibility evaluation boundary T0 (${policy.releaseEligibilityBoundaryHours}h post-T0). Safety interlocks evaluated.`,
         status: blockers.length > 0 ? 'blocked' : asOfMs >= releaseEligibilityMs ? 'completed' : 'pending',
       });
     }

@@ -72,9 +72,12 @@ export interface PerNumberRenewalRecord {
   unfundedCompanyLiability: boolean;
 }
 
+export type PolicyStatus = 'DRAFT' | 'APPROVED' | 'ACTIVE' | 'SUPERSEDED';
+
 export interface PreRenewalPolicyConfig {
   policyId: string;
   policyVersion: number;
+  status: PolicyStatus;
   preRenewalNoticeLeadHours: number;
   autopayAttemptLeadHours: number;
   paymentRetryWindowHours: number;
