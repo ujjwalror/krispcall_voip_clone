@@ -718,11 +718,21 @@ export default function NumberDetailPage({ params }: { params: Promise<{ id: str
             </div>
             <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950/50 border border-slate-200/60 dark:border-slate-800/60 flex items-center justify-between">
               <span className="text-slate-500">Port Out Number</span>
-              <span className="text-[11px] font-semibold text-slate-400">Upcoming</span>
+              <Link
+                href={`/api/phone-numbers/${numberId}/port-out`}
+                className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline"
+              >
+                Request Instructions &rarr;
+              </Link>
             </div>
             <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950/50 border border-slate-200/60 dark:border-slate-800/60 flex items-center justify-between">
-              <span className="text-slate-500">Release Number</span>
-              <span className="text-[11px] font-semibold text-slate-400">Upcoming</span>
+              <span className="text-slate-500">Voluntary Release</span>
+              <Link
+                href={`/billing/numbers`}
+                className="text-[11px] font-semibold text-rose-600 dark:text-rose-400 hover:underline"
+              >
+                Voluntary Release &rarr;
+              </Link>
             </div>
           </div>
         </Card>
