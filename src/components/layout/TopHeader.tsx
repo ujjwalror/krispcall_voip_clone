@@ -8,6 +8,7 @@ import { PresenceSelector } from './PresenceSelector';
 import { SidebarNavItems } from './Sidebar';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
+import { NotificationCenterPopover } from '@/components/telephony/NotificationCenterPopover';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { Search, LogOut, ShieldCheck, Bell, Sun, Moon, Menu, X, Radio, Sparkles } from 'lucide-react';
 import { useTheme } from '@/components/providers/ThemeProvider';
@@ -85,15 +86,8 @@ export function TopHeader() {
             )}
           </button>
 
-          {/* Notifications Icon (Hidden on very small mobile if space is tight) */}
-          <button
-            className="relative p-2 rounded-xl text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors hidden sm:block"
-            title="Notifications"
-          >
-            <Bell className="w-4 h-4" />
-            <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-blue-500 animate-ping" />
-            <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-blue-500" />
-          </button>
+          {/* Notification Center Popover */}
+          <NotificationCenterPopover />
 
           <div className="h-5 w-px bg-slate-200 dark:bg-slate-800 hidden sm:block" />
 
