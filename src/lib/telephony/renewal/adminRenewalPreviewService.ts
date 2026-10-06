@@ -48,7 +48,7 @@ export class AdminRenewalPreviewService {
     if (record.isReleased) blockers.push('NUMBER_ALREADY_RELEASED');
     if (record.hasActivePortOut) blockers.push('ACTIVE_PORT_OUT_IN_PROGRESS');
     if (record.reconciliationBlocked) blockers.push('PROVIDER_RECONCILIATION_REQUIRED');
-    if (record.carrierExposureSource === 'unknown_requires_reconciliation') blockers.push('UNKNOWN_CARRIER_EXPOSURE_DATE');
+    if (record.providerCycleStatus === 'unknown_requires_reconciliation') blockers.push('UNKNOWN_CARRIER_EXPOSURE_DATE');
 
     const preview: AdminRenewalPreviewDTO = {
       phoneNumberId: record.phoneNumberId,
@@ -59,6 +59,8 @@ export class AdminRenewalPreviewService {
       policyVersion: policy.policyVersion,
       providerBillingAnchorAt: record.providerBillingAnchorAt,
       providerNextExposureAt: record.providerNextExposureAt,
+      providerCycleSource: record.providerCycleSource,
+      providerCycleStatus: record.providerCycleStatus,
       customerFundedThroughAt: record.customerFundedThroughAt,
       calculatedPreRenewalNoticeAt: new Date(preRenewalNoticeMs).toISOString(),
       calculatedAutopayAttemptAt: new Date(autopayAttemptMs).toISOString(),

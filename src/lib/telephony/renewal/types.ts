@@ -25,10 +25,23 @@ export type PaymentFailureReason =
   | 'ambiguous_payment'
   | 'unknown';
 
-export type CarrierExposureSource =
-  | 'authoritative_provider_anchor'
-  | 'safely_derived_provisioning_date'
+export type ProviderCycleSource =
+  | 'PROVIDER_AUTHORITATIVE'
+  | 'PROVIDER_DERIVED_WITH_PROVEN_SEMANTICS'
+  | 'LOCAL_APPROXIMATION'
+  | 'UNKNOWN';
+
+export type ProviderCycleStatus =
+  | 'verified'
   | 'unknown_requires_reconciliation';
+
+export interface ProviderCycleMetadata {
+  providerCycleAnchorAt: string | null;
+  providerNextExposureAt: string | null;
+  providerCycleSource: ProviderCycleSource;
+  providerCycleStatus: ProviderCycleStatus;
+  providerCycleLastVerifiedAt?: string | null;
+}
 
 export interface PerNumberRenewalRecord {
   phoneNumberId: string;
@@ -36,11 +49,16 @@ export interface PerNumberRenewalRecord {
   organizationId: string;
   provider: string;
   providerResourceId: string;
+  // Separate Customer Funding dates
   customerFundedThroughAt: string | null;
   customerNextRenewalAt: string | null;
+  customerBillingCycleAnchorAt: string | null;
+  // Separate Provider Exposure dates
   providerBillingAnchorAt: string | null;
   providerNextExposureAt: string | null;
-  carrierExposureSource: CarrierExposureSource;
+  providerCycleSource: ProviderCycleSource;
+  providerCycleStatus: ProviderCycleStatus;
+  providerCycleLastVerifiedAt?: string | null;
   wholesaleCostMinor: number;
   retailPriceMinor: number | null;
   currency: string;
@@ -82,6 +100,8 @@ export interface RenewalEvaluationResult {
     | 'NO_ACTION';
   customerFundedThroughAt: string | null;
   providerNextExposureAt: string | null;
+  providerCycleSource: ProviderCycleSource;
+  providerCycleStatus: ProviderCycleStatus;
   effectiveDeadlineAt: string | null;
   isUnfundedLiability: boolean;
   unfundedHours: number;
@@ -98,6 +118,8 @@ export interface AdminRenewalPreviewDTO {
   policyVersion: number;
   providerBillingAnchorAt: string | null;
   providerNextExposureAt: string | null;
+  providerCycleSource: ProviderCycleSource;
+  providerCycleStatus: ProviderCycleStatus;
   customerFundedThroughAt: string | null;
   calculatedPreRenewalNoticeAt: string | null;
   calculatedAutopayAttemptAt: string | null;

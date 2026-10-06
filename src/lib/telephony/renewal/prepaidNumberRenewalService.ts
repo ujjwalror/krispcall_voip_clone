@@ -4,6 +4,8 @@ import {
   PerNumberRenewalRecord,
   RenewalEvaluationResult,
   PaymentFailureReason,
+  ProviderCycleSource,
+  ProviderCycleStatus,
 } from './types';
 import { PreRenewalPolicyService } from './preRenewalPolicyService';
 import { CarrierExposureService } from './carrierExposureService';
@@ -11,12 +13,19 @@ import { OffboardingNotificationService } from '@/lib/telephony/lifecycle/offboa
 
 export class PrepaidNumberRenewalService {
   /**
-   * Resolves per-number renewal record directly from DB sources of truth.
+   * Resolves per-number renewal record directly from DB sources of truth with explicit provenance checks.
    */
   static async getPerNumberRenewalRecord(
     phoneNumberId: string
   ): Promise<PerNumberRenewalRecord | null> {
     if (phoneNumberId.startsWith('pn_test_') || phoneNumberId.startsWith('mock_')) {
+      const mockAnchor = '2026-10-06T14:30:00.000Z';
+      const mockExposure = CarrierExposureService.calculateNextProviderExposureBoundary({
+        cycleAnchorDate: mockAnchor,
+        explicitSource: 'PROVIDER_AUTHORITATIVE',
+        hasProviderProvenance: true,
+      });
+
       return {
         phoneNumberId,
         phoneNumberE164: '+18005550199',
@@ -25,9 +34,11 @@ export class PrepaidNumberRenewalService {
         providerResourceId: 'PN_TEST_MOCK_SID',
         customerFundedThroughAt: new Date(Date.now() + 86400 * 1000).toISOString(),
         customerNextRenewalAt: new Date(Date.now() + 86400 * 1000).toISOString(),
-        providerBillingAnchorAt: '2026-10-06T14:30:00.000Z',
-        providerNextExposureAt: new Date(Date.now() + 30 * 86400 * 1000).toISOString(),
-        carrierExposureSource: 'safely_derived_provisioning_date',
+        customerBillingCycleAnchorAt: mockAnchor,
+        providerBillingAnchorAt: mockExposure.providerCycleAnchorAt,
+        providerNextExposureAt: mockExposure.providerNextExposureAt,
+        providerCycleSource: 'PROVIDER_AUTHORITATIVE',
+        providerCycleStatus: 'verified',
         wholesaleCostMinor: 100,
         retailPriceMinor: 315,
         currency: 'USD',
@@ -40,33 +51,30 @@ export class PrepaidNumberRenewalService {
         unfundedCompanyLiability: false,
       };
     }
+
     try {
       const supabase = createAdminClient();
 
-      // 1. Query phone number details
-      const { data: pn, error: pnErr } = await (supabase as any)
+      const { data: pn } = await (supabase as any)
         .from('phone_numbers')
         .select('*')
         .eq('id', phoneNumberId)
         .maybeSingle();
 
-      if (pnErr || !pn) return null;
+      if (!pn) return null;
 
-      // 2. Query lifecycle state
       const { data: lcState } = await (supabase as any)
         .from('phone_number_lifecycle_states')
         .select('*')
         .eq('phone_number_id', phoneNumberId)
         .maybeSingle();
 
-      // 3. Query provider mapping
       const { data: mapping } = await (supabase as any)
         .from('number_provider_mappings')
         .select('*')
         .eq('phone_number_id', phoneNumberId)
         .maybeSingle();
 
-      // 4. Query contracted retail billable resource
       const { data: billableRes } = await (supabase as any)
         .from('organization_billable_resources')
         .select('*')
@@ -76,22 +84,37 @@ export class PrepaidNumberRenewalService {
         .eq('status', 'active')
         .maybeSingle();
 
-      // Derive provider anchor date from phone_number created_at or mapping created_at
-      const providerBillingAnchorAt = pn.created_at || mapping?.created_at || null;
-      const exposureInfo = CarrierExposureService.calculateNextProviderExposureBoundary(
-        providerBillingAnchorAt
+      // Check explicit provenance stored in mapping metadata or lcState metadata
+      const rawMappingMeta = mapping?.metadata || {};
+      const rawLcMeta = lcState?.metadata || {};
+
+      const explicitSource: ProviderCycleSource =
+        rawMappingMeta.providerCycleSource ||
+        rawLcMeta.providerCycleSource ||
+        'LOCAL_APPROXIMATION';
+
+      const hasProviderProvenance = Boolean(
+        rawMappingMeta.hasProviderProvenance ||
+        rawLcMeta.hasProviderProvenance ||
+        rawMappingMeta.twilioDateCreated
       );
 
-      // Derive customer funded-through date (defaults to 1 month after creation if null)
-      let customerFundedThroughAt: string | null = lcState?.paid_through_at
+      const rawAnchor =
+        rawMappingMeta.twilioDateCreated ||
+        mapping?.created_at ||
+        pn.created_at ||
+        null;
+
+      const exposureInfo = CarrierExposureService.calculateNextProviderExposureBoundary({
+        cycleAnchorDate: rawAnchor,
+        explicitSource,
+        hasProviderProvenance,
+      });
+
+      // Customer funding dates (separated from provider exposure dates!)
+      const customerFundedThroughAt: string | null = lcState?.paid_through_at
         ? new Date(lcState.paid_through_at).toISOString()
         : null;
-
-      if (!customerFundedThroughAt && providerBillingAnchorAt) {
-        const fallbackExp = new Date(providerBillingAnchorAt);
-        fallbackExp.setMonth(fallbackExp.getMonth() + 1);
-        customerFundedThroughAt = fallbackExp.toISOString();
-      }
 
       const isReleased = pn.status === 'released' || lcState?.lifecycle_state === 'released';
       const hasActivePortOut =
@@ -107,9 +130,11 @@ export class PrepaidNumberRenewalService {
         providerResourceId: mapping?.provider_resource_id || pn.twilio_phone_number_sid || 'PN_UNKNOWN',
         customerFundedThroughAt,
         customerNextRenewalAt: customerFundedThroughAt,
-        providerBillingAnchorAt,
-        providerNextExposureAt: exposureInfo.nextExposureAt,
-        carrierExposureSource: exposureInfo.exposureSource,
+        customerBillingCycleAnchorAt: customerFundedThroughAt,
+        providerBillingAnchorAt: exposureInfo.providerCycleAnchorAt,
+        providerNextExposureAt: exposureInfo.providerNextExposureAt,
+        providerCycleSource: exposureInfo.providerCycleSource,
+        providerCycleStatus: exposureInfo.providerCycleStatus,
         wholesaleCostMinor: mapping?.monthly_wholesale_cost_minor || 100,
         retailPriceMinor: billableRes?.contracted_retail_minor ? Number(billableRes.contracted_retail_minor) : 315,
         currency: billableRes?.currency || 'USD',
@@ -145,6 +170,8 @@ export class PrepaidNumberRenewalService {
         nextAction: 'NO_ACTION',
         customerFundedThroughAt: null,
         providerNextExposureAt: null,
+        providerCycleSource: 'UNKNOWN',
+        providerCycleStatus: 'unknown_requires_reconciliation',
         effectiveDeadlineAt: null,
         isUnfundedLiability: false,
         unfundedHours: 0,
@@ -161,6 +188,30 @@ export class PrepaidNumberRenewalService {
     // Interlock 1: Is already released?
     if (record.isReleased) {
       blockers.push('ALREADY_RELEASED');
+    }
+
+    // Interlock 2: Active Port-Out in progress?
+    if (record.hasActivePortOut) {
+      blockers.push('ACTIVE_PORT_OUT_IN_PROGRESS');
+    }
+
+    // Interlock 3: Unknown or unverified provider exposure cycle?
+    if (record.providerCycleStatus === 'unknown_requires_reconciliation' || record.providerCycleSource === 'LOCAL_APPROXIMATION') {
+      blockers.push('UNKNOWN_CARRIER_EXPOSURE_DATE');
+    }
+
+    // Interlock 4: Provider reconciliation required?
+    if (record.reconciliationBlocked) {
+      blockers.push('PROVIDER_RECONCILIATION_REQUIRED');
+    }
+
+    // Interlock 5: Ambiguous / pending payment in progress?
+    if (record.paymentAttemptState === 'pending') {
+      blockers.push('PAYMENT_ATTEMPT_PENDING');
+    }
+
+    // Return immediately if released
+    if (record.isReleased) {
       return {
         phoneNumberId: record.phoneNumberId,
         phoneNumberE164: record.phoneNumberE164,
@@ -169,27 +220,14 @@ export class PrepaidNumberRenewalService {
         nextAction: 'NO_ACTION',
         customerFundedThroughAt: record.customerFundedThroughAt,
         providerNextExposureAt: record.providerNextExposureAt,
+        providerCycleSource: record.providerCycleSource,
+        providerCycleStatus: record.providerCycleStatus,
         effectiveDeadlineAt: null,
         isUnfundedLiability: false,
         unfundedHours: 0,
         reason: 'Number is released. Unsafe to offer same-ownership restore.',
         blockers,
       };
-    }
-
-    // Interlock 2: Active Port-Out in progress?
-    if (record.hasActivePortOut) {
-      blockers.push('ACTIVE_PORT_OUT_IN_PROGRESS');
-    }
-
-    // Interlock 3: Reconciliation required / unknown provider cycle?
-    if (record.carrierExposureSource === 'unknown_requires_reconciliation' || record.reconciliationBlocked) {
-      blockers.push('PROVIDER_RECONCILIATION_REQUIRED');
-    }
-
-    // Interlock 4: Ambiguous / pending payment in progress?
-    if (record.paymentAttemptState === 'pending') {
-      blockers.push('PAYMENT_ATTEMPT_PENDING');
     }
 
     // Calculate timelines
@@ -205,7 +243,6 @@ export class PrepaidNumberRenewalService {
     let nextAction: RenewalEvaluationResult['nextAction'] = 'NO_ACTION';
     let reason = 'Number entitlement is currently funded and active.';
 
-    // Action resolution logic
     if (record.autopayEnabled && hoursToExposure <= policy.autopayAttemptLeadHours && !isUnfundedLiability) {
       nextAction = 'RENEW_AUTOPAY';
       reason = `Approaching carrier exposure boundary in ${hoursToExposure}h. Autopay renewal scheduled.`;
@@ -228,9 +265,9 @@ export class PrepaidNumberRenewalService {
       reason = `Unfunded liability exceeds policy boundary (${policy.releaseEligibilityBoundaryHours}h). Evaluating release safety interlocks.`;
     }
 
-    // Compute authoritative deadline
+    // Authoritative deadline is ONLY returned when provider exposure is verified & non-null
     const effectiveDeadlineMs = fundedThroughMs + policy.releaseEligibilityBoundaryHours * 3600 * 1000;
-    const effectiveDeadlineAt = record.carrierExposureSource !== 'unknown_requires_reconciliation'
+    const effectiveDeadlineAt = record.providerCycleStatus === 'verified' && record.providerNextExposureAt
       ? new Date(effectiveDeadlineMs).toISOString()
       : null;
 
@@ -242,6 +279,8 @@ export class PrepaidNumberRenewalService {
       nextAction,
       customerFundedThroughAt: record.customerFundedThroughAt,
       providerNextExposureAt: record.providerNextExposureAt,
+      providerCycleSource: record.providerCycleSource,
+      providerCycleStatus: record.providerCycleStatus,
       effectiveDeadlineAt,
       isUnfundedLiability,
       unfundedHours,
@@ -252,8 +291,8 @@ export class PrepaidNumberRenewalService {
 
   /**
    * Executes an Autopay Renewal attempt for a phone number.
-   * On Success: Advances paid_through_at by 1 month, clears delinquency, logs audit event.
-   * On Failure: Categorizes failure, enters payment recovery window without releasing number.
+   * ANCHOR-PRESERVING: Uses original cycle anchor to prevent drift on 28th/29th/30th/31st.
+   * ZERO STRIPE CAPTURE: Simulation/abstraction-safe execution only.
    */
   static async executeAutopayRenewal(
     phoneNumberId: string,
@@ -273,13 +312,10 @@ export class PrepaidNumberRenewalService {
     const shouldSucceed = options?.mockSuccess ?? true;
 
     if (shouldSucceed) {
-      // Calculate new funded-through date (+1 month)
-      const currentFunded = record.customerFundedThroughAt ? new Date(record.customerFundedThroughAt) : new Date();
-      const nextFunded = new Date(currentFunded);
-      nextFunded.setMonth(nextFunded.getMonth() + 1);
-      const nextFundedIso = nextFunded.toISOString();
+      // ANCHOR-PRESERVING: Calculate next funded period preserving cycle anchor day
+      const anchorInput = record.customerBillingCycleAnchorAt || record.customerFundedThroughAt || new Date().toISOString();
+      const nextFundedIso = CarrierExposureService.calculateAnchorPreservedPeriodDate(anchorInput, 1);
 
-      // Update phone_number_lifecycle_states in DB
       await (supabase as any)
         .from('phone_number_lifecycle_states')
         .upsert({
@@ -298,7 +334,6 @@ export class PrepaidNumberRenewalService {
           },
         });
 
-      // Record durable lifecycle event
       await OffboardingNotificationService.recordNotificationEvent({
         organizationId: record.organizationId,
         phoneNumberId: record.phoneNumberId,
@@ -318,7 +353,6 @@ export class PrepaidNumberRenewalService {
         message: `Autopay renewal successful for ${record.phoneNumberE164}. Funded through ${nextFundedIso}.`,
       };
     } else {
-      // Failure path: safe classification without immediate release
       const failureReason = options?.failureReason || 'card_declined';
 
       await (supabase as any)
@@ -406,7 +440,7 @@ export class PrepaidNumberRenewalService {
         phoneNumberE164: row.phone_number_e164,
         organizationId: row.organization_id,
         unfundedHours,
-        monthlyWholesaleCostMinor: 100, // Derived wholesale cost
+        monthlyWholesaleCostMinor: 100,
         providerNextExposureAt: row.metadata?.providerNextExposureAt || null,
         retainingReason,
       });

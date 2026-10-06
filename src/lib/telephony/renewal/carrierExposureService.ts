@@ -1,89 +1,151 @@
 import 'server-only';
-import { CarrierExposureSource } from './types';
+import { ProviderCycleSource, ProviderCycleStatus, ProviderCycleMetadata } from './types';
 
 export class CarrierExposureService {
   /**
-   * Calculates the next carrier exposure (billing charge boundary) for a phone number.
-   * DYNAMIC PER-NUMBER RECURRING CYCLE CALCULATION.
+   * Evaluates provider cycle metadata with explicit provenance checks.
    *
-   * Example:
-   * A number acquired on Oct 6 @ 14:30 UTC recurs on Nov 6 @ 14:30 UTC, Dec 6 @ 14:30 UTC, etc.
-   * A number acquired on Oct 21 @ 09:15 UTC recurs on Nov 21 @ 09:15 UTC, Dec 21 @ 09:15 UTC, etc.
-   *
-   * STRICT GUARANTEE: NO global month-end or calendar-1st assumption is ever applied!
+   * PROVENANCE RULES:
+   * 1. PROVIDER_AUTHORITATIVE: Raw payload timestamp directly from provider API (e.g. Twilio dateCreated).
+   * 2. PROVIDER_DERIVED_WITH_PROVEN_SEMANTICS: Saved from verified provisioning operation log with provider payload metadata.
+   * 3. LOCAL_APPROXIMATION: Raw local DB created_at timestamp without verified provider provenance. MUST NOT masquerade as authoritative!
+   * 4. UNKNOWN: Missing anchor or unparseable date. Fails closed.
    */
-  static calculateNextProviderExposureBoundary(
-    anchorDateInput: string | Date | null | undefined,
-    asOfDateInput?: string | Date
-  ): {
-    nextExposureAt: string | null;
-    exposureSource: CarrierExposureSource;
-    cycleAnchorAt: string | null;
+  static classifyProviderCycleAnchor(params: {
+    rawAnchorDate?: string | Date | null;
+    explicitSource?: ProviderCycleSource | null;
+    hasProviderProvenance?: boolean;
+  }): {
+    anchorDate: string | null;
+    source: ProviderCycleSource;
+    status: ProviderCycleStatus;
   } {
-    if (!anchorDateInput) {
+    const { rawAnchorDate, explicitSource, hasProviderProvenance } = params;
+
+    if (!rawAnchorDate) {
       return {
-        nextExposureAt: null,
-        exposureSource: 'unknown_requires_reconciliation',
-        cycleAnchorAt: null,
+        anchorDate: null,
+        source: 'UNKNOWN',
+        status: 'unknown_requires_reconciliation',
       };
     }
 
-    const anchorDate = new Date(anchorDateInput);
-    if (isNaN(anchorDate.getTime())) {
+    const parsed = new Date(rawAnchorDate);
+    if (isNaN(parsed.getTime())) {
       return {
-        nextExposureAt: null,
-        exposureSource: 'unknown_requires_reconciliation',
-        cycleAnchorAt: null,
+        anchorDate: null,
+        source: 'UNKNOWN',
+        status: 'unknown_requires_reconciliation',
       };
     }
 
-    const asOfDate = asOfDateInput ? new Date(asOfDateInput) : new Date();
-
-    // Advance monthly cycles from anchor date until next exposure is in the future relative to asOfDate
-    let exposureCandidate = new Date(anchorDate.getTime());
-
-    while (exposureCandidate.getTime() <= asOfDate.getTime()) {
-      // Add 1 month dynamically preserving day of month
-      const currentYear = exposureCandidate.getFullYear();
-      const currentMonth = exposureCandidate.getMonth();
-      const targetMonth = (currentMonth + 1) % 12;
-      const targetYear = currentYear + Math.floor((currentMonth + 1) / 12);
-
-      // Handle month-length variations gracefully (e.g. Jan 31 -> Feb 28/29)
-      const originalDay = anchorDate.getDate();
-      const daysInTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
-      const safeDay = Math.min(originalDay, daysInTargetMonth);
-
-      exposureCandidate = new Date(
-        Date.UTC(
-          targetYear,
-          targetMonth,
-          safeDay,
-          anchorDate.getUTCHours(),
-          anchorDate.getUTCMinutes(),
-          anchorDate.getUTCSeconds(),
-          anchorDate.getUTCMilliseconds()
-        )
-      );
+    // Determine source & status based on explicit source and provenance flag
+    if (explicitSource === 'PROVIDER_AUTHORITATIVE' || (hasProviderProvenance && explicitSource !== 'LOCAL_APPROXIMATION')) {
+      return {
+        anchorDate: parsed.toISOString(),
+        source: 'PROVIDER_AUTHORITATIVE',
+        status: 'verified',
+      };
     }
 
+    if (explicitSource === 'PROVIDER_DERIVED_WITH_PROVEN_SEMANTICS') {
+      return {
+        anchorDate: parsed.toISOString(),
+        source: 'PROVIDER_DERIVED_WITH_PROVEN_SEMANTICS',
+        status: 'verified',
+      };
+    }
+
+    // Default for local created_at without proven provider provenance: LOCAL_APPROXIMATION -> FAILS CLOSED
     return {
-      nextExposureAt: exposureCandidate.toISOString(),
-      exposureSource: 'safely_derived_provisioning_date',
-      cycleAnchorAt: anchorDate.toISOString(),
+      anchorDate: parsed.toISOString(),
+      source: 'LOCAL_APPROXIMATION',
+      status: 'unknown_requires_reconciliation',
     };
   }
 
   /**
-   * Computes remaining carrier exposure window in hours relative to current time.
+   * ANCHOR-PRESERVING PERIOD CALCULATION (NO MONTHLY DRIFT).
+   *
+   * Calculates N periods forward from an explicit cycle anchor date, preserving the original
+   * anchor day of month across month-length variations (e.g. 28th, 29th, 30th, 31st, Feb leap years).
+   *
+   * Example:
+   * Anchor = Jan 31 @ 14:00 UTC
+   * +1 Period (Feb) -> Feb 28 (or Feb 29 in leap year) @ 14:00 UTC (clamped to month end for Feb)
+   * +2 Periods (March) -> March 31 @ 14:00 UTC (RETAINS 31st ANCHOR, NO SILENT DRIFT TO 28th!)
    */
-  static getHoursUntilProviderExposure(
-    nextExposureAtIso: string | null,
-    asOfDateInput?: string | Date
-  ): number | null {
-    if (!nextExposureAtIso) return null;
-    const target = new Date(nextExposureAtIso).getTime();
-    const now = asOfDateInput ? new Date(asOfDateInput).getTime() : Date.now();
-    return Math.floor((target - now) / (1000 * 60 * 60));
+  static calculateAnchorPreservedPeriodDate(
+    cycleAnchorDateInput: string | Date,
+    periodsForward: number
+  ): string {
+    const anchor = new Date(cycleAnchorDateInput);
+    const anchorDay = anchor.getUTCDate();
+    const anchorHours = anchor.getUTCHours();
+    const anchorMinutes = anchor.getUTCMinutes();
+    const anchorSeconds = anchor.getUTCSeconds();
+    const anchorMs = anchor.getUTCMilliseconds();
+
+    const startYear = anchor.getUTCFullYear();
+    const startMonth = anchor.getUTCMonth();
+
+    const targetTotalMonths = startMonth + periodsForward;
+    const targetYear = startYear + Math.floor(targetTotalMonths / 12);
+    const targetMonth = ((targetTotalMonths % 12) + 12) % 12;
+
+    // Number of days in target month
+    const daysInTargetMonth = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
+
+    // Clamp to days in month if anchorDay > daysInTargetMonth (e.g. Jan 31 -> Feb 28),
+    // BUT preserve anchorDay as the true anchor for subsequent calculations!
+    const effectiveDay = Math.min(anchorDay, daysInTargetMonth);
+
+    return new Date(
+      Date.UTC(targetYear, targetMonth, effectiveDay, anchorHours, anchorMinutes, anchorSeconds, anchorMs)
+    ).toISOString();
+  }
+
+  /**
+   * Calculates the next recurring provider exposure boundary from a cycle anchor,
+   * preserving the original anchor day without drift.
+   */
+  static calculateNextProviderExposureBoundary(params: {
+    cycleAnchorDate?: string | Date | null;
+    explicitSource?: ProviderCycleSource | null;
+    hasProviderProvenance?: boolean;
+    asOfDate?: string | Date;
+  }): ProviderCycleMetadata {
+    const classification = this.classifyProviderCycleAnchor({
+      rawAnchorDate: params.cycleAnchorDate,
+      explicitSource: params.explicitSource,
+      hasProviderProvenance: params.hasProviderProvenance,
+    });
+
+    if (!classification.anchorDate || classification.status === 'unknown_requires_reconciliation') {
+      return {
+        providerCycleAnchorAt: classification.anchorDate,
+        providerNextExposureAt: null,
+        providerCycleSource: classification.source,
+        providerCycleStatus: 'unknown_requires_reconciliation',
+      };
+    }
+
+    const anchorDate = new Date(classification.anchorDate);
+    const asOfDate = params.asOfDate ? new Date(params.asOfDate) : new Date();
+
+    let periodIndex = 0;
+    let candidateIso = this.calculateAnchorPreservedPeriodDate(anchorDate, periodIndex);
+
+    while (new Date(candidateIso).getTime() <= asOfDate.getTime()) {
+      periodIndex++;
+      candidateIso = this.calculateAnchorPreservedPeriodDate(anchorDate, periodIndex);
+    }
+
+    return {
+      providerCycleAnchorAt: classification.anchorDate,
+      providerNextExposureAt: candidateIso,
+      providerCycleSource: classification.source,
+      providerCycleStatus: classification.status,
+    };
   }
 }
