@@ -10,6 +10,7 @@ import {
 import { PreRenewalPolicyService } from './preRenewalPolicyService';
 import { CarrierExposureService } from './carrierExposureService';
 import { OffboardingNotificationService } from '@/lib/telephony/lifecycle/offboardingNotificationService';
+import { RetailPricingService } from '@/lib/telephony/marketplace/pricingService';
 
 export class PrepaidNumberRenewalService {
   /**
@@ -122,6 +123,30 @@ export class PrepaidNumberRenewalService {
         Boolean(lcState?.port_out_blocked) ||
         Boolean(lcState?.metadata?.hasActivePortOut);
 
+      // Resolve Dynamic Next-Cycle Retail Price using RetailPricingService
+      let resolvedRetailMinor: number | null = null;
+      let resolvedCurrency = billableRes?.currency || 'USD';
+
+      if (billableRes) {
+        try {
+          const dynamicPriceRes = await RetailPricingService.resolveRetailPrice(
+            pn.country_code || 'AU',
+            pn.number_type || 'local',
+            billableRes.currency || 'USD'
+          );
+          if (dynamicPriceRes.hasConfiguredPrice && dynamicPriceRes.monthlyPriceMinor !== null && dynamicPriceRes.monthlyPriceMinor > 0) {
+            resolvedRetailMinor = dynamicPriceRes.monthlyPriceMinor;
+            resolvedCurrency = dynamicPriceRes.currency;
+          } else if (billableRes.contracted_retail_minor !== undefined && billableRes.contracted_retail_minor !== null && Number(billableRes.contracted_retail_minor) > 0) {
+            resolvedRetailMinor = Number(billableRes.contracted_retail_minor);
+          }
+        } catch {
+          if (billableRes.contracted_retail_minor !== undefined && billableRes.contracted_retail_minor !== null && Number(billableRes.contracted_retail_minor) > 0) {
+            resolvedRetailMinor = Number(billableRes.contracted_retail_minor);
+          }
+        }
+      }
+
       return {
         phoneNumberId: pn.id,
         phoneNumberE164: pn.phone_number,
@@ -136,10 +161,8 @@ export class PrepaidNumberRenewalService {
         providerCycleSource: exposureInfo.providerCycleSource,
         providerCycleStatus: exposureInfo.providerCycleStatus,
         wholesaleCostMinor: mapping?.monthly_wholesale_cost_minor || 100,
-        retailPriceMinor: (billableRes?.contracted_retail_minor !== undefined && billableRes?.contracted_retail_minor !== null)
-          ? Number(billableRes.contracted_retail_minor)
-          : null,
-        currency: billableRes?.currency || 'USD',
+        retailPriceMinor: resolvedRetailMinor,
+        currency: resolvedCurrency,
         autopayEnabled: Boolean(lcState?.metadata?.autopayEnabled ?? true),
         renewalStatus: lcState?.lifecycle_state || 'active',
         paymentAttemptState: lcState?.metadata?.paymentAttemptState || 'none',
