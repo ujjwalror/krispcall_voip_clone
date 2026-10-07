@@ -1,24 +1,20 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import {
   Zap,
   CreditCard,
-  CheckCircle,
   AlertCircle,
   Loader2,
   Settings,
-  ShieldCheck,
-  PlusCircle,
-  ArrowRight,
-  Info,
+  ExternalLink,
 } from 'lucide-react';
 import { AutoTopupStatusCustomerDto } from '@/lib/billing/creditAutoTopupService';
 import { WorkspacePaymentProfileDTO } from '@/lib/billing/workspacePaymentProfileService';
-import { WorkspacePaymentMethodModal } from './WorkspacePaymentMethodModal';
 
 interface AutoTopupCardProps {
   userRole?: string;
@@ -35,7 +31,6 @@ export function AutoTopupCard({ userRole = 'agent', onStatusChanged }: AutoTopup
   const [error, setError] = useState<string | null>(null);
 
   const [isEditing, setIsEditing] = useState(false);
-  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isDisabling, setIsDisabling] = useState(false);
 
@@ -87,7 +82,7 @@ export function AutoTopupCard({ userRole = 'agent', onStatusChanged }: AutoTopup
     if (!canManage || isSaving) return;
 
     if (!paymentProfile?.hasDefaultPaymentMethod) {
-      setIsPaymentModalOpen(true);
+      setError('A workspace default payment method is required before enabling Auto Top-Up.');
       return;
     }
 
@@ -167,8 +162,10 @@ export function AutoTopupCard({ userRole = 'agent', onStatusChanged }: AutoTopup
     );
   }
 
-  const isEnabled = settings?.enabled && settings?.status === 'enabled';
+  const isRawEnabled = settings?.enabled && settings?.status === 'enabled';
   const hasCard = paymentProfile?.hasDefaultPaymentMethod;
+  const isOperationallyActive = isRawEnabled && hasCard;
+
   const cardSummary = paymentProfile?.paymentMethod
     ? `${paymentProfile.paymentMethod.brand.toUpperCase()} •••• ${paymentProfile.paymentMethod.last4}`
     : 'No saved card';
@@ -179,9 +176,13 @@ export function AutoTopupCard({ userRole = 'agent', onStatusChanged }: AutoTopup
         <div className="flex items-center gap-2">
           <Zap className="w-4 h-4 text-amber-500" />
           <CardTitle className="text-sm">Auto Top-Up</CardTitle>
-          {isEnabled ? (
+          {isOperationallyActive ? (
             <Badge variant="emerald" className="text-[10px]">
               ACTIVE
+            </Badge>
+          ) : !hasCard ? (
+            <Badge variant="amber" className="text-[10px]">
+              PAYMENT METHOD REQUIRED
             </Badge>
           ) : (
             <Badge variant="neutral" className="text-[10px]">
@@ -192,7 +193,7 @@ export function AutoTopupCard({ userRole = 'agent', onStatusChanged }: AutoTopup
 
         {canManage && (
           <div>
-            {isEnabled && !isEditing && (
+            {isOperationallyActive && !isEditing && (
               <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
@@ -230,30 +231,27 @@ export function AutoTopupCard({ userRole = 'agent', onStatusChanged }: AutoTopup
           </div>
         )}
 
-        {/* STATE 1: NO SAVED PAYMENT METHOD */}
+        {/* STATE 1: NO SAVED PAYMENT METHOD (DEPENDENCY STATE) */}
         {!hasCard ? (
           <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-900 dark:text-amber-200 space-y-3">
-            <div className="flex items-center gap-2 font-semibold">
-              <CreditCard className="w-4 h-4 text-amber-500" />
-              <span>Add a payment method to enable Auto Top-Up</span>
+            <div className="flex items-center gap-2 font-semibold text-sm">
+              <CreditCard className="w-4 h-4 text-amber-500 shrink-0" />
+              <span>Payment method required</span>
             </div>
             <p className="text-[11px] text-amber-800/80 dark:text-amber-300/80">
-              Auto Top-Up uses your workspace default payment method. Save a card to enable automatic balance recharges.
+              Add a workspace payment method under Plan &amp; Subscription before enabling Auto Top-Up.
             </p>
-            {canManage && (
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() => setIsPaymentModalOpen(true)}
-                className="mt-1"
-              >
-                <PlusCircle className="w-3.5 h-3.5 mr-1.5" />
-                Add Workspace Payment Method
-              </Button>
-            )}
+            <div>
+              <Link href="/settings/billing?tab=payment-methods">
+                <Button variant="primary" size="sm" className="mt-1">
+                  <ExternalLink className="w-3.5 h-3.5 mr-1.5" />
+                  Go to Payment Methods
+                </Button>
+              </Link>
+            </div>
           </div>
-        ) : isEditing || !isEnabled ? (
-          /* STATE 2: COMPACT SINGLE-STEP CONFIGURATION FORM */
+        ) : isEditing || !isRawEnabled ? (
+          /* STATE 2: COMPACT CONFIGURATION FORM (WITH SAVED CARD) */
           <form onSubmit={handleSaveChanges} className="space-y-4 pt-1">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {/* Threshold Selection */}
@@ -302,15 +300,12 @@ export function AutoTopupCard({ userRole = 'agent', onStatusChanged }: AutoTopup
                   {cardSummary}
                 </span>
               </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => setIsPaymentModalOpen(true)}
-                className="text-xs text-indigo-600 dark:text-indigo-400"
-              >
-                Change Card
-              </Button>
+              <Link href="/settings/billing?tab=payment-methods">
+                <span className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1">
+                  <span>Manage</span>
+                  <ExternalLink className="w-3 h-3" />
+                </span>
+              </Link>
             </div>
 
             {/* Explicit Authorization Consent */}
@@ -330,7 +325,7 @@ export function AutoTopupCard({ userRole = 'agent', onStatusChanged }: AutoTopup
             {/* Action Buttons */}
             {canManage && (
               <div className="flex items-center justify-end gap-2 pt-1">
-                {isEnabled && (
+                {isOperationallyActive && (
                   <Button
                     type="button"
                     variant="outline"
@@ -353,7 +348,7 @@ export function AutoTopupCard({ userRole = 'agent', onStatusChanged }: AutoTopup
                       <span>Saving...</span>
                     </>
                   ) : (
-                    <span>{isEnabled ? 'Save Changes' : 'Enable Auto Top-Up'}</span>
+                    <span>{isOperationallyActive ? 'Save Changes' : 'Enable Auto Top-Up'}</span>
                   )}
                 </Button>
               </div>
@@ -383,15 +378,11 @@ export function AutoTopupCard({ userRole = 'agent', onStatusChanged }: AutoTopup
                 <span className="text-[11px] text-slate-500 block">Payment Method</span>
                 <div className="font-mono font-semibold text-slate-900 dark:text-slate-100 mt-1 flex items-center justify-between">
                   <span>{cardSummary}</span>
-                  {canManage && (
-                    <button
-                      type="button"
-                      onClick={() => setIsPaymentModalOpen(true)}
-                      className="text-[10px] text-indigo-600 dark:text-indigo-400 font-sans hover:underline ml-1"
-                    >
-                      Change
-                    </button>
-                  )}
+                  <Link href="/settings/billing?tab=payment-methods">
+                    <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-sans hover:underline ml-1">
+                      Manage
+                    </span>
+                  </Link>
                 </div>
                 <span className="text-[10px] text-slate-400 mt-0.5 block">Workspace default card</span>
               </div>
@@ -399,18 +390,6 @@ export function AutoTopupCard({ userRole = 'agent', onStatusChanged }: AutoTopup
           </div>
         )}
       </div>
-
-      {/* Centralized Payment Method Modal */}
-      {isPaymentModalOpen && (
-        <WorkspacePaymentMethodModal
-          isOpen={isPaymentModalOpen}
-          onClose={() => setIsPaymentModalOpen(false)}
-          onSuccess={() => {
-            setIsPaymentModalOpen(false);
-            fetchData();
-          }}
-        />
-      )}
     </Card>
   );
 }

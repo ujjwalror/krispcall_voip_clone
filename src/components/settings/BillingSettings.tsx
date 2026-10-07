@@ -137,6 +137,20 @@ export function BillingSettings() {
     fetchSubscription();
   }, [fetchSubscription]);
 
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get('tab');
+      if (tabParam === 'payment-methods' || tabParam === 'payments') {
+        setActiveTab('payments');
+      } else if (tabParam === 'info') {
+        setActiveTab('info');
+      } else if (tabParam === 'invoices') {
+        setActiveTab('invoices');
+      }
+    }
+  }, []);
+
   if (isLoading) {
     return (
       <div className="flex flex-col items-center justify-center py-20 space-y-4 max-w-4xl mx-auto">

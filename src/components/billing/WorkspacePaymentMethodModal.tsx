@@ -10,7 +10,7 @@ import {
 } from '@stripe/react-stripe-js';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { ShieldCheck, Loader2, AlertCircle, CheckCircle, CreditCard, Info } from 'lucide-react';
+import { ShieldCheck, Loader2, AlertCircle, CheckCircle, CreditCard, Info, X } from 'lucide-react';
 
 const stripePublishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || '';
 let stripePromise: Promise<Stripe | null> | null = null;
@@ -136,7 +136,7 @@ function WorkspaceSetupForm({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-4 flex flex-col h-full">
       {/* Stripe Payment Element */}
       <div className="p-3 bg-slate-50 dark:bg-slate-900/50 rounded-lg border border-slate-200 dark:border-slate-800">
         <PaymentElement />
@@ -218,7 +218,7 @@ function WorkspaceSetupForm({
       )}
 
       {/* Footer Actions */}
-      <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+      <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800 shrink-0 mt-auto">
         <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={isProcessing}>
           Cancel
         </Button>
@@ -256,6 +256,26 @@ export function WorkspacePaymentMethodModal({
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [setupIntentId, setSetupIntentId] = useState<string | null>(null);
   const [isSuccess, setIsSuccess] = useState(false);
+
+  // Lock body scroll and handle Escape key while modal is open
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen, onClose]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -305,23 +325,37 @@ export function WorkspacePaymentMethodModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-lg bg-white dark:bg-slate-950 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-3 sm:p-4 overflow-hidden"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="relative w-full max-w-lg max-h-[calc(100dvh-2rem)] flex flex-col bg-white dark:bg-slate-950 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
         {/* Header */}
-        <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+        <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
             <CreditCard className="w-5 h-5 text-indigo-500" />
             <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">
               Workspace Payment Profile Setup
             </h3>
           </div>
-          <Badge variant="blue" className="text-[10px]">
-            TEST MODE
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant="blue" className="text-[10px]">
+              TEST MODE
+            </Badge>
+            <button
+              onClick={onClose}
+              className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+              aria-label="Close modal"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
-        {/* Content */}
-        <div className="p-5 space-y-4">
+        {/* Scrollable Content Body */}
+        <div className="p-4 sm:p-5 overflow-y-auto overscroll-contain flex-1 max-h-[calc(100dvh-8rem)]">
           {initLoading ? (
             <div className="py-12 text-center space-y-3">
               <Loader2 className="w-8 h-8 animate-spin text-indigo-500 mx-auto" />
