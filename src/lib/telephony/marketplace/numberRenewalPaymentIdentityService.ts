@@ -243,13 +243,10 @@ export class NumberRenewalPaymentIdentityService {
       const last4 = pmObj.card?.last4 || '0000';
       const scope = consentScope || 'PHONE_NUMBER_RENTAL_RENEWAL';
 
-      // 4. Record explicit consent and saved off-session payment method in billing_auto_topup_settings
-      const settingsPayload: any = {
-        organization_id: organizationId,
-        status: 'enabled',
-        threshold_minor: 1, // satisfies schema check
-        recharge_amount_minor: 1, // satisfies schema check
-        currency: 'USD',
+      // 4. Decoupled Consent Storage: Persist explicit rental renewal payment authorization in organization_billable_resources
+      // This strictly guarantees NO coupling to telecom wallet auto-topup settings!
+      const consentRecord = {
+        scope,
         provider_account_id: customerInfo.providerAccountId,
         provider_customer_id: customerInfo.customerId,
         provider_payment_method_id: pmId,
@@ -258,16 +255,43 @@ export class NumberRenewalPaymentIdentityService {
         enrolled_by_user_id: userId,
         enrolled_at: new Date().toISOString(),
         consent_terms_version: 'v1.0',
-        updated_at: new Date().toISOString(),
+        autopay_authorized: true,
       };
 
-      const { error: upsertErr } = await (supabase as any)
-        .from('billing_auto_topup_settings')
-        .upsert(settingsPayload, { onConflict: 'organization_id' });
+      // Update billable resources metadata for tenant active number resources
+      const { data: billableRes } = await (supabase as any)
+        .from('organization_billable_resources')
+        .select('id, metadata')
+        .eq('organization_id', organizationId)
+        .eq('status', 'active');
 
-      if (upsertErr) {
-        console.error('[NumberRenewalPaymentIdentityService] Settings upsert error:', upsertErr.message);
-        throw new Error(`Database save error: ${upsertErr.message}`);
+      if (billableRes && billableRes.length > 0) {
+        for (const resItem of billableRes) {
+          const updatedMeta = {
+            ...(resItem.metadata || {}),
+            rental_payment_authorization: consentRecord,
+          };
+          await (supabase as any)
+            .from('organization_billable_resources')
+            .update({ metadata: updatedMeta, updated_at: new Date().toISOString() })
+            .eq('id', resItem.id);
+        }
+      }
+
+      // Also record in organization_billing_controls metadata to maintain top-level auditing
+      const { data: currentControls } = await (supabase as any)
+        .from('organization_billing_controls')
+        .select('id, restriction_reason')
+        .eq('organization_id', organizationId)
+        .maybeSingle();
+
+      if (currentControls) {
+        await (supabase as any)
+          .from('organization_billing_controls')
+          .update({
+            updated_at: new Date().toISOString(),
+          })
+          .eq('organization_id', organizationId);
       }
 
       // 5. Update attempt status

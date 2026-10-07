@@ -22,11 +22,13 @@ import type {
   CustomerNumberSubscriptionDTO,
   OrganizationNumberSubscriptionsSummaryDTO,
 } from '@/lib/telephony/marketplace/numberSubscriptionService';
+import { NumberRenewalSetupModal } from '@/components/billing/NumberRenewalSetupModal';
 
 export default function BillingNumbersPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<OrganizationNumberSubscriptionsSummaryDTO | null>(null);
+  const [selectedNumberForSetup, setSelectedNumberForSetup] = useState<CustomerNumberSubscriptionDTO | null>(null);
 
   const fetchSubscriptions = useCallback(async () => {
     try {
@@ -259,6 +261,7 @@ export default function BillingNumbersPage() {
                         <th className="pb-2.5 font-medium">Status</th>
                         <th className="pb-2.5 font-medium text-right">Monthly Retail</th>
                         <th className="pb-2.5 font-medium text-right">Activation Date</th>
+                        <th className="pb-2.5 font-medium text-right">Renewal Setup</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
@@ -317,6 +320,15 @@ export default function BillingNumbersPage() {
                           </td>
                           <td className="py-3.5 text-right text-slate-500 dark:text-slate-400 whitespace-nowrap">
                             {formatDate(num.purchasedAt)}
+                          </td>
+                          <td className="py-3.5 text-right whitespace-nowrap">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setSelectedNumberForSetup(num)}
+                            >
+                              Setup Renewal Autopay
+                            </Button>
                           </td>
                         </tr>
                       ))}
@@ -384,6 +396,19 @@ export default function BillingNumbersPage() {
             </Card>
           )}
         </>
+      )}
+
+      {/* Renewal Setup Modal */}
+      {selectedNumberForSetup && (
+        <NumberRenewalSetupModal
+          isOpen={!!selectedNumberForSetup}
+          onClose={() => setSelectedNumberForSetup(null)}
+          onSuccess={() => {
+            fetchSubscriptions();
+          }}
+          phoneNumberId={selectedNumberForSetup.numberId}
+          phoneNumber={selectedNumberForSetup.phoneNumber}
+        />
       )}
     </div>
   );
