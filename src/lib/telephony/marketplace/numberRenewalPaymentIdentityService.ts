@@ -133,24 +133,25 @@ export class NumberRenewalPaymentIdentityService {
         }
       );
 
-      // 4. Record initiation attempt in DB idempotently if billing_auto_topup_attempts exists
-      await (supabase as any)
-        .from('billing_auto_topup_attempts')
-        .insert({
-          organization_id: organizationId,
-          attempt_token: cleanAttemptToken,
-          provider_account_id: customerInfo.providerAccountId,
-          provider_customer_id: customerInfo.customerId,
-          setup_intent_id: setupIntent.id,
-          threshold_minor: 1, // dummy constraint satisfaction
-          recharge_amount_minor: 1, // dummy constraint satisfaction
-          currency: 'USD',
-          initiated_by_user_id: userId,
-          status: 'setup_created',
-        })
-        .catch(() => {
-          // Non-blocking fallback if attempts table is not used
-        });
+      // 4. Record initiation attempt in DB metadata safely if table exists
+      try {
+        await (supabase as any)
+          .from('billing_auto_topup_attempts')
+          .insert({
+            organization_id: organizationId,
+            attempt_token: cleanAttemptToken,
+            provider_account_id: customerInfo.providerAccountId,
+            provider_customer_id: customerInfo.customerId,
+            setup_intent_id: setupIntent.id,
+            threshold_minor: 1,
+            recharge_amount_minor: 1,
+            currency: 'USD',
+            initiated_by_user_id: userId,
+            status: 'setup_created',
+          });
+      } catch {
+        // Safe non-blocking fallback if attempts table is not present
+      }
 
       return {
         success: true,
@@ -294,11 +295,15 @@ export class NumberRenewalPaymentIdentityService {
           .eq('organization_id', organizationId);
       }
 
-      // 5. Update attempt status
-      await (supabase as any)
-        .from('billing_auto_topup_attempts')
-        .update({ status: 'completed', updated_at: new Date().toISOString() })
-        .eq('attempt_token', attemptToken);
+      // 5. Update attempt status safely
+      try {
+        await (supabase as any)
+          .from('billing_auto_topup_attempts')
+          .update({ status: 'completed', updated_at: new Date().toISOString() })
+          .eq('attempt_token', attemptToken);
+      } catch {
+        // Safe non-blocking fallback
+      }
 
       return {
         success: true,

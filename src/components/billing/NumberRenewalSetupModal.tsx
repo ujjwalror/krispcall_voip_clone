@@ -231,7 +231,12 @@ export function NumberRenewalSetupModal({
         const data = await res.json();
 
         if (!res.ok || !data.success) {
-          setInitError(data.message || 'Failed to initialize renewal setup.');
+          const rawMsg = data.message || '';
+          console.error('[NumberRenewalSetupModal] Initialization failed:', rawMsg);
+          const safeMsg = rawMsg.includes('is not a function') || rawMsg.includes('TypeError')
+            ? 'Unable to load the payment setup securely. Please try again.'
+            : rawMsg || 'Unable to load the payment setup securely. Please try again.';
+          setInitError(safeMsg);
           setInitLoading(false);
           return;
         }
