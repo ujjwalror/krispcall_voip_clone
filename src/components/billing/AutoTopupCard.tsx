@@ -1,216 +1,416 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
+import {
+  Zap,
+  CreditCard,
+  CheckCircle,
+  AlertCircle,
+  Loader2,
+  Settings,
+  ShieldCheck,
+  PlusCircle,
+  ArrowRight,
+  Info,
+} from 'lucide-react';
 import { AutoTopupStatusCustomerDto } from '@/lib/billing/creditAutoTopupService';
-import { AutoTopupSetupModal } from './AutoTopupSetupModal';
+import { WorkspacePaymentProfileDTO } from '@/lib/billing/workspacePaymentProfileService';
+import { WorkspacePaymentMethodModal } from './WorkspacePaymentMethodModal';
 
 interface AutoTopupCardProps {
   userRole?: string;
   onStatusChanged?: () => void;
 }
 
+const PRESET_THRESHOLDS = [10, 25, 50, 100];
+const PRESET_RECHARGES = [25, 50, 100, 250];
+
 export function AutoTopupCard({ userRole = 'agent', onStatusChanged }: AutoTopupCardProps) {
   const [settings, setSettings] = useState<AutoTopupStatusCustomerDto | null>(null);
+  const [paymentProfile, setPaymentProfile] = useState<WorkspacePaymentProfileDTO | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isSetupOpen, setIsSetupOpen] = useState(false);
-  const [disabling, setDisabling] = useState(false);
+
+  const [isEditing, setIsEditing] = useState(false);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDisabling, setIsDisabling] = useState(false);
+
+  // Editing form state
+  const [thresholdMajor, setThresholdMajor] = useState<number>(10);
+  const [rechargeAmountMajor, setRechargeAmountMajor] = useState<number>(25);
+  const [consentAgreed, setConsentAgreed] = useState<boolean>(true);
 
   const canManage = ['owner', 'admin'].includes(userRole.toLowerCase());
 
-  const fetchSettings = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/billing/credit/auto-topup/settings');
-      if (!res.ok) {
-        throw new Error('Failed to load Auto Top-Up status');
+      const [settingsRes, profileRes] = await Promise.all([
+        fetch('/api/billing/credit/auto-topup/settings', { cache: 'no-store' }),
+        fetch('/api/billing/workspace-payment-profile', { cache: 'no-store' }),
+      ]);
+
+      if (!settingsRes.ok) {
+        throw new Error('Failed to load Auto Top-Up settings');
       }
-      const data = await res.json();
-      if (data.success && data.settings) {
-        setSettings(data.settings);
+
+      const settingsData = await settingsRes.json();
+      if (settingsData.success && settingsData.settings) {
+        setSettings(settingsData.settings);
+        setThresholdMajor(settingsData.settings.thresholdMajor || 10);
+        setRechargeAmountMajor(settingsData.settings.rechargeAmountMajor || 25);
+      }
+
+      if (profileRes.ok) {
+        const profileData: WorkspacePaymentProfileDTO = await profileRes.json();
+        setPaymentProfile(profileData);
       }
     } catch (err: any) {
+      console.error('[AutoTopupCard] Error loading state:', err.message || err);
       setError(err.message || 'Error loading status');
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    fetchSettings();
   }, []);
 
-  const handleDisable = async () => {
-    if (!canManage || disabling) return;
-    if (!confirm('Are you sure you want to disable Auto Top-Up? Automatic recharges will stop.')) {
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const handleSaveChanges = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!canManage || isSaving) return;
+
+    if (!paymentProfile?.hasDefaultPaymentMethod) {
+      setIsPaymentModalOpen(true);
       return;
     }
 
-    setDisabling(true);
+    if (!consentAgreed) {
+      setError('You must authorize Auto Top-Up to enable automatic recharges.');
+      return;
+    }
+
+    setIsSaving(true);
+    setError(null);
+
+    try {
+      const res = await fetch('/api/billing/credit/auto-topup/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          thresholdMajor,
+          rechargeAmountMajor,
+          enabled: true,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || data.error || 'Failed to update Auto Top-Up settings.');
+      }
+
+      setIsEditing(false);
+      await fetchData();
+      if (onStatusChanged) onStatusChanged();
+    } catch (err: any) {
+      console.error('[AutoTopupCard] Save error:', err.message || err);
+      setError(err.message || 'Failed to update Auto Top-Up settings.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDisable = async () => {
+    if (!canManage || isDisabling) return;
+    if (!confirm('Are you sure you want to disable Auto Top-Up? Automatic credit recharges will stop.')) {
+      return;
+    }
+
+    setIsDisabling(true);
+    setError(null);
+
     try {
       const res = await fetch('/api/billing/credit/auto-topup/settings', {
         method: 'DELETE',
       });
+
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.message || 'Failed to disable Auto Top-Up');
       }
-      await fetchSettings();
+
+      setIsEditing(false);
+      await fetchData();
       if (onStatusChanged) onStatusChanged();
     } catch (err: any) {
-      alert(err.message || 'Failed to disable Auto Top-Up');
+      console.error('[AutoTopupCard] Disable error:', err.message || err);
+      setError(err.message || 'Failed to disable Auto Top-Up.');
     } finally {
-      setDisabling(false);
+      setIsDisabling(false);
     }
-  };
-
-  const handleModalSuccess = () => {
-    setIsSetupOpen(false);
-    fetchSettings();
-    if (onStatusChanged) onStatusChanged();
   };
 
   if (loading) {
     return (
-      <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 backdrop-blur-sm animate-pulse">
-        <div className="h-5 w-48 bg-slate-800 rounded mb-4"></div>
-        <div className="h-4 w-64 bg-slate-800/60 rounded"></div>
-      </div>
+      <Card className="p-6">
+        <div className="flex items-center gap-3">
+          <Loader2 className="w-5 h-5 animate-spin text-amber-500" />
+          <span className="text-xs text-slate-500">Loading Auto Top-Up configuration...</span>
+        </div>
+      </Card>
     );
   }
 
   const isEnabled = settings?.enabled && settings?.status === 'enabled';
-  const isActionRequired = settings?.status === 'action_required';
-  const isPausedFailure = settings?.status === 'paused_failure';
-  const isPausedDebt = settings?.status === 'paused_debt';
+  const hasCard = paymentProfile?.hasDefaultPaymentMethod;
+  const cardSummary = paymentProfile?.paymentMethod
+    ? `${paymentProfile.paymentMethod.brand.toUpperCase()} •••• ${paymentProfile.paymentMethod.last4}`
+    : 'No saved card';
 
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 backdrop-blur-sm shadow-xl">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-3">
-            <h3 className="text-lg font-semibold text-slate-100">Auto Top-Up</h3>
-            {isEnabled && (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
-                Active
-              </span>
-            )}
-            {isActionRequired && (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                <span className="h-1.5 w-1.5 rounded-full bg-amber-400"></span>
-                Action Required
-              </span>
-            )}
-            {(isPausedFailure || isPausedDebt) && (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-rose-500/10 text-rose-400 border border-rose-500/20">
-                <span className="h-1.5 w-1.5 rounded-full bg-rose-400"></span>
-                Paused
-              </span>
-            )}
-            {!isEnabled && !isActionRequired && !isPausedFailure && !isPausedDebt && (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-800 text-slate-400 border border-slate-700">
-                Disabled
-              </span>
-            )}
-          </div>
-          <p className="text-sm text-slate-400 mt-1">
-            Automatically recharge credits when your spendable balance drops below a threshold.
-          </p>
+    <Card className="border-slate-200 dark:border-slate-800">
+      <CardHeader className="pb-3 flex flex-row items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Zap className="w-4 h-4 text-amber-500" />
+          <CardTitle className="text-sm">Auto Top-Up</CardTitle>
+          {isEnabled ? (
+            <Badge variant="emerald" className="text-[10px]">
+              ACTIVE
+            </Badge>
+          ) : (
+            <Badge variant="neutral" className="text-[10px]">
+              DISABLED
+            </Badge>
+          )}
         </div>
 
         {canManage && (
-          <div className="flex items-center gap-3 self-start sm:self-auto">
-            {isEnabled || isActionRequired || isPausedFailure ? (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setIsSetupOpen(true)}
-                  className="px-4 py-2 text-xs font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg transition-colors"
+          <div>
+            {isEnabled && !isEditing && (
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsEditing(true)}
+                  className="text-xs"
                 >
-                  Edit Settings
-                </button>
-                <button
-                  type="button"
+                  <Settings className="w-3.5 h-3.5 mr-1" />
+                  Edit
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
                   onClick={handleDisable}
-                  disabled={disabling}
-                  className="px-4 py-2 text-xs font-medium text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 rounded-lg transition-colors disabled:opacity-50"
+                  disabled={isDisabling}
+                  className="text-xs"
                 >
-                  {disabling ? 'Disabling...' : 'Disable'}
-                </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setIsSetupOpen(true)}
-                className="px-4 py-2 text-xs font-medium text-slate-900 bg-emerald-400 hover:bg-emerald-300 font-semibold rounded-lg transition-colors shadow-lg shadow-emerald-500/20"
-              >
-                Enable Auto Top-Up
-              </button>
+                  {isDisabling ? 'Disabling...' : 'Disable'}
+                </Button>
+              </div>
             )}
+          </div>
+        )}
+      </CardHeader>
+
+      <div className="p-4 pt-0 space-y-4 text-xs">
+        <p className="text-slate-500 dark:text-slate-400">
+          Automatically add credit to your telecom wallet whenever spendable balance drops below a set threshold.
+        </p>
+
+        {error && (
+          <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        {/* STATE 1: NO SAVED PAYMENT METHOD */}
+        {!hasCard ? (
+          <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-900 dark:text-amber-200 space-y-3">
+            <div className="flex items-center gap-2 font-semibold">
+              <CreditCard className="w-4 h-4 text-amber-500" />
+              <span>Add a payment method to enable Auto Top-Up</span>
+            </div>
+            <p className="text-[11px] text-amber-800/80 dark:text-amber-300/80">
+              Auto Top-Up uses your workspace default payment method. Save a card to enable automatic balance recharges.
+            </p>
+            {canManage && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => setIsPaymentModalOpen(true)}
+                className="mt-1"
+              >
+                <PlusCircle className="w-3.5 h-3.5 mr-1.5" />
+                Add Workspace Payment Method
+              </Button>
+            )}
+          </div>
+        ) : isEditing || !isEnabled ? (
+          /* STATE 2: COMPACT SINGLE-STEP CONFIGURATION FORM */
+          <form onSubmit={handleSaveChanges} className="space-y-4 pt-1">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Threshold Selection */}
+              <div className="space-y-1.5">
+                <label className="font-medium text-slate-700 dark:text-slate-300">
+                  When balance falls below
+                </label>
+                <select
+                  value={thresholdMajor}
+                  onChange={(e) => setThresholdMajor(Number(e.target.value))}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-medium focus:ring-2 focus:ring-amber-500"
+                >
+                  {PRESET_THRESHOLDS.map((amt) => (
+                    <option key={amt} value={amt}>
+                      ${amt}.00 USD
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Recharge Amount Selection */}
+              <div className="space-y-1.5">
+                <label className="font-medium text-slate-700 dark:text-slate-300">
+                  Automatically add credit
+                </label>
+                <select
+                  value={rechargeAmountMajor}
+                  onChange={(e) => setRechargeAmountMajor(Number(e.target.value))}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-medium focus:ring-2 focus:ring-amber-500"
+                >
+                  {PRESET_RECHARGES.map((amt) => (
+                    <option key={amt} value={amt}>
+                      ${amt}.00 USD
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Masked Payment Method Summary */}
+            <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CreditCard className="w-4 h-4 text-slate-400" />
+                <span className="text-slate-500">Payment method:</span>
+                <span className="font-mono font-semibold text-slate-900 dark:text-slate-100">
+                  {cardSummary}
+                </span>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setIsPaymentModalOpen(true)}
+                className="text-xs text-indigo-600 dark:text-indigo-400"
+              >
+                Change Card
+              </Button>
+            </div>
+
+            {/* Explicit Authorization Consent */}
+            <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 flex items-start gap-2.5">
+              <input
+                type="checkbox"
+                id="walletConsent"
+                checked={consentAgreed}
+                onChange={(e) => setConsentAgreed(e.target.checked)}
+                className="mt-0.5 rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+              />
+              <label htmlFor="walletConsent" className="text-[11px] text-slate-600 dark:text-slate-300 cursor-pointer leading-relaxed">
+                I authorize VoIP Hub to automatically charge <span className="font-semibold text-slate-900 dark:text-slate-100">${rechargeAmountMajor}.00 USD</span> to <span className="font-mono font-semibold">{cardSummary}</span> whenever workspace credit balance falls below <span className="font-semibold text-slate-900 dark:text-slate-100">${thresholdMajor}.00 USD</span>.
+              </label>
+            </div>
+
+            {/* Action Buttons */}
+            {canManage && (
+              <div className="flex items-center justify-end gap-2 pt-1">
+                {isEnabled && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setIsEditing(false)}
+                    disabled={isSaving}
+                  >
+                    Cancel
+                  </Button>
+                )}
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="sm"
+                  disabled={!consentAgreed || isSaving}
+                >
+                  {isSaving ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <span>{isEnabled ? 'Save Changes' : 'Enable Auto Top-Up'}</span>
+                  )}
+                </Button>
+              </div>
+            )}
+          </form>
+        ) : (
+          /* STATE 3: ACTIVE AUTO TOP-UP SUMMARY */
+          <div className="space-y-3 pt-1">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                <span className="text-[11px] text-slate-500 block">Trigger Threshold</span>
+                <span className="text-base font-bold text-slate-900 dark:text-slate-100 mt-0.5 block">
+                  ${settings?.thresholdMajor.toFixed(2)} USD
+                </span>
+                <span className="text-[10px] text-slate-400 mt-0.5 block">Triggers when balance &lt; this</span>
+              </div>
+
+              <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                <span className="text-[11px] text-slate-500 block">Recharge Amount</span>
+                <span className="text-base font-bold text-emerald-600 dark:text-emerald-400 mt-0.5 block">
+                  +${settings?.rechargeAmountMajor.toFixed(2)} USD
+                </span>
+                <span className="text-[10px] text-slate-400 mt-0.5 block">Added per trigger event</span>
+              </div>
+
+              <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                <span className="text-[11px] text-slate-500 block">Payment Method</span>
+                <div className="font-mono font-semibold text-slate-900 dark:text-slate-100 mt-1 flex items-center justify-between">
+                  <span>{cardSummary}</span>
+                  {canManage && (
+                    <button
+                      type="button"
+                      onClick={() => setIsPaymentModalOpen(true)}
+                      className="text-[10px] text-indigo-600 dark:text-indigo-400 font-sans hover:underline ml-1"
+                    >
+                      Change
+                    </button>
+                  )}
+                </div>
+                <span className="text-[10px] text-slate-400 mt-0.5 block">Workspace default card</span>
+              </div>
+            </div>
           </div>
         )}
       </div>
 
-      {/* Settings Details Card */}
-      {(isEnabled || isActionRequired || isPausedFailure || isPausedDebt) && (
-        <div className="mt-6 pt-6 border-t border-slate-800/80 grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="bg-slate-950/40 p-3.5 rounded-lg border border-slate-800/50">
-            <span className="text-xs text-slate-400 block font-medium">Recharge Threshold</span>
-            <span className="text-base font-semibold text-slate-100 mt-0.5 block">
-              ${settings?.thresholdMajor.toFixed(2)}
-            </span>
-            <span className="text-[11px] text-slate-500 mt-0.5 block">Recharge triggers below this</span>
-          </div>
-
-          <div className="bg-slate-950/40 p-3.5 rounded-lg border border-slate-800/50">
-            <span className="text-xs text-slate-400 block font-medium">Auto Recharge Amount</span>
-            <span className="text-base font-semibold text-slate-100 mt-0.5 block">
-              +${settings?.rechargeAmountMajor.toFixed(2)}
-            </span>
-            <span className="text-[11px] text-slate-500 mt-0.5 block">Added on each recharge</span>
-          </div>
-
-          <div className="bg-slate-950/40 p-3.5 rounded-lg border border-slate-800/50">
-            <span className="text-xs text-slate-400 block font-medium">Payment Method</span>
-            <div className="flex items-center gap-2 mt-1">
-              <span className="text-xs font-semibold uppercase tracking-wider text-slate-300 px-1.5 py-0.5 bg-slate-800 rounded border border-slate-700">
-                {settings?.paymentMethodBrand || 'CARD'}
-              </span>
-              <span className="text-sm text-slate-200 font-mono">•••• {settings?.paymentMethodLast4 || '****'}</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Action Required Banner */}
-      {isActionRequired && (
-        <div className="mt-4 p-3.5 bg-amber-500/10 border border-amber-500/20 rounded-lg text-xs text-amber-300 flex items-start gap-2.5">
-          <svg className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-          </svg>
-          <div>
-            <span className="font-semibold block">Card Re-Authorization Required</span>
-            <span>
-              {settings?.reason === 'PROVIDER_ACCOUNT_CHANGED'
-                ? 'Your active billing provider configuration was updated. Please re-authorize your payment card.'
-                : 'Payment method requires customer verification or card update.'}
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Modal Integration */}
-      {isSetupOpen && (
-        <AutoTopupSetupModal
-          isOpen={isSetupOpen}
-          initialThreshold={settings?.thresholdMajor || 10}
-          initialRecharge={settings?.rechargeAmountMajor || 25}
-          onClose={() => setIsSetupOpen(false)}
-          onSuccess={handleModalSuccess}
+      {/* Centralized Payment Method Modal */}
+      {isPaymentModalOpen && (
+        <WorkspacePaymentMethodModal
+          isOpen={isPaymentModalOpen}
+          onClose={() => setIsPaymentModalOpen(false)}
+          onSuccess={() => {
+            setIsPaymentModalOpen(false);
+            fetchData();
+          }}
         />
       )}
-    </div>
+    </Card>
   );
 }

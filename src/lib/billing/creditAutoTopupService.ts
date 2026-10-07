@@ -6,6 +6,7 @@ import { StripeClientFactory } from './providers/stripe/stripeClientFactory';
 import { StripeCustomerService } from './providers/stripe/stripeCustomerService';
 import { validateAutoTopupConfigMajor, MIN_AUTO_TOPUP_THRESHOLD_MAJOR, MIN_AUTO_TOPUP_RECHARGE_MAJOR, CURRENT_CONSENT_TERMS_VERSION } from './autoTopupPolicy';
 import { majorToMinorUnits, minorToMajorUnits } from './creditTopupPolicy';
+import { WorkspacePaymentProfileService } from './workspacePaymentProfileService';
 
 export interface AutoTopupStatusCustomerDto {
   enabled: boolean;
@@ -414,6 +415,113 @@ export class CreditAutoTopupService {
           currency: 'USD',
           failureCount: 0,
         },
+      };
+    }
+  }
+
+  /**
+   * Updates Auto Top-Up settings using the existing default Workspace Payment Method.
+   * Does NOT require a new SetupIntent or Stripe Elements re-entry.
+   * Owner / Admin ONLY.
+   */
+  static async updateAutoTopupWithWorkspacePaymentMethod(
+    supabase: SupabaseClient,
+    organizationId: string,
+    userId: string,
+    userRole: string,
+    params: {
+      thresholdMajor: number;
+      rechargeAmountMajor: number;
+      currency?: string;
+      enabled?: boolean;
+    }
+  ): Promise<{ success: boolean; code?: string; message?: string; settings?: AutoTopupStatusCustomerDto }> {
+    if (!['owner', 'admin'].includes(userRole.toLowerCase())) {
+      return {
+        success: false,
+        code: 'FORBIDDEN',
+        message: 'Only Organization Owners and Admins can configure Auto Top-Up.',
+      };
+    }
+
+    const currency = (params.currency || 'USD').toUpperCase();
+    const policyResult = validateAutoTopupConfigMajor(params.thresholdMajor, params.rechargeAmountMajor, currency);
+    if (!policyResult.valid) {
+      return {
+        success: false,
+        code: policyResult.code || 'INVALID_POLICY',
+        message: policyResult.message || 'Invalid Auto Top-Up policy parameters.',
+      };
+    }
+
+    // Resolve Workspace Payment Profile
+    const profile = await WorkspacePaymentProfileService.getWorkspacePaymentProfile(supabase, organizationId);
+    if (!profile.hasDefaultPaymentMethod || !profile.paymentMethod) {
+      return {
+        success: false,
+        code: 'NO_DEFAULT_PAYMENT_METHOD',
+        message: 'A workspace payment method is required to enable Auto Top-Up.',
+      };
+    }
+
+    try {
+      const activeAccount = await ProviderAccountResolver.resolveActiveAccount(supabase, 'stripe');
+      const isEnabled = params.enabled !== false;
+
+      const { data: currentSettings } = await (supabase as any)
+        .from('billing_auto_topup_settings')
+        .select('configuration_generation')
+        .eq('organization_id', organizationId)
+        .maybeSingle();
+
+      const nextConfigGen = (currentSettings?.configuration_generation || 0) + 1;
+
+      const payload = {
+        organization_id: organizationId,
+        status: isEnabled ? 'enabled' : 'disabled',
+        threshold_minor: policyResult.thresholdMinor!,
+        recharge_amount_minor: policyResult.rechargeAmountMinor!,
+        currency,
+        provider_account_id: activeAccount.id,
+        provider_customer_id: profile.customerId || undefined,
+        provider_payment_method_id: profile.paymentMethod.id,
+        payment_method_brand: profile.paymentMethod.brand.toUpperCase(),
+        payment_method_last4: profile.paymentMethod.last4,
+        enrolled_by_user_id: userId,
+        enrolled_at: new Date().toISOString(),
+        configuration_generation: nextConfigGen,
+        updated_at: new Date().toISOString(),
+        disabled_reason: isEnabled ? null : 'customer_disabled',
+      };
+
+      const { error: upsertErr } = await (supabase as any)
+        .from('billing_auto_topup_settings')
+        .upsert(payload, { onConflict: 'organization_id' });
+
+      if (upsertErr) {
+        return {
+          success: false,
+          code: 'SETTINGS_UPDATE_FAILED',
+          message: upsertErr.message,
+        };
+      }
+
+      // Sync scope in workspace payment profile
+      await WorkspacePaymentProfileService.updateAuthorizationScopes(supabase, organizationId, userId, userRole, {
+        walletAutoRecharge: isEnabled,
+      });
+
+      const { settings } = await this.getAutoTopupSettings(supabase, organizationId);
+
+      return {
+        success: true,
+        settings,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        code: 'UPDATE_FAILED',
+        message: err.message || 'Failed to update Auto Top-Up settings.',
       };
     }
   }

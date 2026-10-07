@@ -200,3 +200,87 @@ export async function DELETE(req: NextRequest) {
     );
   }
 }
+
+/**
+ * PATCH: Update Auto Top-Up threshold/recharge settings using default Workspace Payment Method.
+ * Owner / Admin ONLY.
+ */
+export async function PATCH(req: NextRequest) {
+  try {
+    const sessionResult = await requireActiveSession();
+    if (!sessionResult.success) {
+      return sessionResult.errorResponse;
+    }
+
+    const { user, supabase } = sessionResult;
+
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('organization_id, role, active')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    if (profileError || !profile || !profile.organization_id || profile.active === false) {
+      return NextResponse.json(
+        { error: 'FORBIDDEN: Active organization profile required.', code: 'forbidden' },
+        { status: 403 }
+      );
+    }
+
+    const userRole = (profile.role || '').toLowerCase();
+    if (!['owner', 'admin'].includes(userRole)) {
+      return NextResponse.json(
+        {
+          error: 'FORBIDDEN: Only Organization Owners and Admins are authorized to configure Auto Top-Up.',
+          code: 'forbidden',
+        },
+        { status: 403 }
+      );
+    }
+
+    const body = await req.json().catch(() => ({}));
+    const { thresholdMajor, rechargeAmountMajor, enabled } = body;
+
+    if (typeof thresholdMajor !== 'number' || typeof rechargeAmountMajor !== 'number') {
+      return NextResponse.json(
+        { error: 'INVALID_ARGUMENTS', message: 'thresholdMajor and rechargeAmountMajor numbers are required.' },
+        { status: 400 }
+      );
+    }
+
+    const adminSupabase = createAdminClient();
+    const result = await CreditAutoTopupService.updateAutoTopupWithWorkspacePaymentMethod(
+      adminSupabase,
+      profile.organization_id,
+      user.id,
+      userRole,
+      {
+        thresholdMajor,
+        rechargeAmountMajor,
+        enabled,
+      }
+    );
+
+    if (!result.success) {
+      const statusCode = result.code === 'FORBIDDEN' ? 403 : result.code === 'NO_DEFAULT_PAYMENT_METHOD' ? 400 : 422;
+      return NextResponse.json(
+        { error: result.code || 'UPDATE_FAILED', message: result.message },
+        { status: statusCode, headers: { 'Cache-Control': 'no-store' } }
+      );
+    }
+
+    return NextResponse.json(
+      {
+        success: true,
+        settings: result.settings,
+      },
+      { status: 200, headers: { 'Cache-Control': 'no-store' } }
+    );
+  } catch (error: any) {
+    console.error('[PATCH /api/billing/credit/auto-topup/settings] Error:', error.message || error);
+    return NextResponse.json(
+      { error: 'UPDATE_UNAVAILABLE', message: 'Failed to update Auto Top-Up settings.' },
+      { status: 500, headers: { 'Cache-Control': 'no-store' } }
+    );
+  }
+}
