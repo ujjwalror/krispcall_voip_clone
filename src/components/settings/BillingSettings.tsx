@@ -26,6 +26,8 @@ import {
   Sliders,
 } from 'lucide-react';
 import { useAuth } from '@/components/providers/AuthProvider';
+import { WorkspacePaymentMethodModal } from '@/components/billing/WorkspacePaymentMethodModal';
+import type { WorkspacePaymentProfileDTO } from '@/lib/billing/workspacePaymentProfileService';
 
 export interface SubscriptionSummary {
   status: string;
@@ -90,11 +92,25 @@ function formatMinorUnitsToCurrencyString(amountMinorStr: string | null, currenc
 export function BillingSettings() {
   const { profile, organization } = useAuth();
   const [data, setData] = useState<SubscriptionSummary | null>(null);
+  const [paymentProfile, setPaymentProfile] = useState<WorkspacePaymentProfileDTO | null>(null);
+  const [isCardModalOpen, setIsCardModalOpen] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
   // Tab State: 'overview' | 'info' | 'payments' | 'invoices'
   const [activeTab, setActiveTab] = useState<'overview' | 'info' | 'payments' | 'invoices'>('overview');
+
+  const fetchPaymentProfile = useCallback(async () => {
+    try {
+      const res = await fetch('/api/billing/workspace-payment-profile');
+      if (res.ok) {
+        const json = await res.json();
+        setPaymentProfile(json);
+      }
+    } catch (err) {
+      console.error('[BillingSettings] Error fetching payment profile:', err);
+    }
+  }, []);
 
   const fetchSubscription = useCallback(async () => {
     setIsLoading(true);
@@ -108,13 +124,14 @@ export function BillingSettings() {
         const errJson = await res.json().catch(() => ({}));
         setError(errJson.message || 'Failed to retrieve subscription summary.');
       }
+      await fetchPaymentProfile();
     } catch (err) {
       console.error('[BillingSettings] Error fetching subscription summary:', err);
       setError('Network error loading subscription summary. Please try again.');
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [fetchPaymentProfile]);
 
   useEffect(() => {
     fetchSubscription();
@@ -615,41 +632,162 @@ export function BillingSettings() {
 
       {/* TAB CONTENT 3: PAYMENT METHODS */}
       {activeTab === 'payments' && (
-        <Card className="max-w-3xl">
-          <CardHeader>
-            <div className="flex items-center justify-between w-full">
+        <div className="space-y-6 max-w-3xl">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between w-full">
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <CreditCard className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                  <span>Workspace Payment Profile</span>
+                </CardTitle>
+                <Badge variant="blue" className="text-[10px]">
+                  TEST MODE
+                </Badge>
+              </div>
+            </CardHeader>
+            <div className="p-4 pt-0 space-y-4">
+              {paymentProfile?.hasDefaultPaymentMethod && paymentProfile.paymentMethod ? (
+                <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-indigo-500/10 text-indigo-500 flex items-center justify-center font-bold text-xs uppercase">
+                      {paymentProfile.paymentMethod.brand}
+                    </div>
+                    <div>
+                      <div className="text-sm font-bold text-slate-900 dark:text-slate-100 capitalize">
+                        {paymentProfile.paymentMethod.brand} ending in {paymentProfile.paymentMethod.last4}
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        Default workspace off-session card
+                      </div>
+                    </div>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={() => setIsCardModalOpen(true)}>
+                    Change Card
+                  </Button>
+                </div>
+              ) : (
+                <div className="py-8 text-center space-y-3">
+                  <div className="w-12 h-12 mx-auto rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400">
+                    <CreditCard className="w-6 h-6 text-slate-400" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                      No default payment method saved
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
+                      Save a workspace payment card to authorize automatic phone number renewals or recurring subscription payments.
+                    </p>
+                  </div>
+                  <div className="pt-1">
+                    <Button variant="primary" size="sm" onClick={() => setIsCardModalOpen(true)}>
+                      <Plus className="w-4 h-4 mr-1.5" />
+                      Add Workspace Card
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </Card>
+
+          {/* DECOUPLED PRODUCT AUTHORIZATION PERMISSIONS */}
+          <Card>
+            <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-sm">
-                <CreditCard className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                <span>Payment Methods</span>
+                <Shield className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                <span>Product-Specific Payment Authorizations</span>
               </CardTitle>
-            </div>
-          </CardHeader>
-          <div className="py-10 text-center space-y-4">
-            <div className="w-12 h-12 mx-auto rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400">
-              <CreditCard className="w-6 h-6 text-slate-400" />
-            </div>
-            <div className="space-y-1">
-              <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-                No payment methods configured
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
-                Credit card and payment method management will become available when self-serve online billing is enabled for your organization.
+            </CardHeader>
+            <div className="p-4 pt-1 space-y-3 text-xs">
+              <p className="text-slate-500 dark:text-slate-400 text-[11px]">
+                Each commercial product maintains an independent authorization scope. Enabling one scope does NOT authorize other products.
               </p>
+
+              {/* Scope 1: Phone Number Rental Renewal */}
+              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <div className="font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                    <Phone className="w-3.5 h-3.5 text-indigo-500" />
+                    <span>Phone Number Rental Renewals</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    Automatic recurring charges for workspace phone line renewals. Dynamically calculated per cycle.
+                  </div>
+                </div>
+                <Button
+                  variant={paymentProfile?.scopes.numberRentalRenewalAuthorized ? 'success' : 'outline'}
+                  size="sm"
+                  onClick={async () => {
+                    const nextVal = !paymentProfile?.scopes.numberRentalRenewalAuthorized;
+                    await fetch('/api/billing/workspace-payment-profile', {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ scopes: { numberRentalRenewal: nextVal } }),
+                    });
+                    fetchPaymentProfile();
+                  }}
+                >
+                  {paymentProfile?.scopes.numberRentalRenewalAuthorized ? 'Authorized' : 'Disabled'}
+                </Button>
+              </div>
+
+              {/* Scope 2: SaaS Subscription */}
+              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <div className="font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-blue-500" />
+                    <span>SaaS Subscription Auto-Renew</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    Recurring charges for workspace seat plans.
+                  </div>
+                </div>
+                <Button
+                  variant={paymentProfile?.scopes.saasRecurringAuthorized ? 'success' : 'outline'}
+                  size="sm"
+                  onClick={async () => {
+                    const nextVal = !paymentProfile?.scopes.saasRecurringAuthorized;
+                    await fetch('/api/billing/workspace-payment-profile', {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ scopes: { saasRecurring: nextVal } }),
+                    });
+                    fetchPaymentProfile();
+                  }}
+                >
+                  {paymentProfile?.scopes.saasRecurringAuthorized ? 'Authorized' : 'Disabled'}
+                </Button>
+              </div>
+
+              {/* Scope 3: Telecom Wallet Auto-Recharge */}
+              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <div className="font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                    <Zap className="w-3.5 h-3.5 text-amber-500" />
+                    <span>Telecom Wallet Auto-Recharge</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    Automatic credit balance recharges when PSTN balance drops below threshold.
+                  </div>
+                </div>
+                <Button
+                  variant={paymentProfile?.scopes.walletAutoRechargeAuthorized ? 'success' : 'outline'}
+                  size="sm"
+                  onClick={async () => {
+                    const nextVal = !paymentProfile?.scopes.walletAutoRechargeAuthorized;
+                    await fetch('/api/billing/workspace-payment-profile', {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ scopes: { walletAutoRecharge: nextVal } }),
+                    });
+                    fetchPaymentProfile();
+                  }}
+                >
+                  {paymentProfile?.scopes.walletAutoRechargeAuthorized ? 'Authorized' : 'Disabled'}
+                </Button>
+              </div>
             </div>
-            <div className="pt-2">
-              <button
-                disabled
-                className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed border border-slate-200 dark:border-slate-700/60 inline-flex items-center gap-1.5 opacity-80"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Add Payment Method</span>
-                <span className="px-1.5 py-0.2 rounded-md bg-slate-200 dark:bg-slate-700 text-[10px] font-bold text-slate-600 dark:text-slate-300">
-                  Upcoming
-                </span>
-              </button>
-            </div>
-          </div>
-        </Card>
+          </Card>
+        </div>
       )}
 
       {/* TAB CONTENT 4: INVOICES & RECEIPTS */}
@@ -676,6 +814,15 @@ export function BillingSettings() {
           </div>
         </Card>
       )}
+
+      {/* Workspace Payment Method Modal */}
+      <WorkspacePaymentMethodModal
+        isOpen={isCardModalOpen}
+        onClose={() => setIsCardModalOpen(false)}
+        onSuccess={() => {
+          fetchPaymentProfile();
+        }}
+      />
     </div>
   );
 }

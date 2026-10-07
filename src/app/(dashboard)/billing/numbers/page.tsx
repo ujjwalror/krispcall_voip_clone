@@ -22,13 +22,11 @@ import type {
   CustomerNumberSubscriptionDTO,
   OrganizationNumberSubscriptionsSummaryDTO,
 } from '@/lib/telephony/marketplace/numberSubscriptionService';
-import { NumberRenewalSetupModal } from '@/components/billing/NumberRenewalSetupModal';
 
 export default function BillingNumbersPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<OrganizationNumberSubscriptionsSummaryDTO | null>(null);
-  const [selectedNumberForSetup, setSelectedNumberForSetup] = useState<CustomerNumberSubscriptionDTO | null>(null);
 
   const fetchSubscriptions = useCallback(async () => {
     try {
@@ -259,9 +257,9 @@ export default function BillingNumbersPage() {
                         <th className="pb-2.5 font-medium">Country / Type</th>
                         <th className="pb-2.5 font-medium">Capabilities</th>
                         <th className="pb-2.5 font-medium">Status</th>
-                        <th className="pb-2.5 font-medium text-right">Monthly Retail</th>
+                        <th className="pb-2.5 font-medium text-right">Current Monthly Rental</th>
                         <th className="pb-2.5 font-medium text-right">Activation Date</th>
-                        <th className="pb-2.5 font-medium text-right">Renewal Setup</th>
+                        <th className="pb-2.5 font-medium text-right">Workspace Autopay</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
@@ -314,7 +312,7 @@ export default function BillingNumbersPage() {
                               `${num.monthlyRetailFormatted} / mo`
                             ) : (
                               <span className="text-amber-600 dark:text-amber-400 font-normal italic text-[11px]">
-                                Billing setup pending
+                                Pending calculation
                               </span>
                             )}
                           </td>
@@ -322,13 +320,11 @@ export default function BillingNumbersPage() {
                             {formatDate(num.purchasedAt)}
                           </td>
                           <td className="py-3.5 text-right whitespace-nowrap">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => setSelectedNumberForSetup(num)}
-                            >
-                              Setup Renewal Autopay
-                            </Button>
+                            <Link href="/settings/billing?tab=payments">
+                              <Badge variant="emerald" className="cursor-pointer">
+                                Covered by Workspace Card
+                              </Badge>
+                            </Link>
                           </td>
                         </tr>
                       ))}
@@ -340,9 +336,9 @@ export default function BillingNumbersPage() {
                 <div className="mt-4 p-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200/60 dark:border-slate-800/60 text-xs text-slate-500 flex items-start gap-2">
                   <Info className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
                   <span>
-                    Monthly rental charges are billed according to your workspace contract. To configure inbound call routing, IVR menus, or assign numbers to team members, visit{' '}
-                    <Link href="/numbers" className="text-indigo-600 dark:text-indigo-400 font-medium underline hover:text-indigo-500">
-                      My Numbers
+                    Monthly number rental renewals are billed automatically using your default workspace payment profile. Upcoming cycles are dynamically calculated based on current carrier costs and VoIP Hub pricing policy. Manage payment methods under{' '}
+                    <Link href="/settings/billing?tab=payments" className="text-indigo-600 dark:text-indigo-400 font-medium underline hover:text-indigo-500">
+                      Settings &gt; Billing
                     </Link>.
                   </span>
                 </div>
@@ -396,19 +392,6 @@ export default function BillingNumbersPage() {
             </Card>
           )}
         </>
-      )}
-
-      {/* Renewal Setup Modal */}
-      {selectedNumberForSetup && (
-        <NumberRenewalSetupModal
-          isOpen={!!selectedNumberForSetup}
-          onClose={() => setSelectedNumberForSetup(null)}
-          onSuccess={() => {
-            fetchSubscriptions();
-          }}
-          phoneNumberId={selectedNumberForSetup.numberId}
-          phoneNumber={selectedNumberForSetup.phoneNumber}
-        />
       )}
     </div>
   );
