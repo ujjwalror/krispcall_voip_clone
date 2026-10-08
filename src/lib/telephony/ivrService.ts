@@ -133,7 +133,15 @@ export class IvrService {
           return { success: false, message: 'Target IVR menu does not belong to your organization or is disabled.' };
         }
       } else if (routingType === 'call_queue') {
-        return { success: false, message: 'Call Queues are under development and will be available in Phase 19B.' };
+        const { data: queue } = await (supabase as any)
+          .from('call_queues')
+          .select('id, organization_id, enabled')
+          .eq('id', destinationId)
+          .maybeSingle();
+
+        if (!queue || queue.organization_id !== organizationId || queue.enabled === false) {
+          return { success: false, message: 'Target Call Queue does not belong to your organization or is disabled.' };
+        }
       }
     }
 
@@ -344,9 +352,20 @@ export class IvrService {
       }
     }
 
-    // Reject Call Queue destination in 19A
+    // Validate Call Queue destination in Phase 19B
     if (optionData.destinationType === 'call_queue') {
-      return { success: false, message: 'Call Queues are under development and will be available in Phase 19B.' };
+      if (!optionData.destinationId) {
+        return { success: false, message: 'Target Call Queue ID is required.' };
+      }
+      const { data: queue } = await (supabase as any)
+        .from('call_queues')
+        .select('id, organization_id, enabled')
+        .eq('id', optionData.destinationId)
+        .maybeSingle();
+
+      if (!queue || queue.organization_id !== organizationId || queue.enabled === false) {
+        return { success: false, message: 'Target Call Queue does not belong to your organization or is disabled.' };
+      }
     }
 
     const { data: optionRow, error } = await (supabase as any)

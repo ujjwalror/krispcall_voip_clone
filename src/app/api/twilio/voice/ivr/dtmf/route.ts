@@ -145,8 +145,34 @@ export async function POST(request: Request) {
             gather.say(targetMenu.greeting_text || 'Please make a selection.');
             return new NextResponse(twiml.toString(), { status: 200, headers: { 'Content-Type': 'text/xml' } });
           }
-        } else if (destType === 'call_queue') {
-          twiml.say('Call Queues are under development. Connecting to main extension.');
+        } else if (destType === 'call_queue' && destId) {
+          const queueEntitled = await hasEntitlement('call_queue', adminSupabase);
+          if (queueEntitled) {
+            const callerFrom = params.From || params.from || '';
+            const { QueueService } = await import('@/lib/telephony/queueService');
+            const enqueueRes = await QueueService.enqueueCaller(
+              organizationId,
+              destId,
+              callSid,
+              callerFrom,
+              dbCallId || undefined,
+              adminSupabase
+            );
+
+            if (enqueueRes.success) {
+              console.log('[TWILIO IVR QUEUE ROUTE] Caller enqueued from IVR:', enqueueRes.entry?.id);
+              twiml.say('Please hold while we transfer your call to an available agent.');
+              twiml.enqueue({
+                action: `/api/twilio/voice/queue/status`,
+              }, destId);
+
+              return new NextResponse(twiml.toString(), {
+                status: 200,
+                headers: { 'Content-Type': 'text/xml' },
+              });
+            }
+          }
+          twiml.say('The requested queue is currently unavailable.');
           twiml.hangup();
           return new NextResponse(twiml.toString(), { status: 200, headers: { 'Content-Type': 'text/xml' } });
         } else if (destType === 'hangup') {

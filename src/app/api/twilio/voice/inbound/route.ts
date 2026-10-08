@@ -274,6 +274,38 @@ export async function POST(request: Request) {
       }
     }
 
+    // 3.6 Check for Inbound Direct-to-Queue Routing Strategy
+    if (phoneRecord.inbound_routing_type === 'call_queue' && phoneRecord.inbound_routing_destination_id) {
+      const queueEntitled = await hasEntitlement('call_queue', adminSupabase);
+      if (queueEntitled) {
+        const { QueueService } = await import('@/lib/telephony/queueService');
+        const enqueueRes = await QueueService.enqueueCaller(
+          organizationId,
+          phoneRecord.inbound_routing_destination_id,
+          callSid,
+          customerFrom,
+          dbCallId,
+          adminSupabase
+        );
+
+        if (enqueueRes.success) {
+          console.log('[TWILIO INBOUND QUEUE ROUTE] Caller enqueued successfully:', enqueueRes.entry?.id);
+          const queueTwiml = new twilio.twiml.VoiceResponse();
+          queueTwiml.say('Thank you for calling. Please hold while we connect you to an available agent.');
+          queueTwiml.enqueue({
+            action: `/api/twilio/voice/queue/status`,
+          }, phoneRecord.inbound_routing_destination_id);
+
+          return new NextResponse(queueTwiml.toString(), {
+            status: 200,
+            headers: { 'Content-Type': 'text/xml' },
+          });
+        }
+      } else {
+        console.warn('[TWILIO INBOUND QUEUE ROUTE] Call Queue entitlement not enabled for org.');
+      }
+    }
+
     // 4. Reserve target agents using atomic database RPC functions
     let reservedAgents: { id: string; full_name: string; twilio_identity: string }[] = [];
     let isPreferredAttempt = false;
