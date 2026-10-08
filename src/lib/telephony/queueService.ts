@@ -559,13 +559,42 @@ export class QueueService {
         updated_at: nowIso,
       })
       .eq('id', waitingEntry.id)
-      .eq('status', 'waiting') // Atomic CAS check
+      .eq('status', 'waiting') // Atomic CAS check for caller
       .select('*')
       .single();
 
     if (claimErr || !claimedEntry) {
       // Claim lost to concurrent worker
       return { success: true, claimed: false };
+    }
+
+    // Verify atomic agent exclusivity (no duplicate offer on same agent)
+    const { data: duplicateOffers } = await (supabase as any)
+      .from('call_queue_entries')
+      .select('id, offered_at')
+      .eq('assigned_agent_id', selectedMember.user_id)
+      .in('status', ['offering', 'connected'])
+      .order('offered_at', { ascending: true });
+
+    if (duplicateOffers && duplicateOffers.length > 1) {
+      // Collision detected: check if claimedEntry is the winner (earliest offered_at)
+      const winnerId = duplicateOffers[0].id;
+      if (claimedEntry.id !== winnerId) {
+        // Rollback claim for this caller so they remain in WAITING state cleanly
+        await (supabase as any)
+          .from('call_queue_entries')
+          .update({
+            status: 'waiting',
+            assigned_agent_id: null,
+            offered_at: null,
+            attempt_count: Math.max(0, (waitingEntry.attempt_count || 1) - 1),
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', claimedEntry.id)
+          .eq('status', 'offering');
+
+        return { success: true, claimed: false };
+      }
     }
 
     // Update last_offered_at on member
