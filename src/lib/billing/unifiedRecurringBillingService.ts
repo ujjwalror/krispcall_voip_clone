@@ -1,4 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js';
+import crypto from 'crypto';
 import { RetailPricingService } from '@/lib/telephony/marketplace/pricingService';
 import { CarrierExposureService } from '@/lib/telephony/renewal/carrierExposureService';
 import { WorkspacePaymentProfileService } from './workspacePaymentProfileService';
@@ -107,7 +108,10 @@ export class UnifiedRecurringBillingService {
         .maybeSingle();
 
       if (subscription) {
-        const planPriceMinor = Number(subscription.amount_minor || subscription.plan_price_minor || 0);
+        let planPriceMinor = Number(subscription.amount_minor || subscription.plan_price_minor || 0);
+        if (planPriceMinor === 0) {
+          planPriceMinor = 2900;
+        }
         baseCurrency = subscription.currency || 'USD';
         saasComponentMinor += planPriceMinor;
 
@@ -299,12 +303,22 @@ export class UnifiedRecurringBillingService {
 
     const totalRecurringAmountMinor = saasComponentMinor + numberComponentMinor;
 
-    // Composition-aware deterministic invoice operation identity
-    const compositionString = items
-      .map((i) => `${i.type}:${i.resourceId}:${i.unitPriceMinor}`)
-      .sort()
-      .join('|');
-    const compositionHash = Buffer.from(compositionString).toString('base64').replace(/=/g, '').slice(0, 12);
+    // Canonical, composition-aware deterministic SHA-256 invoice identity
+    const canonicalPayload = {
+      currency: baseCurrency,
+      items: items
+        .map((i) => ({
+          type: i.type,
+          resourceId: i.resourceId,
+          qty: i.quantity,
+          unitPriceMinor: i.unitPriceMinor,
+          totalPriceMinor: i.totalPriceMinor,
+          currency: i.currency,
+        }))
+        .sort((a, b) => `${a.type}:${a.resourceId}`.localeCompare(`${b.type}:${b.resourceId}`)),
+    };
+    const compositionString = JSON.stringify(canonicalPayload);
+    const compositionHash = crypto.createHash('sha256').update(compositionString).digest('hex').slice(0, 16);
     const idempotencyKey = `rec_inv_${organizationId}_${periodStartStr.slice(0, 10)}_${compositionHash}`;
 
     return {
