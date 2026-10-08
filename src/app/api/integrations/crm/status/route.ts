@@ -14,18 +14,13 @@ export const dynamic = 'force-dynamic';
  */
 export async function GET() {
   try {
-    const supabase = await createServerSupabaseClient();
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      return NextResponse.json(
-        { error: 'Unauthorized. Authenticated session required.' },
-        { status: 401 }
-      );
+    const { requireEntitlement } = await import('@/lib/entitlements/server');
+    const entitlementRes = await requireEntitlement('crm.integrations');
+    if (!entitlementRes.success) {
+      return entitlementRes.errorResponse;
     }
+
+    const { user, supabase } = entitlementRes;
 
     // Fetch user profile to determine organization_id
     const { data: profile, error: profileError } = await (supabase as any)

@@ -63,6 +63,13 @@ export async function POST(
       );
     }
 
+    // Enforce number.porting entitlement for initiating port-in submission
+    const { requireEntitlement } = await import('@/lib/entitlements/server');
+    const entitlementRes = await requireEntitlement('number.porting');
+    if (!entitlementRes.success) {
+      return entitlementRes.errorResponse;
+    }
+
     // Evaluate submission preconditions
     const preconditions = await PortInService.evaluateSubmissionPreconditions(
       id,

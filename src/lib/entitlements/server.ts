@@ -54,6 +54,13 @@ export type GetOrganizationEntitlementsReturn =
       message: string;
     };
 
+export interface RequireEntitlementOptions {
+  customHeaders?: Record<string, string>;
+  subscriptionPolicyCheck?: (organizationId: string, supabase: SupabaseClient) => Promise<boolean>;
+  policyErrorMessage?: string;
+  minNumericValue?: number;
+}
+
 export type RequireEntitlementResult =
   | {
       success: true;
@@ -61,6 +68,8 @@ export type RequireEntitlementResult =
       user: User;
       supabase: SupabaseClient;
       entitlement: ResolvedEntitlement;
+      subscriptionStatus: SubscriptionStatus;
+      planCode: string;
     }
   | {
       success: false;
@@ -368,8 +377,25 @@ export async function getEntitlementText(
  */
 export async function requireEntitlement(
   featureCode: string,
-  customHeaders?: Record<string, string>
+  options?: RequireEntitlementOptions | Record<string, string>
 ): Promise<RequireEntitlementResult> {
+  const customHeaders =
+    options && 'customHeaders' in options
+      ? (options as RequireEntitlementOptions).customHeaders
+      : (options as Record<string, string>) || undefined;
+  const policyCheck =
+    options && 'subscriptionPolicyCheck' in options
+      ? (options as RequireEntitlementOptions).subscriptionPolicyCheck
+      : undefined;
+  const policyErrorMessage =
+    options && 'policyErrorMessage' in options
+      ? (options as RequireEntitlementOptions).policyErrorMessage
+      : undefined;
+  const minNumericValue =
+    options && 'minNumericValue' in options
+      ? (options as RequireEntitlementOptions).minNumericValue
+      : undefined;
+
   const supabase = await createServerSupabaseClient();
 
   // 1. Authenticate user session
@@ -445,11 +471,46 @@ export async function requireEntitlement(
     };
   }
 
+  // 5. Check numeric limit if minNumericValue specified
+  if (minNumericValue !== undefined) {
+    if (entitlement.numericValue === null || entitlement.numericValue < minNumericValue) {
+      return {
+        success: false,
+        errorResponse: NextResponse.json(
+          {
+            error: `Feature "${featureCode}" limit (${entitlement.numericValue ?? 0}) is less than required (${minNumericValue}).`,
+            code: 'entitlement_limit_exceeded',
+          },
+          { status: 403, headers: customHeaders }
+        ),
+      };
+    }
+  }
+
+  // 6. Check custom subscription policy check if provided
+  if (policyCheck) {
+    const policyPassed = await policyCheck(result.organizationId, supabase);
+    if (!policyPassed) {
+      return {
+        success: false,
+        errorResponse: NextResponse.json(
+          {
+            error: policyErrorMessage || 'Subscription state does not permit this operation.',
+            code: 'subscription_policy_restricted',
+          },
+          { status: 403, headers: customHeaders }
+        ),
+      };
+    }
+  }
+
   return {
     success: true,
     organizationId: result.organizationId,
     user,
     supabase,
     entitlement,
+    subscriptionStatus: result.subscriptionStatus,
+    planCode: result.planCode,
   };
 }

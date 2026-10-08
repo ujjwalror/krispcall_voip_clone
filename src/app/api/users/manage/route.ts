@@ -223,6 +223,18 @@ export async function POST(request: Request) {
           updates.role = role;
         }
       }
+      // Check seat limit if reactivating an inactive profile
+      if (active === true && targetProfile.active === false) {
+        const { SeatBillingService } = await import('@/lib/billing/seatBillingService');
+        const limitCheck = await SeatBillingService.canAddActiveUser(actorProfile.organization_id, adminSupabase);
+        if (!limitCheck.allowed) {
+          return NextResponse.json(
+            { error: limitCheck.reason || 'Cannot activate member. Workspace active user limit exceeded.', code: 'seat_limit_exceeded' },
+            { status: 403 }
+          );
+        }
+      }
+
       if (typeof active === 'boolean') updates.active = active;
 
       if (extension !== undefined) {

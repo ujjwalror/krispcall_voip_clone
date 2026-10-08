@@ -42,6 +42,20 @@ export async function executeOutboundCallSetup(
 
   const adminSupabase = createAdminClient();
 
+  // 0. Server-Side Entitlement & Subscription Policy Enforcement
+  const { hasEntitlement } = await import('@/lib/entitlements/server');
+  const { SubscriptionPolicyService } = await import('@/lib/billing/subscriptionPolicyService');
+
+  const voiceEnabled = await hasEntitlement('voice.calling', adminSupabase);
+  if (!voiceEnabled) {
+    throw new OutboundCallError('Calling feature is not included in your subscription plan.', 403);
+  }
+
+  const mayCall = await SubscriptionPolicyService.mayUseExistingTelecom(organizationId, adminSupabase);
+  if (!mayCall) {
+    throw new OutboundCallError('Subscription state restricts calling. Outbound calls are disabled.', 403);
+  }
+
   // 1. Clean up expired agent reservations
   await (adminSupabase as any)
     .from('agent_call_reservations')

@@ -42,6 +42,13 @@ export async function POST(request: Request) {
       );
     }
 
+    // 1b. Enforce number.purchase entitlement
+    const { requireEntitlement, getEntitlementLimit } = await import('@/lib/entitlements/server');
+    const entitlementRes = await requireEntitlement('number.purchase');
+    if (!entitlementRes.success) {
+      return entitlementRes.errorResponse;
+    }
+
     // Enforce subscription state policy server-side (blocked during grace and suspension)
     const { SubscriptionPolicyService } = await import('@/lib/billing/subscriptionPolicyService');
     const mayPurchase = await SubscriptionPolicyService.mayPurchaseNumber(profile.organization_id, supabase);
@@ -52,7 +59,9 @@ export async function POST(request: Request) {
       );
     }
 
-    // 2. Resolve Server-Authoritative Line Entitlement Capacity Limit from Organizations / Phase 5 Entitlement Engine
+    // 2. Resolve Server-Authoritative Line Entitlement Capacity Limit (number.max_active)
+    const entitlementMax = await getEntitlementLimit('number.max_active', supabase);
+
     const { data: orgData, error: orgErr } = await supabase
       .from('organizations')
       .select('max_phone_numbers')
@@ -66,10 +75,28 @@ export async function POST(request: Request) {
       );
     }
 
-    const maxCapacityLimit = orgData.max_phone_numbers ?? 50;
+    const maxCapacityLimit = entitlementMax ?? orgData.max_phone_numbers ?? 50;
     if (maxCapacityLimit <= 0) {
       return NextResponse.json(
         { error: 'Forbidden. Organization number capacity limit is zero. Purchases disabled.' },
+        { status: 403 }
+      );
+    }
+
+    // Authoritative check of current active-number count (excluding released/ported_out/quarantined)
+    const { count: currentActiveCount } = await (supabase as any)
+      .from('phone_numbers')
+      .select('id', { count: 'exact', head: true })
+      .eq('organization_id', profile.organization_id)
+      .eq('active', true)
+      .eq('status', 'active');
+
+    if ((currentActiveCount ?? 0) >= maxCapacityLimit) {
+      return NextResponse.json(
+        {
+          error: `Forbidden. Maximum active phone number limit reached (${currentActiveCount}/${maxCapacityLimit}) for your subscription plan.`,
+          code: 'max_active_numbers_exceeded',
+        },
         { status: 403 }
       );
     }

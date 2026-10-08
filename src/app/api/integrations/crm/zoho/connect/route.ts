@@ -38,8 +38,17 @@ export async function GET(request: Request) {
       return NextResponse.redirect(settingsUrl);
     }
 
-    if (profile.role !== 'admin') {
-      settingsUrl.searchParams.set('error', 'Forbidden. Only organization Admins can manage CRM integrations.');
+    if (profile.role !== 'admin' && profile.role !== 'owner') {
+      settingsUrl.searchParams.set('error', 'Forbidden. Only organization Owners or Admins can manage CRM integrations.');
+      return NextResponse.redirect(settingsUrl);
+    }
+
+    // Check crm.zoho entitlement
+    const { hasEntitlement } = await import('@/lib/entitlements/server');
+    const crmEnabled = await hasEntitlement('crm.integrations', supabase);
+    const zohoEnabled = await hasEntitlement('crm.zoho', supabase);
+    if (!crmEnabled || !zohoEnabled) {
+      settingsUrl.searchParams.set('error', 'Zoho CRM integration is not included in your current subscription plan.');
       return NextResponse.redirect(settingsUrl);
     }
 

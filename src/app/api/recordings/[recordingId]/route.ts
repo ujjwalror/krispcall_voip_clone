@@ -55,6 +55,13 @@ export async function DELETE(
       );
     }
 
+    // 3b. Enforce recordings entitlement
+    const { requireEntitlement } = await import('@/lib/entitlements/server');
+    const entitlementRes = await requireEntitlement('recordings');
+    if (!entitlementRes.success) {
+      return entitlementRes.errorResponse;
+    }
+
     // 4. Fetch target recording record using Admin Client to bypass RLS SELECT restrictions
     const adminSupabase = createAdminClient();
     const { data: recordingRecord, error: fetchError } = await (adminSupabase as any)

@@ -114,6 +114,21 @@ export class SmsAuthorizationService {
     const cleanMedia = this.validateMmsMedia(mediaUrls);
     const isMms = cleanMedia.length > 0;
     const serviceType: 'sms_outbound' | 'mms_outbound' = isMms ? 'mms_outbound' : 'sms_outbound';
+    const featureCode = isMms ? 'messaging.mms' : 'messaging.sms';
+
+    // 1b. Entitlement & Subscription Policy Enforcement
+    const { hasEntitlement } = await import('@/lib/entitlements/server');
+    const { SubscriptionPolicyService } = await import('@/lib/billing/subscriptionPolicyService');
+
+    const msgEnabled = await hasEntitlement(featureCode, client);
+    if (!msgEnabled) {
+      throw new SmsAuthorizationError(`Messaging feature "${featureCode}" is not included in your subscription plan.`, 403);
+    }
+
+    const mayMsg = await SubscriptionPolicyService.mayUseExistingTelecom(organizationId, client);
+    if (!mayMsg) {
+      throw new SmsAuthorizationError('Subscription state restricts messaging. Outbound messages are disabled.', 403);
+    }
 
     const cleanBody = (body || '').trim();
     if (!isMms && !cleanBody) {

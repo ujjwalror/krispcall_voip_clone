@@ -56,6 +56,13 @@ export async function POST(
       );
     }
 
+    // 2b. Enforce number.porting entitlement for initiating NEW port-out
+    const { requireEntitlement } = await import('@/lib/entitlements/server');
+    const entitlementRes = await requireEntitlement('number.porting');
+    if (!entitlementRes.success) {
+      return entitlementRes.errorResponse;
+    }
+
     // 3. Query phone number strictly scoped to authenticated organization
     const { data: phoneNumber, error: fetchError } = await (supabase as any)
       .from('phone_numbers')

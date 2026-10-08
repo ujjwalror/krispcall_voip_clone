@@ -92,6 +92,13 @@ export async function POST(request: Request) {
       );
     }
 
+    // Check recordings entitlement
+    const { requireEntitlement } = await import('@/lib/entitlements/server');
+    const entitlementRes = await requireEntitlement('recordings');
+    if (!entitlementRes.success) {
+      return entitlementRes.errorResponse;
+    }
+
     const body = await request.json().catch(() => ({}));
     const autoRecordingEnabled = Boolean(body.autoRecordingEnabled);
 
