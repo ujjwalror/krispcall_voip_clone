@@ -30,6 +30,9 @@ export interface OrganizationEntitlementsResult {
   subscriptionStatus: SubscriptionStatus;
   planCode: string;
   planName: string;
+  planVersionId?: string | null;
+  gracePeriodEndsAt?: string | null;
+  suspendedAt?: string | null;
   isTrialValid: boolean;
   isSubscriptionActive: boolean;
   entitlements: Record<string, ResolvedEntitlement>;
@@ -66,12 +69,12 @@ export type RequireEntitlementResult =
 
 /**
  * Safely parses and validates finite numeric values.
- * Returns null for null, undefined, NaN, Infinity, -Infinity, or non-finite numbers.
+ * Returns null for null, undefined, NaN, Infinity, -Infinity, or negative values when invalid.
  */
 function parseFiniteNumber(val: any): number | null {
   if (val === null || val === undefined || val === '') return null;
   const num = Number(val);
-  return Number.isFinite(num) ? num : null;
+  return Number.isFinite(num) && num >= 0 ? num : null;
 }
 
 /**
@@ -133,16 +136,16 @@ export async function getOrganizationEntitlements(
 }
 
 /**
- * Internal resolver implementation.
+ * Internal resolver implementation supporting Version-Aware Entitlements (Phase 18B).
  */
 async function resolveEntitlementsForOrgId(
   organizationId: string,
   supabase: SupabaseClient
 ): Promise<GetOrganizationEntitlementsReturn> {
-  // 1. Fetch organization subscription
+  // 1. Fetch organization subscription including version and lifecycle fields
   const { data: subscription, error: subError } = await (supabase as any)
     .from('organization_subscriptions')
-    .select('id, organization_id, plan_id, status, trial_ends_at, current_period_end')
+    .select('id, organization_id, plan_id, plan_version_id, status, trial_ends_at, current_period_end, grace_period_ends_at, suspended_at')
     .eq('organization_id', organizationId)
     .maybeSingle();
 
@@ -173,17 +176,25 @@ async function resolveEntitlementsForOrgId(
     }
   }
 
+  // Evaluate past_due grace period validity (if grace_period_ends_at set)
+  let isPastDueGraceValid = true;
+  if (status === 'past_due' && subscription.grace_period_ends_at) {
+    if (new Date(subscription.grace_period_ends_at).getTime() <= now) {
+      isPastDueGraceValid = false;
+    }
+  }
+
   // Active status determination
   const isSubscriptionActive =
     (status === 'active') ||
     (status === 'trialing' && isTrialValid) ||
     (status === 'canceled' && isCanceledPeriodValid) ||
-    (status === 'past_due');
+    (status === 'past_due' && isPastDueGraceValid);
 
   // 2. Fetch assigned Plan metadata
   const { data: plan, error: planError } = await (supabase as any)
     .from('plans')
-    .select('id, code, name, is_active')
+    .select('id, code, stable_key, name, is_active')
     .eq('id', subscription.plan_id)
     .maybeSingle();
 
@@ -195,11 +206,29 @@ async function resolveEntitlementsForOrgId(
     };
   }
 
-  // 3. Fetch Plan Entitlements
-  const { data: planEntitlementsData } = await (supabase as any)
-    .from('plan_entitlements')
-    .select('feature_code, enabled, numeric_value, text_value, features(code, value_type)')
-    .eq('plan_id', plan.id);
+  // 3. Version-Aware Entitlement Resolution
+  let rawPlanEnts: any[] = [];
+
+  if (subscription.plan_version_id) {
+    const { data: versionEntsData } = await (supabase as any)
+      .from('plan_version_entitlements')
+      .select('feature_code, enabled, numeric_value, text_value, features(code, value_type)')
+      .eq('plan_version_id', subscription.plan_version_id);
+
+    if (versionEntsData && versionEntsData.length > 0) {
+      rawPlanEnts = versionEntsData as any[];
+    }
+  }
+
+  // Fallback to plan_entitlements if plan_version_id not present or version entitlements empty
+  if (rawPlanEnts.length === 0) {
+    const { data: planEntsData } = await (supabase as any)
+      .from('plan_entitlements')
+      .select('feature_code, enabled, numeric_value, text_value, features(code, value_type)')
+      .eq('plan_id', plan.id);
+
+    rawPlanEnts = (planEntsData || []) as any[];
+  }
 
   // 4. Fetch Organization Overrides
   const { data: overridesData } = await (supabase as any)
@@ -207,13 +236,11 @@ async function resolveEntitlementsForOrgId(
     .select('feature_code, enabled, numeric_value, text_value, expires_at, reason, features(code, value_type)')
     .eq('organization_id', organizationId);
 
-  // Map features and build entitlement dictionary
-  const rawPlanEnts = (planEntitlementsData || []) as any[];
   const rawOverrides = (overridesData || []) as any[];
 
   const entitlementsMap: Record<string, ResolvedEntitlement> = {};
 
-  // Process Plan Entitlements first
+  // Process Plan/Version Entitlements first
   for (const item of rawPlanEnts) {
     const code = item.feature_code;
     const valueType: FeatureValueType = item.features?.value_type || 'boolean';
@@ -233,7 +260,7 @@ async function resolveEntitlementsForOrgId(
     };
   }
 
-  // Apply active, non-expired Overrides (higher precedence)
+  // Apply active, non-expired Overrides (highest precedence)
   for (const item of rawOverrides) {
     const code = item.feature_code;
     const valueType: FeatureValueType = item.features?.value_type || 'boolean';
@@ -270,8 +297,11 @@ async function resolveEntitlementsForOrgId(
     success: true,
     organizationId,
     subscriptionStatus: status,
-    planCode: plan.code,
+    planCode: plan.stable_key || plan.code,
     planName: plan.name,
+    planVersionId: subscription.plan_version_id || null,
+    gracePeriodEndsAt: subscription.grace_period_ends_at || null,
+    suspendedAt: subscription.suspended_at || null,
     isTrialValid,
     isSubscriptionActive,
     entitlements: entitlementsMap,
