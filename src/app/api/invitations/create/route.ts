@@ -43,6 +43,16 @@ export async function POST(request: Request) {
       );
     }
 
+    // 3b. Enforce subscription state policy server-side (blocked during grace and suspension)
+    const { SubscriptionPolicyService } = await import('@/lib/billing/subscriptionPolicyService');
+    const mayAddSeats = await SubscriptionPolicyService.mayIncreaseSeats(requester.organization_id, supabase);
+    if (!mayAddSeats) {
+      return NextResponse.json(
+        { error: 'Forbidden. Adding seats is restricted while subscription is in grace or suspended state.', code: 'subscription_restricted' },
+        { status: 403 }
+      );
+    }
+
     const body = await request.json().catch(() => ({}));
     const { email: rawEmail, role: requestedRole } = body;
 

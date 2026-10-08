@@ -1,6 +1,7 @@
 import Stripe from 'stripe';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { getStripeClient } from './providers/stripe/stripeClient';
+import { SaasPaymentRecoveryService } from './saasPaymentRecoveryService';
 
 export interface InvoiceSyncOptions {
   providerInvoiceId: string;
@@ -277,6 +278,20 @@ export class StripeInvoiceSyncService {
         message: `Invoice reconciliation failed: ${errMsg}`,
         error: { code: classification, message: errMsg },
       };
+    }
+
+    if (rpcResult && rpcResult.status === 'payment_failed' && subscriptionId) {
+      await SaasPaymentRecoveryService.handlePaymentFailure(
+        organizationId,
+        stripeInvoice.created ? stripeInvoice.created * 1000 : Date.now(),
+        supabase
+      );
+    } else if (rpcResult && rpcResult.status === 'paid' && subscriptionId) {
+      await SaasPaymentRecoveryService.handlePaymentRecovery(
+        organizationId,
+        stripeInvoice.status_transitions?.paid_at ? stripeInvoice.status_transitions.paid_at * 1000 : Date.now(),
+        supabase
+      );
     }
 
     return {

@@ -1,6 +1,7 @@
 import Stripe from 'stripe';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { getStripeClient } from './providers/stripe/stripeClient';
+import { SaasPaymentRecoveryService } from './saasPaymentRecoveryService';
 
 export interface SubscriptionSyncOptions {
   providerSubscriptionId: string;
@@ -450,6 +451,12 @@ export class CommercialSubscriptionSyncService {
       }
 
       const subId = rpcRes?.organization_subscription_id;
+
+      if (canonicalStatus.status === 'past_due') {
+        await SaasPaymentRecoveryService.handlePaymentFailure(organizationId, Date.now(), supabase);
+      } else if (canonicalStatus.status === 'active') {
+        await SaasPaymentRecoveryService.handlePaymentRecovery(organizationId, Date.now(), supabase);
+      }
 
       return {
         success: true,

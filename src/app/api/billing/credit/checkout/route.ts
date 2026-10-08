@@ -41,6 +41,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Enforce subscription state policy server-side (blocked during grace and suspension)
+    const { SubscriptionPolicyService } = await import('@/lib/billing/subscriptionPolicyService');
+    const mayFund = await SubscriptionPolicyService.mayFundWallet(profile.organization_id, supabase);
+    if (!mayFund) {
+      return NextResponse.json(
+        { error: 'FORBIDDEN: Manual Telecom Credit top-up is restricted while subscription is in grace or suspended state.', code: 'subscription_restricted' },
+        { status: 403 }
+      );
+    }
+
     // Parse Request Body
     const body = await req.json().catch(() => ({}));
     const { attemptToken, amountMinor } = body;

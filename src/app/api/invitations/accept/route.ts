@@ -33,6 +33,35 @@ export async function POST(request: Request) {
     // Compute SHA-256 token hash server-side
     const tokenHash = crypto.createHash('sha256').update(token.trim()).digest('hex');
 
+    // Look up invitation to verify organization and seat limits
+    const { data: inviteData } = await (supabase as any)
+      .from('organization_invitations')
+      .select('organization_id')
+      .eq('token_hash', tokenHash)
+      .eq('status', 'pending')
+      .maybeSingle();
+
+    if (inviteData?.organization_id) {
+      const { SeatBillingService } = await import('@/lib/billing/seatBillingService');
+      const { SubscriptionPolicyService } = await import('@/lib/billing/subscriptionPolicyService');
+
+      const mayAddSeats = await SubscriptionPolicyService.mayIncreaseSeats(inviteData.organization_id, supabase);
+      if (!mayAddSeats) {
+        return NextResponse.json(
+          { error: 'Forbidden. Joining workspace is restricted while subscription is in grace or suspended state.', code: 'subscription_restricted' },
+          { status: 403 }
+        );
+      }
+
+      const limitCheck = await SeatBillingService.canAddActiveUser(inviteData.organization_id, supabase);
+      if (!limitCheck.allowed) {
+        return NextResponse.json(
+          { error: limitCheck.reason || 'Workspace active user limit exceeded.', code: 'seat_limit_exceeded' },
+          { status: 403 }
+        );
+      }
+    }
+
     // Invoke atomic database RPC function with server-generated token hash
     const { data: rpcResult, error: rpcErr } = await (supabase as any).rpc('accept_organization_invitation', {
       p_token_hash: tokenHash,

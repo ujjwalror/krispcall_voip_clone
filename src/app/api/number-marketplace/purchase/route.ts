@@ -42,6 +42,16 @@ export async function POST(request: Request) {
       );
     }
 
+    // Enforce subscription state policy server-side (blocked during grace and suspension)
+    const { SubscriptionPolicyService } = await import('@/lib/billing/subscriptionPolicyService');
+    const mayPurchase = await SubscriptionPolicyService.mayPurchaseNumber(profile.organization_id, supabase);
+    if (!mayPurchase) {
+      return NextResponse.json(
+        { error: 'Forbidden. Purchasing numbers is restricted while subscription is in grace or suspended state.', code: 'subscription_restricted' },
+        { status: 403 }
+      );
+    }
+
     // 2. Resolve Server-Authoritative Line Entitlement Capacity Limit from Organizations / Phase 5 Entitlement Engine
     const { data: orgData, error: orgErr } = await supabase
       .from('organizations')
