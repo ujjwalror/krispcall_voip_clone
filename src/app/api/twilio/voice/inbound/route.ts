@@ -80,7 +80,7 @@ export async function POST(request: Request) {
 
     const { data: phoneRecord } = await (adminSupabase as any)
       .from('phone_numbers')
-      .select('organization_id, active')
+      .select('organization_id, active, inbound_routing_type, inbound_routing_destination_id')
       .eq('phone_number', companyTo)
       .eq('active', true)
       .maybeSingle();
@@ -238,6 +238,41 @@ export async function POST(request: Request) {
       'initial status': 'ringing',
       direction: 'inbound',
     });
+
+    // 3.5 Check for Inbound IVR Routing Strategy
+    if (phoneRecord.inbound_routing_type === 'ivr' && phoneRecord.inbound_routing_destination_id) {
+      const ivrEntitled = await hasEntitlement('ivr', adminSupabase);
+      if (ivrEntitled) {
+        const { data: targetMenu } = await (adminSupabase as any)
+          .from('ivr_menus')
+          .select('*')
+          .eq('id', phoneRecord.inbound_routing_destination_id)
+          .eq('organization_id', organizationId)
+          .maybeSingle();
+
+        if (targetMenu && targetMenu.enabled !== false) {
+          console.log('[TWILIO INBOUND IVR ROUTE] Routing call to IVR Menu:', targetMenu.id);
+          const ivrTwiml = new twilio.twiml.VoiceResponse();
+          const gather = ivrTwiml.gather({
+            action: `/api/twilio/voice/ivr/dtmf?menuId=${targetMenu.id}&callId=${dbCallId}&depth=1&retry=0`,
+            numDigits: 1,
+            timeout: targetMenu.timeout_seconds || 5,
+            method: 'POST',
+          });
+          if (targetMenu.greeting_type === 'audio_url' && targetMenu.greeting_audio_url) {
+            gather.play(targetMenu.greeting_audio_url);
+          } else {
+            gather.say(targetMenu.greeting_text || 'Thank you for calling. Please make a selection.');
+          }
+          return new NextResponse(ivrTwiml.toString(), {
+            status: 200,
+            headers: { 'Content-Type': 'text/xml' },
+          });
+        }
+      } else {
+        console.warn('[TWILIO INBOUND IVR ROUTE] IVR entitlement not enabled for org. Falling back to default user routing.');
+      }
+    }
 
     // 4. Reserve target agents using atomic database RPC functions
     let reservedAgents: { id: string; full_name: string; twilio_identity: string }[] = [];
