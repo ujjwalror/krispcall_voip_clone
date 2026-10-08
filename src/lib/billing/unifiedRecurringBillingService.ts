@@ -5,6 +5,7 @@ import { CarrierExposureService } from '@/lib/telephony/renewal/carrierExposureS
 import { WorkspacePaymentProfileService } from './workspacePaymentProfileService';
 import { StripeCustomerService } from './providers/stripe/stripeCustomerService';
 import { StripeClientFactory } from './providers/stripe/stripeClientFactory';
+import { CommercialCatalogService } from './commercialCatalog';
 
 export interface RecurringServiceItem {
   id: string;
@@ -102,7 +103,7 @@ export class UnifiedRecurringBillingService {
     try {
       const { data: subscription } = await (supabase as any)
         .from('organization_subscriptions')
-        .select('*')
+        .select('*, plans(code, stable_key)')
         .eq('organization_id', organizationId)
         .eq('status', 'active')
         .maybeSingle();
@@ -110,7 +111,9 @@ export class UnifiedRecurringBillingService {
       if (subscription) {
         let planPriceMinor = Number(subscription.amount_minor || subscription.plan_price_minor || 0);
         if (planPriceMinor === 0) {
-          planPriceMinor = 2900;
+          const planCode = subscription.plans?.stable_key || subscription.plans?.code || '';
+          const provPrice = CommercialCatalogService.getProvisionalPrice(planCode);
+          planPriceMinor = provPrice ? provPrice.monthlyUserPriceMinor : 0;
         }
         baseCurrency = subscription.currency || 'USD';
         saasComponentMinor += planPriceMinor;
