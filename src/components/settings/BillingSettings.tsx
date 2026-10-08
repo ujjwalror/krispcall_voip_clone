@@ -97,6 +97,75 @@ export function BillingSettings() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Modals & Action States
+  const [isCancelModalOpen, setIsCancelModalOpen] = useState<boolean>(false);
+  const [isPlanModalOpen, setIsPlanModalOpen] = useState<boolean>(false);
+  const [isSubmittingAction, setIsSubmittingAction] = useState<boolean>(false);
+  const [actionNotice, setActionNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const handleCancelSubscription = async () => {
+    setIsSubmittingAction(true);
+    setActionNotice(null);
+    try {
+      const res = await fetch('/api/billing/subscription/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const resData = await res.json();
+      if (res.ok && resData.result?.success) {
+        setActionNotice({
+          type: 'success',
+          message: resData.result.message || 'Subscription cancellation scheduled at period end.',
+        });
+        setIsCancelModalOpen(false);
+        fetchSubscription();
+      } else {
+        setActionNotice({
+          type: 'error',
+          message: resData.message || 'Failed to cancel subscription.',
+        });
+      }
+    } catch (err: any) {
+      setActionNotice({
+        type: 'error',
+        message: 'Network error processing cancellation request.',
+      });
+    } finally {
+      setIsSubmittingAction(false);
+    }
+  };
+
+  const handleReactivateSubscription = async () => {
+    setIsSubmittingAction(true);
+    setActionNotice(null);
+    try {
+      const res = await fetch('/api/billing/subscription/reactivate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const resData = await res.json();
+      if (res.ok && resData.result?.success) {
+        setActionNotice({
+          type: 'success',
+          message: resData.result.message || 'Subscription successfully reactivated.',
+        });
+        fetchSubscription();
+      } else {
+        setActionNotice({
+          type: 'error',
+          message: resData.message || 'Failed to reactivate subscription.',
+        });
+      }
+    } catch (err: any) {
+      setActionNotice({
+        type: 'error',
+        message: 'Network error processing reactivation request.',
+      });
+    } finally {
+      setIsSubmittingAction(false);
+    }
+  };
+
   // Tab State: 'overview' | 'plans' | 'info' | 'payments' | 'invoices'
   const [activeTab, setActiveTab] = useState<'overview' | 'plans' | 'info' | 'payments' | 'invoices'>('overview');
   const [isAnnualBilling, setIsAnnualBilling] = useState<boolean>(false);
@@ -244,19 +313,39 @@ export function BillingSettings() {
           </p>
         </div>
 
-        {/* Change Plan Top Header Action */}
+        {/* Change Plan & Subscription Lifecycle Top Header Actions */}
         <div className="flex items-center gap-2 shrink-0">
-          <button
-            disabled
-            title="Self-serve plan switching will be enabled when commercial public tiers launch."
-            className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed flex items-center gap-1.5 border border-slate-200 dark:border-slate-700/60 opacity-80"
+          {data.cancellation.scheduledAtPeriodEnd ? (
+            <Button
+              onClick={handleReactivateSubscription}
+              disabled={isSubmittingAction}
+              variant="outline"
+              className="text-xs border-emerald-500/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
+            >
+              {isSubmittingAction ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <RefreshCw className="w-3.5 h-3.5 mr-1.5 text-emerald-500" />}
+              <span>Reactivate Subscription</span>
+            </Button>
+          ) : (
+            <Button
+              onClick={() => setIsCancelModalOpen(true)}
+              variant="outline"
+              className="text-xs text-slate-500 border-slate-200 dark:border-slate-800 hover:text-rose-600 dark:hover:text-rose-400"
+            >
+              <span>Cancel Subscription</span>
+            </Button>
+          )}
+
+          <Button
+            onClick={() => {
+              setActiveTab('plans');
+              setIsPlanModalOpen(true);
+            }}
+            variant="primary"
+            className="text-xs flex items-center gap-1.5"
           >
-            <Lock className="w-3.5 h-3.5" />
+            <Zap className="w-3.5 h-3.5 text-amber-300" />
             <span>Change Plan</span>
-            <span className="px-1.5 py-0.2 rounded-md bg-slate-200 dark:bg-slate-700 text-[10px] font-bold text-slate-600 dark:text-slate-300">
-              Upcoming
-            </span>
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -1083,6 +1172,78 @@ export function BillingSettings() {
           fetchPaymentProfile();
         }}
       />
+
+      {/* Subscription Cancellation Modal */}
+      {isCancelModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0 border border-rose-500/20">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                  Cancel Workspace Subscription?
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  Cancellation will schedule your SaaS subscription to end at the end of the current billing period.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800 text-xs space-y-2.5">
+              <div className="font-semibold text-slate-900 dark:text-slate-100">
+                What happens when you cancel:
+              </div>
+              <div className="space-y-2 text-[11px] text-slate-600 dark:text-slate-400">
+                <div className="flex items-start gap-2">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-500 shrink-0 mt-0.5" />
+                  <span>SaaS functionality remains fully active through the end of your paid billing cycle.</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-500 shrink-0 mt-0.5" />
+                  <span>Phone numbers are NOT released automatically. Numbers follow their own rental &amp; offboarding lifecycle.</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-500 shrink-0 mt-0.5" />
+                  <span>Prepaid Telecom Credit wallet balance is preserved and remains intact.</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-500 shrink-0 mt-0.5" />
+                  <span>Port-out management rights for active numbers remain fully accessible.</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsCancelModalOpen(false)}
+                disabled={isSubmittingAction}
+              >
+                Keep Subscription
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={handleCancelSubscription}
+                disabled={isSubmittingAction}
+                className="bg-rose-600 hover:bg-rose-700 text-white"
+              >
+                {isSubmittingAction ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                    Scheduling Cancellation...
+                  </>
+                ) : (
+                  'Confirm Cancellation'
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
