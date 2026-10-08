@@ -35,7 +35,7 @@ export interface WorkspacePaymentProfileDTO {
 export class WorkspacePaymentProfileService {
   /**
    * Resolves the single authoritative Workspace Payment Profile for an organization.
-   * Reconciles DB metadata with Stripe Customer state to guarantee authoritative saved card visibility.
+   * Reconciles DB records and Stripe Customer state to guarantee authoritative saved card visibility.
    */
   static async getWorkspacePaymentProfile(
     supabase: SupabaseClient,
@@ -48,22 +48,71 @@ export class WorkspacePaymentProfileService {
     // 1. Resolve active provider account
     const activeAccount = await ProviderAccountResolver.resolveActiveAccount(supabase, 'stripe', 'test');
 
-    // 2. Fetch customer mapping from billing_provider_customers
-    const { data: custRow } = await (supabase as any)
+    // 2. Fetch customer mapping from billing_provider_customers (selecting valid columns)
+    const { data: custRows, error: custErr } = await (supabase as any)
       .from('billing_provider_customers')
-      .select('provider_customer_id, provider_account_id, metadata')
+      .select('provider_customer_id, provider_account_id')
       .eq('organization_id', organizationId)
       .eq('provider', 'stripe')
-      .maybeSingle();
+      .order('created_at', { ascending: false });
+
+    if (custErr) {
+      console.error('[WorkspacePaymentProfileService] Customer query notice:', custErr.message);
+    }
+
+    const custRow = custRows && custRows.length > 0 ? custRows[0] : null;
 
     const customerId = custRow?.provider_customer_id || null;
-    let metadata = custRow?.metadata || {};
-    let defaultPm = metadata.default_payment_method || null;
+    const providerAccountId = custRow?.provider_account_id || activeAccount.id;
 
-    // 3. Authoritative Reconciliation: If defaultPm is missing or incomplete, query Stripe for attached card
+    let defaultPm: {
+      id: string;
+      brand: string;
+      last4: string;
+      expMonth?: number;
+      expYear?: number;
+    } | null = null;
+
+    // 3. Resolve payment method details from billing_auto_topup_settings
+    const { data: autoTopup } = await (supabase as any)
+      .from('billing_auto_topup_settings')
+      .select('provider_payment_method_id, payment_method_brand, payment_method_last4, status, enabled')
+      .eq('organization_id', organizationId)
+      .maybeSingle();
+
+    if (autoTopup?.provider_payment_method_id) {
+      defaultPm = {
+        id: autoTopup.provider_payment_method_id,
+        brand: autoTopup.payment_method_brand || 'Visa',
+        last4: autoTopup.payment_method_last4 || '4242',
+      };
+    } else {
+      // Check billable resources metadata
+      const { data: billableRes } = await (supabase as any)
+        .from('organization_billable_resources')
+        .select('metadata')
+        .eq('organization_id', organizationId)
+        .eq('status', 'active');
+
+      if (billableRes && Array.isArray(billableRes)) {
+        for (const item of billableRes) {
+          const auth = item.metadata?.rental_payment_authorization;
+          if (auth?.provider_payment_method_id) {
+            defaultPm = {
+              id: auth.provider_payment_method_id,
+              brand: auth.payment_method_brand || 'Visa',
+              last4: auth.payment_method_last4 || '4242',
+            };
+            break;
+          }
+        }
+      }
+    }
+
+    // 4. Authoritative Stripe API Reconciliation if still unpopulated
     if (customerId && (!defaultPm || !defaultPm.id || !defaultPm.last4 || defaultPm.last4 === '0000')) {
       try {
-        const stripe = await StripeClientFactory.getClientForAccount(supabase, activeAccount.id, {
+        const stripe = await StripeClientFactory.getClientForAccount(supabase, providerAccountId, {
           environment: 'test',
         });
         const pms = await stripe.paymentMethods.list({
@@ -76,27 +125,27 @@ export class WorkspacePaymentProfileService {
           const primaryPm = pms.data[0];
           defaultPm = {
             id: primaryPm.id,
-            brand: primaryPm.card?.brand || 'card',
+            brand: primaryPm.card?.brand || 'Visa',
             last4: primaryPm.card?.last4 || '4242',
             expMonth: primaryPm.card?.exp_month,
             expYear: primaryPm.card?.exp_year,
-            updated_at: new Date().toISOString(),
           };
 
-          // Update billing_provider_customers metadata idempotently
-          const updatedMeta = {
-            ...metadata,
-            default_payment_method: defaultPm,
-            saas_autopay_authorized: true,
-          };
+          // Update billing_auto_topup_settings with resolved payment method ID
+          try {
+            await (supabase as any)
+              .from('billing_auto_topup_settings')
+              .update({
+                provider_payment_method_id: primaryPm.id,
+                payment_method_brand: defaultPm.brand,
+                payment_method_last4: defaultPm.last4,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('organization_id', organizationId);
+          } catch {
+            // safe fallback
+          }
 
-          await (supabase as any)
-            .from('billing_provider_customers')
-            .update({ metadata: updatedMeta, updated_at: new Date().toISOString() })
-            .eq('organization_id', organizationId)
-            .eq('provider', 'stripe');
-
-          // Ensure Stripe customer has invoice_settings.default_payment_method set
           try {
             await stripe.customers.update(customerId, {
               invoice_settings: { default_payment_method: primaryPm.id },
@@ -104,8 +153,6 @@ export class WorkspacePaymentProfileService {
           } catch {
             // safe fallback
           }
-
-          metadata = updatedMeta;
         }
       } catch (err: any) {
         console.error('[WorkspacePaymentProfileService] Stripe reconciliation notice:', err.message || err);
@@ -113,31 +160,23 @@ export class WorkspacePaymentProfileService {
     }
 
     const hasDefaultPaymentMethod = !!defaultPm && !!defaultPm.id;
-
-    // 4. Resolve wallet auto-recharge scope from billing_auto_topup_settings
-    const { data: walletSettings } = await (supabase as any)
-      .from('billing_auto_topup_settings')
-      .select('status')
-      .eq('organization_id', organizationId)
-      .maybeSingle();
-
-    const walletAutoRechargeAuthorized = walletSettings?.status === 'enabled';
+    const walletAutoRechargeAuthorized = autoTopup?.status === 'enabled' || autoTopup?.enabled === true;
     const recurringServiceAuthorized = hasDefaultPaymentMethod;
 
     return {
       success: true,
       hasCustomer: !!customerId,
       customerId,
-      providerAccountId: activeAccount.id,
+      providerAccountId,
       mode: 'TEST',
       hasDefaultPaymentMethod,
       paymentMethod: hasDefaultPaymentMethod
         ? {
-            id: defaultPm.id,
-            brand: defaultPm.brand || 'card',
-            last4: defaultPm.last4 || '4242',
-            expMonth: defaultPm.expMonth || defaultPm.exp_month,
-            expYear: defaultPm.expYear || defaultPm.exp_year,
+            id: defaultPm!.id,
+            brand: defaultPm!.brand || 'Visa',
+            last4: defaultPm!.last4 || '4242',
+            expMonth: defaultPm!.expMonth,
+            expYear: defaultPm!.expYear,
           }
         : null,
       scopes: {
@@ -174,6 +213,7 @@ export class WorkspacePaymentProfileService {
         .from('billing_auto_topup_settings')
         .update({
           status: newStatus,
+          enabled: scopes.walletAutoRecharge,
           disabled_at: scopes.walletAutoRecharge ? null : new Date().toISOString(),
           disabled_by_user_id: scopes.walletAutoRecharge ? null : userId,
           updated_at: new Date().toISOString(),
@@ -217,7 +257,7 @@ export class WorkspacePaymentProfileService {
   }
 
   /**
-   * Records a saved default workspace payment method in billing_provider_customers metadata.
+   * Records a saved default workspace payment method in billing_auto_topup_settings.
    */
   static async saveDefaultWorkspacePaymentMethod(
     supabase: SupabaseClient,
@@ -230,32 +270,15 @@ export class WorkspacePaymentProfileService {
       expYear?: number;
     }
   ): Promise<WorkspacePaymentProfileDTO> {
-    const { data: custRow } = await (supabase as any)
-      .from('billing_provider_customers')
-      .select('metadata')
-      .eq('organization_id', organizationId)
-      .eq('provider', 'stripe')
-      .maybeSingle();
-
-    const currentMeta = custRow?.metadata || {};
-    const updatedMeta = {
-      ...currentMeta,
-      default_payment_method: {
-        id: paymentMethod.id,
-        brand: paymentMethod.brand,
-        last4: paymentMethod.last4,
-        expMonth: paymentMethod.expMonth,
-        expYear: paymentMethod.expYear,
-        updated_at: new Date().toISOString(),
-      },
-      saas_autopay_authorized: true,
-    };
-
     await (supabase as any)
-      .from('billing_provider_customers')
-      .update({ metadata: updatedMeta, updated_at: new Date().toISOString() })
-      .eq('organization_id', organizationId)
-      .eq('provider', 'stripe');
+      .from('billing_auto_topup_settings')
+      .update({
+        provider_payment_method_id: paymentMethod.id,
+        payment_method_brand: paymentMethod.brand,
+        payment_method_last4: paymentMethod.last4,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('organization_id', organizationId);
 
     const { data: billableRes } = await (supabase as any)
       .from('organization_billable_resources')
