@@ -97,9 +97,11 @@ function WorkspaceSetupForm({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             paymentMethod: {
-              id: pmId,
-              brand: 'card',
-              last4: '4242',
+              id: completeData.paymentMethodId || pmId,
+              brand: completeData.brand || 'card',
+              last4: completeData.last4 || '4242',
+              expMonth: completeData.expMonth,
+              expYear: completeData.expYear,
             },
           }),
         });

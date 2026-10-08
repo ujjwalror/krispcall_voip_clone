@@ -87,6 +87,8 @@ export async function PATCH(req: NextRequest) {
           id: String(paymentMethod.id),
           brand: String(paymentMethod.brand || 'card'),
           last4: String(paymentMethod.last4 || '0000'),
+          expMonth: paymentMethod.expMonth ? Number(paymentMethod.expMonth) : undefined,
+          expYear: paymentMethod.expYear ? Number(paymentMethod.expYear) : undefined,
         }
       );
     } else if (scopes && typeof scopes === 'object') {

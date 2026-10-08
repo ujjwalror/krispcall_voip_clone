@@ -102,7 +102,7 @@ export function BillingSettings() {
 
   const fetchPaymentProfile = useCallback(async () => {
     try {
-      const res = await fetch('/api/billing/workspace-payment-profile');
+      const res = await fetch('/api/billing/workspace-payment-profile', { cache: 'no-store' });
       if (res.ok) {
         const json = await res.json();
         setPaymentProfile(json);
@@ -116,7 +116,7 @@ export function BillingSettings() {
     setIsLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/billing/subscription');
+      const res = await fetch('/api/billing/subscription', { cache: 'no-store' });
       if (res.ok) {
         const json = await res.json();
         setData(json.subscription || null);
@@ -663,21 +663,31 @@ export function BillingSettings() {
               {paymentProfile?.hasDefaultPaymentMethod && paymentProfile.paymentMethod ? (
                 <div className="space-y-4">
                   <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-indigo-500/10 text-indigo-500 flex items-center justify-center font-bold text-xs uppercase">
+                    <div className="flex items-center gap-3.5">
+                      <div className="w-11 h-11 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold text-xs uppercase shrink-0 border border-indigo-500/20">
                         {paymentProfile.paymentMethod.brand}
                       </div>
                       <div>
-                        <div className="text-sm font-bold text-slate-900 dark:text-slate-100 capitalize">
-                          {paymentProfile.paymentMethod.brand} ending in {paymentProfile.paymentMethod.last4}
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-bold text-slate-900 dark:text-slate-100 capitalize">
+                            {paymentProfile.paymentMethod.brand}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] font-extrabold tracking-wide">
+                            DEFAULT
+                          </span>
                         </div>
-                        <div className="text-xs text-slate-500">
-                          Default workspace off-session payment method
+                        <div className="text-xs font-mono text-slate-600 dark:text-slate-400 mt-0.5">
+                          •••• {paymentProfile.paymentMethod.last4}
+                        </div>
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                          {paymentProfile.paymentMethod.expMonth && paymentProfile.paymentMethod.expYear
+                            ? `Expires ${String(paymentProfile.paymentMethod.expMonth).padStart(2, '0')}/${String(paymentProfile.paymentMethod.expYear).slice(-2)}`
+                            : 'Default workspace payment method'}
                         </div>
                       </div>
                     </div>
                     <Button variant="outline" size="sm" onClick={() => setIsCardModalOpen(true)}>
-                      Change Card
+                      Change Payment Method
                     </Button>
                   </div>
 
@@ -687,7 +697,7 @@ export function BillingSettings() {
                       <span>Unified Workspace Payment Coverage</span>
                     </div>
                     <p className="text-[11px] leading-relaxed">
-                      This payment method is used for your recurring VoIP Hub service charges (SaaS subscription &amp; active phone line rentals) and, if enabled, telecom credit Auto Top-Up.
+                      Used for your recurring VoIP Hub service charges (SaaS subscription &amp; active phone line rentals) and, when Auto Top-Up is enabled, telecom credit Auto Top-Up.
                     </p>
                   </div>
                 </div>

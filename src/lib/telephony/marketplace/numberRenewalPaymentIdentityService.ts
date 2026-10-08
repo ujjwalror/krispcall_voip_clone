@@ -242,10 +242,54 @@ export class NumberRenewalPaymentIdentityService {
 
       const brand = pmObj.card?.brand || 'card';
       const last4 = pmObj.card?.last4 || '0000';
+      const expMonth = pmObj.card?.exp_month;
+      const expYear = pmObj.card?.exp_year;
       const scope = consentScope || 'PHONE_NUMBER_RENTAL_RENEWAL';
 
-      // 4. Decoupled Consent Storage: Persist explicit rental renewal payment authorization in organization_billable_resources
-      // This strictly guarantees NO coupling to telecom wallet auto-topup settings!
+      // 4. Set invoice_settings.default_payment_method on Stripe Customer
+      try {
+        await stripe.customers.update(customerInfo.customerId, {
+          invoice_settings: { default_payment_method: pmId },
+        });
+      } catch (err: any) {
+        console.error('[completeRenewalSetupIntent] Stripe customer update notice:', err.message || err);
+      }
+
+      // 5. Persist default payment method in billing_provider_customers metadata
+      try {
+        const { data: custRow } = await (supabase as any)
+          .from('billing_provider_customers')
+          .select('metadata')
+          .eq('organization_id', organizationId)
+          .eq('provider', 'stripe')
+          .maybeSingle();
+
+        const currentMeta = custRow?.metadata || {};
+        const updatedMeta = {
+          ...currentMeta,
+          default_payment_method: {
+            id: pmId,
+            brand,
+            last4,
+            expMonth,
+            expYear,
+            exp_month: expMonth,
+            exp_year: expYear,
+            updated_at: new Date().toISOString(),
+          },
+          saas_autopay_authorized: true,
+        };
+
+        await (supabase as any)
+          .from('billing_provider_customers')
+          .update({ metadata: updatedMeta, updated_at: new Date().toISOString() })
+          .eq('organization_id', organizationId)
+          .eq('provider', 'stripe');
+      } catch (err: any) {
+        console.error('[completeRenewalSetupIntent] DB metadata update error:', err.message || err);
+      }
+
+      // 6. Decoupled Consent Storage: Persist explicit rental renewal payment authorization in organization_billable_resources
       const consentRecord = {
         scope,
         provider_account_id: customerInfo.providerAccountId,
@@ -259,7 +303,6 @@ export class NumberRenewalPaymentIdentityService {
         autopay_authorized: true,
       };
 
-      // Update billable resources metadata for tenant active number resources
       const { data: billableRes } = await (supabase as any)
         .from('organization_billable_resources')
         .select('id, metadata')
@@ -295,7 +338,6 @@ export class NumberRenewalPaymentIdentityService {
           .eq('organization_id', organizationId);
       }
 
-      // 5. Update attempt status safely
       try {
         await (supabase as any)
           .from('billing_auto_topup_attempts')
@@ -309,9 +351,13 @@ export class NumberRenewalPaymentIdentityService {
         success: true,
         customerId: customerInfo.customerId,
         paymentMethodId: pmId,
+        brand,
+        last4,
+        expMonth,
+        expYear,
         autopayAuthorized: true,
         scope,
-      };
+      } as any;
     } catch (err: any) {
       console.error('[NumberRenewalPaymentIdentityService] completeRenewalSetupIntent error:', err.message || err);
       return {
