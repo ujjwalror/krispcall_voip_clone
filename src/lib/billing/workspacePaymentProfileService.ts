@@ -76,7 +76,7 @@ export class WorkspacePaymentProfileService {
     // 3. Resolve payment method details from billing_auto_topup_settings
     const { data: autoTopup } = await (supabase as any)
       .from('billing_auto_topup_settings')
-      .select('provider_payment_method_id, payment_method_brand, payment_method_last4, status, enabled')
+      .select('provider_payment_method_id, payment_method_brand, payment_method_last4, status')
       .eq('organization_id', organizationId)
       .maybeSingle();
 
@@ -213,7 +213,6 @@ export class WorkspacePaymentProfileService {
         .from('billing_auto_topup_settings')
         .update({
           status: newStatus,
-          enabled: scopes.walletAutoRecharge,
           disabled_at: scopes.walletAutoRecharge ? null : new Date().toISOString(),
           disabled_by_user_id: scopes.walletAutoRecharge ? null : userId,
           updated_at: new Date().toISOString(),
