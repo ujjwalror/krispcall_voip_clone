@@ -98,6 +98,13 @@ export async function POST(request: Request) {
       shouldRecord = true;
     }
 
+    // Server-side recordings entitlement check (Starter plan must NOT record calls)
+    const { hasEntitlement } = await import('@/lib/entitlements/server');
+    const recordingsEnabled = await hasEntitlement('recordings', adminSupabase);
+    if (!recordingsEnabled) {
+      shouldRecord = false;
+    }
+
     // Destination phone number
     const rawDestination = params.To || params.to || dbCallRec.to_number || '';
     const validation = normalizeE164PhoneNumber(rawDestination);

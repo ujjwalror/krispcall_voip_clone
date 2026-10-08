@@ -202,6 +202,13 @@ export async function POST(request: Request) {
       }
     }
 
+    // Check recordings entitlement for inbound call recording (Starter plan must NOT record calls)
+    const { hasEntitlement } = await import('@/lib/entitlements/server');
+    const recordingsEntitled = await hasEntitlement('recordings', adminSupabase);
+    if (!recordingsEntitled) {
+      autoRecordingEnabled = false;
+    }
+
     // 3. Insert inbound call record into public.calls (status = 'ringing') first to obtain dbCallId
     let dbCallId = '';
     const { data: newCall, error: insertErr } = await (adminSupabase as any)

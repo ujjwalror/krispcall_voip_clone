@@ -97,8 +97,33 @@ export function BillingSettings() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Tab State: 'overview' | 'info' | 'payments' | 'invoices'
-  const [activeTab, setActiveTab] = useState<'overview' | 'info' | 'payments' | 'invoices'>('overview');
+  // Tab State: 'overview' | 'plans' | 'info' | 'payments' | 'invoices'
+  const [activeTab, setActiveTab] = useState<'overview' | 'plans' | 'info' | 'payments' | 'invoices'>('overview');
+  const [isAnnualBilling, setIsAnnualBilling] = useState<boolean>(false);
+  const [downgradeCheckState, setDowngradeCheckState] = useState<{
+    targetPlanCode: string;
+    loading: boolean;
+    result: any;
+  } | null>(null);
+
+  const handleCheckDowngrade = async (targetPlanCode: string) => {
+    setDowngradeCheckState({ targetPlanCode, loading: true, result: null });
+    try {
+      const res = await fetch('/api/billing/downgrade-check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetPlanCode }),
+      });
+      const data = await res.json();
+      setDowngradeCheckState({ targetPlanCode, loading: false, result: data.eligibility || null });
+    } catch (err: any) {
+      setDowngradeCheckState({
+        targetPlanCode,
+        loading: false,
+        result: { allowed: false, reason: 'Failed to evaluate downgrade eligibility. Network error.' },
+      });
+    }
+  };
 
   const fetchPaymentProfile = useCallback(async () => {
     try {
@@ -247,6 +272,18 @@ export function BillingSettings() {
         >
           <Sparkles className="w-3.5 h-3.5" />
           <span>Overview</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('plans')}
+          className={`px-4 py-2 rounded-lg font-semibold transition-all flex items-center gap-2 shrink-0 ${
+            activeTab === 'plans'
+              ? 'bg-blue-600 text-white shadow-md'
+              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-900'
+          }`}
+        >
+          <Zap className="w-3.5 h-3.5 text-amber-400" />
+          <span>Plan Comparison &amp; Preview</span>
         </button>
 
         <button
@@ -590,7 +627,293 @@ export function BillingSettings() {
         </div>
       )}
 
-      {/* TAB CONTENT 2: BILLING INFORMATION */}
+      {/* TAB CONTENT 2: PLAN COMPARISON & PROVISIONAL CATALOG PREVIEW */}
+      {activeTab === 'plans' && (
+        <div className="space-y-6">
+          {/* PROVISIONAL DEVELOPMENT NOTICE BANNER */}
+          <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-900 dark:text-amber-200 text-xs space-y-1">
+            <div className="flex items-center gap-2 font-bold text-sm">
+              <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+              <span>Development Preview: Provisional Pricing &amp; Feature Limits</span>
+            </div>
+            <p className="text-[11px] leading-relaxed text-amber-800 dark:text-amber-300">
+              The pricing targets displayed below (Starter $18 / Pro $32 / Business $40) are <strong>provisional development targets</strong>. Public commercial pricing has not been finalized or published. Live customer subscription charging remains inactive.
+            </p>
+          </div>
+
+          {/* BILLING INTERVAL SELECTOR */}
+          <div className="flex items-center justify-between p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Billing Interval Selection</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Choose between monthly and annual subscription billing</p>
+            </div>
+            <div className="flex items-center gap-2 p-1 rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs">
+              <button
+                onClick={() => setIsAnnualBilling(false)}
+                className={`px-3 py-1.5 rounded-md font-semibold transition-all ${
+                  !isAnnualBilling ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-xs' : 'text-slate-500'
+                }`}
+              >
+                Monthly Billing
+              </button>
+              <button
+                onClick={() => setIsAnnualBilling(true)}
+                className={`px-3 py-1.5 rounded-md font-semibold transition-all ${
+                  isAnnualBilling ? 'bg-amber-500 text-white shadow-xs' : 'text-slate-500'
+                }`}
+              >
+                Annual Billing
+              </button>
+            </div>
+          </div>
+
+          {/* ANNUAL PRICING WARNING BANNER IF ANNUAL SELECTED */}
+          {isAnnualBilling && (
+            <div className="p-3.5 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-900 dark:text-blue-200 text-xs flex items-center gap-2.5">
+              <Info className="w-4 h-4 text-blue-500 shrink-0" />
+              <span className="font-semibold">Annual pricing coming soon.</span> Annual pricing contracts have not been published. Monthly pricing targets apply.
+            </div>
+          )}
+
+          {/* DOWNGRADE CHECK RESULT ALERT */}
+          {downgradeCheckState && (
+            <div className={`p-4 rounded-xl border text-xs ${
+              downgradeCheckState.loading
+                ? 'bg-slate-50 border-slate-200 text-slate-700 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-300'
+                : downgradeCheckState.result?.allowed
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-900 dark:text-emerald-200'
+                : 'bg-rose-500/10 border-rose-500/30 text-rose-900 dark:text-rose-200'
+            }`}>
+              {downgradeCheckState.loading ? (
+                <div className="flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />
+                  <span>Evaluating downgrade eligibility against target plan limits...</span>
+                </div>
+              ) : downgradeCheckState.result?.allowed ? (
+                <div className="flex items-start gap-2.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold text-sm">Downgrade Eligible!</span>
+                    <p className="mt-0.5 text-[11px]">
+                      Your workspace active user count ({downgradeCheckState.result.currentActiveUsers}/{downgradeCheckState.result.targetMaxUsers}) and active phone number count ({downgradeCheckState.result.currentActiveNumbers}/{downgradeCheckState.result.targetMaxNumbers}) comply with the {downgradeCheckState.targetPlanCode.toUpperCase()} plan limits.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold text-sm">Downgrade Blocked Safety Guard</span>
+                    <p className="mt-1 text-[11px] leading-relaxed">
+                      {downgradeCheckState.result?.reason || 'Downgrade is restricted. Active usage exceeds target plan limits.'}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* PLAN CARDS GRID */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* STARTER CARD */}
+            <Card className="flex flex-col justify-between border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 relative">
+              <div className="p-5 space-y-4">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Starter</h3>
+                    <Badge variant="neutral" className="text-[10px]">Provisional</Badge>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">For small teams getting started with VoIP calling &amp; SMS.</p>
+                </div>
+
+                <div className="py-2 border-y border-slate-100 dark:border-slate-800/60">
+                  <div className="text-2xl font-bold text-slate-900 dark:text-slate-100 flex items-baseline gap-1">
+                    <span>$18</span>
+                    <span className="text-xs font-normal text-slate-500">/ user / mo</span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-0.5">Billed monthly per active user seat</p>
+                </div>
+
+                <div className="space-y-2 text-xs">
+                  <div className="flex items-center justify-between font-semibold text-slate-700 dark:text-slate-300">
+                    <span>Max Active Users</span>
+                    <span className="font-mono text-blue-600 dark:text-blue-400">5 seats</span>
+                  </div>
+                  <div className="flex items-center justify-between font-semibold text-slate-700 dark:text-slate-300">
+                    <span>Max Phone Numbers</span>
+                    <span className="font-mono text-blue-600 dark:text-blue-400">1 line</span>
+                  </div>
+                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800/60 space-y-1.5 text-[11px] text-slate-600 dark:text-slate-400">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                      <span>Voice Calling (Outbound / Inbound)</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                      <span>SMS &amp; MMS Messaging</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400 font-medium">
+                      <Lock className="w-3.5 h-3.5 shrink-0" />
+                      <span>Call Recording (DISABLED on Starter)</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-slate-400">
+                      <Lock className="w-3.5 h-3.5 shrink-0" />
+                      <span>Analytics &amp; CRM Integrations</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-amber-500 font-medium">
+                      <Clock className="w-3.5 h-3.5 shrink-0" />
+                      <span>IVR &amp; Call Queues (In Development)</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-5 pt-0">
+                <Button
+                  onClick={() => handleCheckDowngrade('starter')}
+                  variant="outline"
+                  className="w-full text-xs"
+                >
+                  Check Starter Downgrade Safety
+                </Button>
+              </div>
+            </Card>
+
+            {/* PRO CARD */}
+            <Card className="flex flex-col justify-between border-blue-500/30 dark:border-blue-500/30 bg-gradient-to-b from-blue-50/20 to-transparent dark:from-blue-950/20 dark:to-transparent relative shadow-sm">
+              <div className="p-5 space-y-4">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                      <span>Pro</span>
+                      <Sparkles className="w-4 h-4 text-blue-500" />
+                    </h3>
+                    <Badge variant="blue" className="text-[10px]">Recommended</Badge>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">For growing teams requiring call recording &amp; analytics.</p>
+                </div>
+
+                <div className="py-2 border-y border-slate-100 dark:border-slate-800/60">
+                  <div className="text-2xl font-bold text-slate-900 dark:text-slate-100 flex items-baseline gap-1">
+                    <span>$32</span>
+                    <span className="text-xs font-normal text-slate-500">/ user / mo</span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-0.5">Billed monthly per active user seat</p>
+                </div>
+
+                <div className="space-y-2 text-xs">
+                  <div className="flex items-center justify-between font-semibold text-slate-700 dark:text-slate-300">
+                    <span>Max Active Users</span>
+                    <span className="font-mono text-blue-600 dark:text-blue-400">20 seats</span>
+                  </div>
+                  <div className="flex items-center justify-between font-semibold text-slate-700 dark:text-slate-300">
+                    <span>Max Phone Numbers</span>
+                    <span className="font-mono text-blue-600 dark:text-blue-400">3 lines</span>
+                  </div>
+                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800/60 space-y-1.5 text-[11px] text-slate-600 dark:text-slate-400">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                      <span>Voice Calling &amp; Messaging</span>
+                    </div>
+                    <div className="flex items-center gap-2 font-medium text-emerald-600 dark:text-emerald-400">
+                      <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                      <span>Call Recording (INCLUDED)</span>
+                    </div>
+                    <div className="flex items-center gap-2 font-medium text-emerald-600 dark:text-emerald-400">
+                      <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                      <span>Analytics &amp; Reporting</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                      <span>CRM Integrations (General)</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-amber-500 font-medium">
+                      <Clock className="w-3.5 h-3.5 shrink-0" />
+                      <span>IVR &amp; Call Queues (In Development)</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-5 pt-0">
+                <Button
+                  onClick={() => handleCheckDowngrade('pro')}
+                  variant="outline"
+                  className="w-full text-xs"
+                >
+                  Check Pro Downgrade Safety
+                </Button>
+              </div>
+            </Card>
+
+            {/* BUSINESS CARD */}
+            <Card className="flex flex-col justify-between border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 relative">
+              <div className="p-5 space-y-4">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Business</h3>
+                    <Badge variant="neutral" className="text-[10px]">Enterprise</Badge>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">For advanced organizations requiring Zoho CRM &amp; multi-line capacity.</p>
+                </div>
+
+                <div className="py-2 border-y border-slate-100 dark:border-slate-800/60">
+                  <div className="text-2xl font-bold text-slate-900 dark:text-slate-100 flex items-baseline gap-1">
+                    <span>$40</span>
+                    <span className="text-xs font-normal text-slate-500">/ user / mo</span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-0.5">Billed monthly per active user seat</p>
+                </div>
+
+                <div className="space-y-2 text-xs">
+                  <div className="flex items-center justify-between font-semibold text-slate-700 dark:text-slate-300">
+                    <span>Max Active Users</span>
+                    <span className="font-mono text-blue-600 dark:text-blue-400">50 seats</span>
+                  </div>
+                  <div className="flex items-center justify-between font-semibold text-slate-700 dark:text-slate-300">
+                    <span>Max Phone Numbers</span>
+                    <span className="font-mono text-blue-600 dark:text-blue-400">10 lines</span>
+                  </div>
+                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800/60 space-y-1.5 text-[11px] text-slate-600 dark:text-slate-400">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                      <span>Voice Calling, SMS &amp; MMS</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                      <span>Call Recording &amp; Analytics</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                      <span>CRM Integrations &amp; Zoho CRM</span>
+                    </div>
+                    <div className="flex items-center gap-2 font-medium text-purple-600 dark:text-purple-400">
+                      <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                      <span>Priority Support &amp; SLA</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-amber-500 font-medium">
+                      <Clock className="w-3.5 h-3.5 shrink-0" />
+                      <span>IVR &amp; Call Queues (In Development)</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-5 pt-0">
+                <Button
+                  onClick={() => handleCheckDowngrade('business')}
+                  variant="outline"
+                  className="w-full text-xs"
+                >
+                  Check Business Downgrade Safety
+                </Button>
+              </div>
+            </Card>
+          </div>
+        </div>
+      )}
+
+      {/* TAB CONTENT 3: BILLING INFORMATION */}
       {activeTab === 'info' && (
         <Card className="max-w-3xl">
           <CardHeader>

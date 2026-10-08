@@ -279,6 +279,15 @@ export async function executeOutboundCallSetup(
       }
     }
 
+    // 6b. Verify recordings entitlement for recordCall parameter
+    let effectiveRecordCall = Boolean(recordCall);
+    if (effectiveRecordCall) {
+      const recordingsEnabled = await hasEntitlement('recordings', adminSupabase);
+      if (!recordingsEnabled) {
+        effectiveRecordCall = false;
+      }
+    }
+
     // 7. Insert database call record into public.calls
     const { data: callRecord, error: insertError } = await (adminSupabase as any)
       .from('calls')
@@ -289,7 +298,7 @@ export async function executeOutboundCallSetup(
         from_number: callerId,
         to_number: normalizedDestination,
         status: 'initiated',
-        record_call: Boolean(recordCall),
+        record_call: effectiveRecordCall,
         started_at: new Date().toISOString(),
       })
       .select()
