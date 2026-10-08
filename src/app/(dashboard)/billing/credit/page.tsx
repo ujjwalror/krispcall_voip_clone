@@ -3,7 +3,19 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
-import { Zap, Lock, Bell, RefreshCw, Shield, Info, AlertTriangle, Loader2, History, ChevronLeft, ChevronRight, PlusCircle } from 'lucide-react';
+import {
+  Zap,
+  Lock,
+  Bell,
+  AlertTriangle,
+  Loader2,
+  History,
+  ChevronLeft,
+  ChevronRight,
+  PlusCircle,
+  Shield,
+  Check,
+} from 'lucide-react';
 import { formatMinorUnitsToCurrency } from '@/lib/billing/currencyFormatter';
 import { AddCreditsModal } from '@/components/billing/AddCreditsModal';
 import { AutoTopupCard } from '@/components/billing/AutoTopupCard';
@@ -35,11 +47,18 @@ interface PaginationMeta {
   hasMore: boolean;
 }
 
+const PRESET_ALERT_THRESHOLDS = [5, 10, 20, 50];
+
 export default function BillingCreditPage() {
   const [summaryLoading, setSummaryLoading] = useState<boolean>(true);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [summary, setSummary] = useState<CreditSummaryData | null>(null);
   const [isAddCreditsOpen, setIsAddCreditsOpen] = useState<boolean>(false);
+
+  // Low Balance Alerts state (independent from Auto Top-Up)
+  const [alertsEnabled, setAlertsEnabled] = useState<boolean>(true);
+  const [alertThresholdMajor, setAlertThresholdMajor] = useState<number>(10);
+  const [alertsSaved, setAlertsSaved] = useState<boolean>(false);
 
   const [historyLoading, setHistoryLoading] = useState<boolean>(true);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -123,9 +142,12 @@ export default function BillingCreditPage() {
     }
   };
 
+  const userRole = (summary?.role || '').toLowerCase();
+  const canManage = ['owner', 'admin'].includes(userRole);
+
   return (
     <div className="space-y-6 max-w-4xl mx-auto pb-12">
-      {/* Header */}
+      {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
         <div>
           <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
@@ -141,8 +163,8 @@ export default function BillingCreditPage() {
         </Badge>
       </div>
 
-      {/* Credit Balance Card */}
-      <Card className="border-amber-500/20 bg-amber-500/5">
+      {/* 1. Available Credit Card (Top) */}
+      <Card className="border-amber-500/20 bg-amber-500/5 w-full">
         <CardHeader className="pb-2 border-b-0">
           <div className="flex items-center justify-between w-full">
             <CardTitle className="text-base text-amber-900 dark:text-amber-200 flex items-center gap-2">
@@ -176,96 +198,144 @@ export default function BillingCreditPage() {
           </p>
 
           <div className="flex items-center gap-3 pt-1">
-            {(() => {
-              const role = (summary?.role || '').toLowerCase();
-              const isAllowed = ['owner', 'admin'].includes(role);
-
-              if (summaryLoading) {
-                return (
-                  <button
-                    disabled
-                    className="px-4 py-2 rounded-xl text-xs font-semibold bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20 opacity-70 flex items-center gap-2"
-                  >
-                    <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-500" />
-                    <span>Loading...</span>
-                  </button>
-                );
-              }
-
-              if (isAllowed) {
-                return (
-                  <button
-                    onClick={() => setIsAddCreditsOpen(true)}
-                    className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md shadow-amber-500/20 transition flex items-center gap-2"
-                  >
-                    <PlusCircle className="w-4 h-4" />
-                    <span>Add Credits</span>
-                  </button>
-                );
-              }
-
-              return (
-                <div className="flex items-center gap-2">
-                  <button
-                    disabled
-                    className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 cursor-not-allowed border border-slate-300 dark:border-slate-700 opacity-80 flex items-center gap-2"
-                  >
-                    <Lock className="w-3.5 h-3.5" />
-                    <span>Add Credits</span>
-                  </button>
-                  <span className="text-[11px] text-slate-500 dark:text-slate-400 italic">
-                    Only workspace Owners and Admins can add calling credits.
-                  </span>
-                </div>
-              );
-            })()}
+            {summaryLoading ? (
+              <button
+                disabled
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20 opacity-70 flex items-center gap-2"
+              >
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-500" />
+                <span>Loading...</span>
+              </button>
+            ) : canManage ? (
+              <button
+                onClick={() => setIsAddCreditsOpen(true)}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md shadow-amber-500/20 transition flex items-center gap-2"
+              >
+                <PlusCircle className="w-4 h-4" />
+                <span>Add Credits</span>
+              </button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <button
+                  disabled
+                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 cursor-not-allowed border border-slate-300 dark:border-slate-700 opacity-80 flex items-center gap-2"
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>Add Credits</span>
+                </button>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 italic">
+                  Only workspace Owners and Admins can add calling credits.
+                </span>
+              </div>
+            )}
           </div>
         </div>
       </Card>
 
-      {/* Grid for Auto-Recharge and Notifications */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Auto-Top-Up Interactive Card */}
-        <AutoTopupCard
-          userRole={summary?.role || 'agent'}
-          onStatusChanged={fetchSummary}
-        />
+      {/* 2. Prominent FULL-WIDTH Auto Top-Up Section */}
+      <AutoTopupCard
+        userRole={summary?.role || 'agent'}
+        onStatusChanged={fetchSummary}
+      />
 
-        {/* Low Balance Alert Notifications */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm flex items-center gap-2">
-              <Bell className="w-4 h-4 text-purple-500" />
-              <span>Low Balance Alerts</span>
-            </CardTitle>
-          </CardHeader>
-          <div className="space-y-4 text-xs">
-            <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950/50 border border-slate-200/60 dark:border-slate-800/60">
-              <div className="text-[11px] text-slate-500 dark:text-slate-400">Notification Threshold</div>
-              <div className="font-semibold text-slate-900 dark:text-slate-100 mt-0.5">
-                Not configured
-              </div>
+      {/* 3. Secondary FULL-WIDTH Low Balance Alerts Section */}
+      <Card className="w-full border-slate-200 dark:border-slate-800">
+        <CardHeader className="pb-3 border-b border-slate-100 dark:border-slate-800/60 flex flex-row items-center justify-between">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2.5">
+              <Bell className="w-5 h-5 text-purple-500" />
+              <CardTitle className="text-base font-bold text-slate-900 dark:text-slate-100">
+                Low Balance Alerts
+              </CardTitle>
+              <Badge variant={alertsEnabled ? 'purple' : 'neutral'} className="text-[10px]">
+                {alertsEnabled ? 'ACTIVE' : 'DISABLED'}
+              </Badge>
             </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Notify workspace owners and admins via email when available telecom credit falls below a set threshold.
+            </p>
+          </div>
 
-            <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-950/50 border border-slate-200/60 dark:border-slate-800/60">
-              <div className="text-[11px] text-slate-500 dark:text-slate-400">Recipients</div>
-              <div className="font-semibold text-slate-900 dark:text-slate-100 mt-0.5">
-                Workspace Owners & Admins
-              </div>
-            </div>
-
-            <div className="p-3 rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-[11px] text-slate-500 flex items-start gap-2">
-              <Shield className="w-4 h-4 text-purple-500 shrink-0 mt-0.5" />
-              <span>
-                Low balance alerts ensure outbound calling and SMS capabilities continue without disruption.
+          {/* Alerts ON / OFF Switch */}
+          {canManage && (
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">
+                {alertsEnabled ? 'ON' : 'OFF'}
               </span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={alertsEnabled}
+                onClick={() => {
+                  setAlertsEnabled(!alertsEnabled);
+                  setAlertsSaved(true);
+                  setTimeout(() => setAlertsSaved(false), 2500);
+                }}
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 ${
+                  alertsEnabled ? 'bg-purple-600' : 'bg-slate-300 dark:bg-slate-700'
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                    alertsEnabled ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+          )}
+        </CardHeader>
+
+        <div className="p-5 space-y-4 text-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="font-semibold text-slate-700 dark:text-slate-300 block">
+                Alert me when balance is less than or equal to
+              </label>
+              <select
+                disabled={!alertsEnabled || !canManage}
+                value={alertThresholdMajor}
+                onChange={(e) => {
+                  setAlertThresholdMajor(Number(e.target.value));
+                  setAlertsSaved(true);
+                  setTimeout(() => setAlertsSaved(false), 2500);
+                }}
+                className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-medium focus:ring-2 focus:ring-purple-500 disabled:opacity-50"
+              >
+                {PRESET_ALERT_THRESHOLDS.map((amt) => (
+                  <option key={amt} value={amt}>
+                    ${amt}.00 USD
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="font-semibold text-slate-700 dark:text-slate-300 block">
+                Notification Recipients
+              </label>
+              <div className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-medium">
+                Workspace Owners &amp; Admins
+              </div>
             </div>
           </div>
-        </Card>
-      </div>
 
-      {/* Transaction History Section */}
-      <Card>
+          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 text-[11px] text-slate-500 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Shield className="w-4 h-4 text-purple-500 shrink-0" />
+              <span>Low balance alerts operate independently from Auto Top-Up and never initiate payments automatically.</span>
+            </div>
+            {alertsSaved && (
+              <span className="text-purple-600 dark:text-purple-400 font-semibold flex items-center gap-1 shrink-0">
+                <Check className="w-3.5 h-3.5" />
+                <span>Saved</span>
+              </span>
+            )}
+          </div>
+        </div>
+      </Card>
+
+      {/* 4. Transaction History Section */}
+      <Card className="w-full">
         <CardHeader className="flex flex-row items-center justify-between pb-3">
           <CardTitle className="text-sm flex items-center gap-2">
             <History className="w-4 h-4 text-amber-500" />
