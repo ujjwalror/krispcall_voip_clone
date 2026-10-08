@@ -87,8 +87,7 @@ export async function PATCH(req: NextRequest) {
           id: String(paymentMethod.id),
           brand: String(paymentMethod.brand || 'card'),
           last4: String(paymentMethod.last4 || '0000'),
-        },
-        scopes
+        }
       );
     } else if (scopes && typeof scopes === 'object') {
       await WorkspacePaymentProfileService.updateAuthorizationScopes(

@@ -10,7 +10,7 @@ import {
 } from '@stripe/react-stripe-js';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { ShieldCheck, Loader2, AlertCircle, CheckCircle, CreditCard, Info, X } from 'lucide-react';
+import { ShieldCheck, Loader2, AlertCircle, CheckCircle, CreditCard, X } from 'lucide-react';
 
 const stripePublishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || '';
 let stripePromise: Promise<Stripe | null> | null = null;
@@ -41,20 +41,10 @@ function WorkspaceSetupForm({
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Decoupled Product Authorization Toggles
-  const [authNumberRental, setAuthNumberRental] = useState(true);
-  const [authSaas, setAuthSaas] = useState(true);
-  const [authWallet, setAuthWallet] = useState(false);
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!stripe || !elements) {
-      return;
-    }
-
-    if (!authNumberRental && !authSaas && !authWallet) {
-      setErrorMessage('Please select at least one billing authorization scope to enable.');
       return;
     }
 
@@ -82,7 +72,7 @@ function WorkspaceSetupForm({
           ? setupIntent.payment_method
           : (setupIntent.payment_method as any)?.id || 'pm_card_visa';
 
-        // 2. Complete setup on server and persist workspace default payment method & scopes
+        // 2. Complete setup on server and persist workspace default payment method
         const completeRes = await fetch('/api/billing/numbers/renewal-setup-intent', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -111,11 +101,6 @@ function WorkspaceSetupForm({
               brand: 'card',
               last4: '4242',
             },
-            scopes: {
-              numberRentalRenewal: authNumberRental,
-              saasRecurring: authSaas,
-              walletAutoRecharge: authWallet,
-            },
           }),
         });
 
@@ -142,72 +127,15 @@ function WorkspaceSetupForm({
         <PaymentElement />
       </div>
 
-      {/* Product-Specific Authorization Toggles */}
-      <div className="p-3.5 rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3 text-xs">
-        <div className="font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-1.5 border-b border-slate-200 dark:border-slate-800 pb-2">
+      {/* Unified Workspace Authorization Notice */}
+      <div className="p-3.5 rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1.5 text-xs text-slate-600 dark:text-slate-400">
+        <div className="font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-1.5 border-b border-slate-200 dark:border-slate-800 pb-1.5">
           <ShieldCheck className="w-4 h-4 text-indigo-500" />
-          <span>Product Authorization Permissions</span>
+          <span>Unified Workspace Service Authorization</span>
         </div>
-
-        <div className="space-y-2">
-          {/* Scope 1: Number Rental Renewal */}
-          <div className="flex items-start gap-2">
-            <input
-              type="checkbox"
-              id="auth-number-rental"
-              checked={authNumberRental}
-              onChange={(e) => setAuthNumberRental(e.target.checked)}
-              className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-            />
-            <label htmlFor="auth-number-rental" className="font-medium text-slate-900 dark:text-slate-100 cursor-pointer leading-tight">
-              Authorize for Recurring Phone Number Rentals
-              <span className="block text-[11px] font-normal text-slate-500">
-                Permits off-session charges for upcoming phone line rental renewals. Cycles are dynamically priced based on current carrier cost plus policy.
-              </span>
-            </label>
-          </div>
-
-          {/* Scope 2: SaaS Subscription */}
-          <div className="flex items-start gap-2">
-            <input
-              type="checkbox"
-              id="auth-saas"
-              checked={authSaas}
-              onChange={(e) => setAuthSaas(e.target.checked)}
-              className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-            />
-            <label htmlFor="auth-saas" className="font-medium text-slate-900 dark:text-slate-100 cursor-pointer leading-tight">
-              Authorize for SaaS Subscription Auto-Renew
-              <span className="block text-[11px] font-normal text-slate-500">
-                Permits recurring charges for workspace seat plan renewals.
-              </span>
-            </label>
-          </div>
-
-          {/* Scope 3: Telecom Wallet Auto-Recharge */}
-          <div className="flex items-start gap-2">
-            <input
-              type="checkbox"
-              id="auth-wallet"
-              checked={authWallet}
-              onChange={(e) => setAuthWallet(e.target.checked)}
-              className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-            />
-            <label htmlFor="auth-wallet" className="font-medium text-slate-900 dark:text-slate-100 cursor-pointer leading-tight">
-              Authorize for Telecom Wallet Auto-Recharge
-              <span className="block text-[11px] font-normal text-slate-500">
-                Permits automatic credit balance recharges when PSTN balance drops below configured threshold.
-              </span>
-            </label>
-          </div>
-        </div>
-
-        <div className="flex items-start gap-1.5 text-[11px] text-slate-500 dark:text-slate-400 pt-1">
-          <Info className="w-3.5 h-3.5 text-indigo-500 shrink-0 mt-0.5" />
-          <span>
-            Permissions can be updated or revoked individually anytime under Settings &gt; Billing.
-          </span>
-        </div>
+        <p className="text-[11px] leading-relaxed pt-0.5">
+          This payment method will be saved as your workspace default payment method for recurring VoIP Hub service charges (SaaS subscription &amp; active phone line rentals) and, if enabled, telecom credit Auto Top-Up.
+        </p>
       </div>
 
       {errorMessage && (
@@ -376,7 +304,7 @@ export function WorkspacePaymentMethodModal({
                 Workspace Payment Method Saved
               </h4>
               <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xs mx-auto">
-                Off-session payment card saved for selected workspace billing permissions.
+                Off-session workspace default payment method saved for recurring service charges.
               </p>
               <div className="pt-2">
                 <Button

@@ -18,15 +18,23 @@ export interface WorkspacePaymentProfileDTO {
     last4: string;
   } | null;
   scopes: {
-    saasRecurringAuthorized: boolean;
-    numberRentalRenewalAuthorized: boolean;
+    // Phase 17R.4 Unified Recurring Service Billing Scope
+    recurringServiceAuthorized: boolean;
+    // Wallet Auto Top-Up Scope (configured independently on /billing/credit)
     walletAutoRechargeAuthorized: boolean;
+
+    // Deprecated legacy fields retained for backward compatibility & historical audit
+    /** @deprecated Use recurringServiceAuthorized */
+    saasRecurringAuthorized: boolean;
+    /** @deprecated Use recurringServiceAuthorized */
+    numberRentalRenewalAuthorized: boolean;
   };
 }
 
 export class WorkspacePaymentProfileService {
   /**
-   * Resolves the single authoritative Workspace Payment Profile and authorization scopes for an organization.
+   * Resolves the single authoritative Workspace Payment Profile for an organization.
+   * Under Phase 17R.4, normal active service (SaaS + Number Rentals) uses ONE unified recurring service scope.
    */
   static async getWorkspacePaymentProfile(
     supabase: SupabaseClient,
@@ -50,26 +58,9 @@ export class WorkspacePaymentProfileService {
     const customerId = custRow?.provider_customer_id || null;
     const metadata = custRow?.metadata || {};
     const defaultPm = metadata.default_payment_method || null;
+    const hasDefaultPaymentMethod = !!defaultPm;
 
-    // 3. Resolve authorization scopes independently
-    // (a) Number rental scope check from organization_billable_resources
-    const { data: billableRes } = await (supabase as any)
-      .from('organization_billable_resources')
-      .select('metadata')
-      .eq('organization_id', organizationId)
-      .eq('status', 'active')
-      .limit(1);
-
-    const rentalAuthMeta = billableRes?.[0]?.metadata?.rental_payment_authorization;
-    const numberRentalRenewalAuthorized = rentalAuthMeta?.autopay_authorized ?? false;
-
-    // (b) Wallet auto-recharge scope check from organization_billing_controls / auto top-up settings
-    const { data: billingControls } = await (supabase as any)
-      .from('organization_billing_controls')
-      .select('disallow_high_cost_destinations, is_billing_restricted')
-      .eq('organization_id', organizationId)
-      .maybeSingle();
-
+    // 3. Resolve wallet auto-recharge scope from billing_auto_topup_settings
     const { data: walletSettings } = await (supabase as any)
       .from('billing_auto_topup_settings')
       .select('status')
@@ -78,8 +69,8 @@ export class WorkspacePaymentProfileService {
 
     const walletAutoRechargeAuthorized = walletSettings?.status === 'enabled';
 
-    // (c) SaaS recurring check
-    const saasRecurringAuthorized = metadata.saas_autopay_authorized ?? true;
+    // Phase 17R.4: Unified recurring service is authorized whenever a valid workspace default payment method exists
+    const recurringServiceAuthorized = hasDefaultPaymentMethod;
 
     return {
       success: true,
@@ -87,7 +78,7 @@ export class WorkspacePaymentProfileService {
       customerId,
       providerAccountId: activeAccount.id,
       mode: 'TEST',
-      hasDefaultPaymentMethod: !!defaultPm,
+      hasDefaultPaymentMethod,
       paymentMethod: defaultPm
         ? {
             id: defaultPm.id,
@@ -96,15 +87,19 @@ export class WorkspacePaymentProfileService {
           }
         : null,
       scopes: {
-        saasRecurringAuthorized,
-        numberRentalRenewalAuthorized,
+        recurringServiceAuthorized,
         walletAutoRechargeAuthorized,
+        // Backward-compatibility aliases
+        saasRecurringAuthorized: recurringServiceAuthorized,
+        numberRentalRenewalAuthorized: recurringServiceAuthorized,
       },
     };
   }
 
   /**
-   * Updates product-specific authorization scopes independently for an organization.
+   * Updates authorization scopes.
+   * Under Phase 17R.4, product-specific checkboxes are deprecated for future writes;
+   * recurring service is unified under the default workspace payment method.
    */
   static async updateAuthorizationScopes(
     supabase: SupabaseClient,
@@ -112,16 +107,32 @@ export class WorkspacePaymentProfileService {
     userId: string,
     userRole: string,
     scopes: {
-      numberRentalRenewal?: boolean;
-      saasRecurring?: boolean;
       walletAutoRecharge?: boolean;
+      /** @deprecated Unified under recurringServiceAuthorized */
+      numberRentalRenewal?: boolean;
+      /** @deprecated Unified under recurringServiceAuthorized */
+      saasRecurring?: boolean;
     }
   ): Promise<{ success: boolean; scopes: WorkspacePaymentProfileDTO['scopes'] }> {
     if (!['owner', 'admin'].includes((userRole || '').toLowerCase())) {
       throw new Error('FORBIDDEN: Only Organization Owners and Admins can update payment authorization scopes.');
     }
 
-    // 1. Update Number Rental Renewal scope in organization_billable_resources metadata
+    // Update Wallet Auto-Recharge scope in billing_auto_topup_settings if specified
+    if (scopes.walletAutoRecharge !== undefined) {
+      const newStatus = scopes.walletAutoRecharge ? 'enabled' : 'disabled';
+      await (supabase as any)
+        .from('billing_auto_topup_settings')
+        .update({
+          status: newStatus,
+          disabled_at: scopes.walletAutoRecharge ? null : new Date().toISOString(),
+          disabled_by_user_id: scopes.walletAutoRecharge ? null : userId,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('organization_id', organizationId);
+    }
+
+    // Historical audit trace preservation in organization_billable_resources
     if (scopes.numberRentalRenewal !== undefined) {
       const { data: billableRes } = await (supabase as any)
         .from('organization_billable_resources')
@@ -136,7 +147,7 @@ export class WorkspacePaymentProfileService {
             ...(item.metadata || {}),
             rental_payment_authorization: {
               ...currentRentalAuth,
-              scope: 'PHONE_NUMBER_RENTAL_RENEWAL',
+              scope: 'UNIFIED_RECURRING_SERVICE_BILLING',
               autopay_authorized: scopes.numberRentalRenewal,
               updated_by_user_id: userId,
               updated_at: new Date().toISOString(),
@@ -147,43 +158,6 @@ export class WorkspacePaymentProfileService {
             .update({ metadata: updatedMeta, updated_at: new Date().toISOString() })
             .eq('id', item.id);
         }
-      }
-    }
-
-    // 2. Update Wallet Auto-Recharge scope in billing_auto_topup_settings status if wallet settings exist
-    if (scopes.walletAutoRecharge !== undefined) {
-      const newStatus = scopes.walletAutoRecharge ? 'enabled' : 'disabled';
-      await (supabase as any)
-        .from('billing_auto_topup_settings')
-        .update({
-          status: newStatus,
-          disabled_at: scopes.walletAutoRecharge ? null : new Date().toISOString(),
-          disabled_by_user_id: scopes.walletAutoRecharge ? null : userId,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('organization_id', organizationId);
-    }
-
-    // 3. Update SaaS recurring scope in billing_provider_customers metadata
-    if (scopes.saasRecurring !== undefined) {
-      const { data: custRow } = await (supabase as any)
-        .from('billing_provider_customers')
-        .select('metadata')
-        .eq('organization_id', organizationId)
-        .eq('provider', 'stripe')
-        .maybeSingle();
-
-      if (custRow) {
-        const updatedMeta = {
-          ...(custRow.metadata || {}),
-          saas_autopay_authorized: scopes.saasRecurring,
-          updated_at: new Date().toISOString(),
-        };
-        await (supabase as any)
-          .from('billing_provider_customers')
-          .update({ metadata: updatedMeta, updated_at: new Date().toISOString() })
-          .eq('organization_id', organizationId)
-          .eq('provider', 'stripe');
       }
     }
 
@@ -204,11 +178,6 @@ export class WorkspacePaymentProfileService {
       id: string;
       brand: string;
       last4: string;
-    },
-    initialScopes?: {
-      numberRentalRenewal?: boolean;
-      saasRecurring?: boolean;
-      walletAutoRecharge?: boolean;
     }
   ): Promise<WorkspacePaymentProfileDTO> {
     const { data: custRow } = await (supabase as any)
@@ -227,6 +196,8 @@ export class WorkspacePaymentProfileService {
         last4: paymentMethod.last4,
         updated_at: new Date().toISOString(),
       },
+      // Deprecated flag retained for historical audit only
+      saas_autopay_authorized: true,
     };
 
     await (supabase as any)
@@ -235,8 +206,30 @@ export class WorkspacePaymentProfileService {
       .eq('organization_id', organizationId)
       .eq('provider', 'stripe');
 
-    if (initialScopes) {
-      await this.updateAuthorizationScopes(supabase, organizationId, 'system', 'admin', initialScopes);
+    // Update organization_billable_resources metadata for historical audit trace
+    const { data: billableRes } = await (supabase as any)
+      .from('organization_billable_resources')
+      .select('id, metadata')
+      .eq('organization_id', organizationId)
+      .eq('status', 'active');
+
+    if (billableRes && billableRes.length > 0) {
+      for (const item of billableRes) {
+        const currentRentalAuth = item.metadata?.rental_payment_authorization || {};
+        const updatedMeta = {
+          ...(item.metadata || {}),
+          rental_payment_authorization: {
+            ...currentRentalAuth,
+            scope: 'UNIFIED_RECURRING_SERVICE_BILLING',
+            autopay_authorized: true,
+            updated_at: new Date().toISOString(),
+          },
+        };
+        await (supabase as any)
+          .from('organization_billable_resources')
+          .update({ metadata: updatedMeta, updated_at: new Date().toISOString() })
+          .eq('id', item.id);
+      }
     }
 
     return this.getWorkspacePaymentProfile(supabase, organizationId);
