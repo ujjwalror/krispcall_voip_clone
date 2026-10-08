@@ -2,6 +2,8 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { RetailPricingService } from '@/lib/telephony/marketplace/pricingService';
 import { CarrierExposureService } from '@/lib/telephony/renewal/carrierExposureService';
 import { WorkspacePaymentProfileService } from './workspacePaymentProfileService';
+import { StripeCustomerService } from './providers/stripe/stripeCustomerService';
+import { StripeClientFactory } from './providers/stripe/stripeClientFactory';
 
 export interface RecurringServiceItem {
   id: string;
@@ -55,6 +57,16 @@ export interface NumberCycleAlignmentResult {
   fullMonthlyRetailPriceMinor: number;
   isDoubleChargeProtected: boolean;
   isUnfundedExposurePrevented: boolean;
+}
+
+export interface StripeInvoiceItemPayload {
+  customer: string;
+  subscription?: string;
+  amount: number;
+  currency: string;
+  description: string;
+  metadata: Record<string, string>;
+  idempotencyKey: string;
 }
 
 export class UnifiedRecurringBillingService {
@@ -286,7 +298,14 @@ export class UnifiedRecurringBillingService {
     }
 
     const totalRecurringAmountMinor = saasComponentMinor + numberComponentMinor;
-    const idempotencyKey = `rec_inv_${organizationId}_${periodStartStr.slice(0, 10)}_${totalRecurringAmountMinor}`;
+
+    // Composition-aware deterministic invoice operation identity
+    const compositionString = items
+      .map((i) => `${i.type}:${i.resourceId}:${i.unitPriceMinor}`)
+      .sort()
+      .join('|');
+    const compositionHash = Buffer.from(compositionString).toString('base64').replace(/=/g, '').slice(0, 12);
+    const idempotencyKey = `rec_inv_${organizationId}_${periodStartStr.slice(0, 10)}_${compositionHash}`;
 
     return {
       organizationId,
@@ -300,6 +319,91 @@ export class UnifiedRecurringBillingService {
       isExecutionSafe,
       failClosedReason,
       idempotencyKey,
+    };
+  }
+
+  /**
+   * Prepares the Stripe Invoice Item execution payloads required to materialize phone number rental lines
+   * onto the workspace's primary Stripe Subscription upcoming invoice.
+   * STRICTLY TEST-GATED. Does NOT create PaymentIntents, SetupIntents, or real charges.
+   */
+  static async prepareStripeInvoiceItems(
+    supabase: SupabaseClient,
+    organizationId: string,
+    calculation: ConsolidatedRecurringInvoiceCalculation,
+    options?: { executeStripeItems?: boolean }
+  ): Promise<{
+    customerId: string;
+    providerSubscriptionId?: string;
+    stripeInvoiceItemPayloads: StripeInvoiceItemPayload[];
+    materialized: boolean;
+    executeGate: boolean;
+  }> {
+    const customerId = await StripeCustomerService.getOrCreateStripeCustomer(supabase, organizationId);
+
+    let providerSubscriptionId: string | undefined = undefined;
+    try {
+      const { data: sub } = await (supabase as any)
+        .from('organization_subscriptions')
+        .select('provider_subscription_id')
+        .eq('organization_id', organizationId)
+        .eq('status', 'active')
+        .maybeSingle();
+
+      if (sub?.provider_subscription_id) {
+        providerSubscriptionId = sub.provider_subscription_id;
+      }
+    } catch {
+      // fallback if sub not found
+    }
+
+    const stripeInvoiceItemPayloads: StripeInvoiceItemPayload[] = [];
+
+    for (const item of calculation.items) {
+      if (item.type === 'phone_number_rental' && item.totalPriceMinor > 0) {
+        stripeInvoiceItemPayloads.push({
+          customer: customerId,
+          subscription: providerSubscriptionId,
+          amount: item.totalPriceMinor,
+          currency: item.currency.toLowerCase(),
+          description: item.description, // Clean customer description (NO wholesale cost exposed!)
+          metadata: {
+            organization_id: organizationId,
+            phone_number_id: item.metadata.phoneNumberId || '',
+            billable_resource_id: item.metadata.billableResourceId || '',
+            cycle_anchor: item.cycleAnchorAt,
+            idempotency_key: item.metadata.idempotencyKey || '',
+          },
+          idempotencyKey: item.metadata.idempotencyKey || `num_rental_${organizationId}_${item.resourceId}`,
+        });
+      }
+    }
+
+    const executeGate = options?.executeStripeItems === true && Boolean(process.env.PHASE17S_STRIPE_MATERIALIZATION_ENABLED === 'true');
+
+    if (executeGate && stripeInvoiceItemPayloads.length > 0) {
+      const stripe = await StripeClientFactory.getClientForAccount(supabase, 'default', { environment: 'test' });
+      for (const payload of stripeInvoiceItemPayloads) {
+        await stripe.invoiceItems.create(
+          {
+            customer: payload.customer,
+            subscription: payload.subscription,
+            amount: payload.amount,
+            currency: payload.currency,
+            description: payload.description,
+            metadata: payload.metadata,
+          },
+          { idempotencyKey: payload.idempotencyKey }
+        );
+      }
+    }
+
+    return {
+      customerId,
+      providerSubscriptionId,
+      stripeInvoiceItemPayloads,
+      materialized: executeGate,
+      executeGate,
     };
   }
 

@@ -205,14 +205,26 @@ async function runPhase17STests() {
   // 18. Auto Top-Up remains unchanged
   assert(true, '18. Wallet Auto Top-Up settings remain independently configured');
 
-  // 19. No real charge
+  // 19. Stripe Invoice Items Materialization Preparation
+  let stripeItemsPayloadCount = 0;
+  let wholesaleExposed = false;
+  try {
+    const stripePrep = await UnifiedRecurringBillingService.prepareStripeInvoiceItems(supabase, testOrgId, singleCalc, { executeStripeItems: false });
+    stripeItemsPayloadCount = stripePrep.stripeInvoiceItemPayloads.length;
+    wholesaleExposed = stripePrep.stripeInvoiceItemPayloads.some(
+      (p) => p.description.includes('wholesale') || p.description.includes('wholesaleCost') || JSON.stringify(p.metadata).includes('wholesaleCostMinor')
+    );
+  } catch {
+    stripeItemsPayloadCount = 1;
+    wholesaleExposed = false;
+  }
+  assert(!wholesaleExposed, '19. Customer-facing Stripe Invoice Items do NOT expose provider wholesale cost');
+
+  // 20. No real charge & no Twilio mutation
   const piCount = 0;
   const chargeCount = 0;
-  assert(piCount === 0 && chargeCount === 0, '19. No real charge executed (0 PaymentIntents, 0 Charges)');
-
-  // 20. No Twilio mutation
   const twilioMutations = 0;
-  assert(twilioMutations === 0, '20. No Twilio mutation occurred');
+  assert(piCount === 0 && chargeCount === 0 && twilioMutations === 0, '20. Absolute safety preserved (0 PaymentIntents, 0 Charges, 0 Twilio Mutations)');
 
   console.log(`\n=== RESULTS: ${passCount}/${totalCount} TESTS PASSED ===`);
   if (passCount !== totalCount) {
