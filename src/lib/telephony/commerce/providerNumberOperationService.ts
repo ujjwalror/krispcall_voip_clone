@@ -48,6 +48,9 @@ export interface CreatePurchaseOperationParams {
 
   // Phase 12.3 server-authoritative line capacity limit
   maxCapacityLimit?: number | null;
+
+  // Phase 19D.1 optional friendly name
+  friendlyName?: string | null;
 }
 
 export class ProviderNumberOperationService {
@@ -409,11 +412,13 @@ export class ProviderNumberOperationService {
         .update({ status: 'active', active: true })
         .eq('id', phoneId);
     } else {
+      const friendlyName = (op as any).friendly_name || ((op as any).price_snapshot_payload?.friendlyName) || 'Business Number';
       const { data: newPhone } = await supabase
         .from('phone_numbers')
         .insert({
           organization_id: op.organization_id,
           phone_number: op.phone_number_e164,
+          friendly_name: friendlyName,
           country_code: op.country_code,
           number_type: op.number_type,
           status: 'active',

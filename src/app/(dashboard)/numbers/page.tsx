@@ -15,6 +15,8 @@ import {
   RefreshCw,
   Search,
   ChevronRight,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { useAuth } from '@/components/providers/AuthProvider';
 
@@ -32,6 +34,8 @@ export interface PhoneNumberItem {
   capabilities_voice?: boolean;
   capabilities_sms?: boolean;
   capabilities_mms?: boolean;
+  inbound_routing_type?: string | null;
+  inbound_routing_destination_id?: string | null;
   created_at: string;
 }
 
@@ -265,6 +269,16 @@ function NumberRow({ item, onClick }: { item: PhoneNumberItem; onClick: () => vo
   const hasSms = item.capabilities_sms === true;
   const hasMms = item.capabilities_mms === true;
   const hasAnyCapability = hasVoice || hasSms || hasMms;
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (item.phone_number) {
+      navigator.clipboard.writeText(item.phone_number);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   return (
     <Card
@@ -278,9 +292,10 @@ function NumberRow({ item, onClick }: { item: PhoneNumberItem; onClick: () => vo
             <Phone className="w-5 h-5" />
           </div>
           <div>
+            {/* Friendly Name as Prominent Header */}
             <div className="flex flex-wrap items-center gap-2">
-              <span className="font-mono font-bold text-base text-slate-900 dark:text-slate-100">
-                {item.phone_number}
+              <span className="font-bold text-base text-slate-900 dark:text-slate-100">
+                {item.friendly_name || 'Business Number'}
               </span>
               {item.is_primary && (
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/15 text-blue-700 dark:text-blue-300 border border-blue-500/30">
@@ -297,8 +312,26 @@ function NumberRow({ item, onClick }: { item: PhoneNumberItem; onClick: () => vo
                 {item.active ? 'Active' : 'Inactive'}
               </span>
             </div>
-            <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              {item.friendly_name || 'Business number'}
+
+            {/* E.164 Telephone Number + Copy Action */}
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className="font-mono text-xs font-semibold text-slate-600 dark:text-slate-300">
+                {item.phone_number}
+              </span>
+              <button
+                type="button"
+                onClick={handleCopy}
+                title="Copy phone number"
+                className="p-1 rounded text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                {copied ? (
+                  <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                    <Check className="w-3 h-3" /> Copied
+                  </span>
+                ) : (
+                  <Copy className="w-3.5 h-3.5" />
+                )}
+              </button>
             </div>
           </div>
         </div>

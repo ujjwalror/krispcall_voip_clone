@@ -153,6 +153,8 @@ export async function POST(request: Request) {
       );
     }
 
+    const friendlyName = (body.friendlyName || body.friendly_name || '').trim() || null;
+
     // 4. Construct purchase operation params
     // maxCapacityLimit is derived STRICTLY from server-authoritative Phase 5 entitlement model
     const params: CreatePurchaseOperationParams = {
@@ -170,6 +172,7 @@ export async function POST(request: Request) {
       complianceProfileId: body.complianceProfileId || null,
       endUserType: body.endUserType || null,
       regulatoryBundleSid: body.regulatoryBundleSid || null,
+      friendlyName,
     };
 
     // 5. Execute Live Purchase Workflow through Provisioning Engine

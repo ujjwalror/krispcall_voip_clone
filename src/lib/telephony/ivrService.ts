@@ -102,6 +102,11 @@ export class IvrService {
       return { success: false, message: 'Phone number not found or does not belong to your organization.' };
     }
 
+    // 1b. Reject external forwarding routing strategy (Phase 19D.3 feature)
+    if ((routingType as string) === 'forward' || (routingType as string) === 'forward_unavailable') {
+      return { success: false, message: 'External call forwarding backend is unavailable (Phase 19D.3 feature).' };
+    }
+
     // 2. Enforce IVR feature entitlement if routingType is 'ivr'
     if (routingType === 'ivr') {
       const entitled = await hasEntitlement('ivr', supabase);

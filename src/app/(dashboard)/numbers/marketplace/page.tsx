@@ -100,6 +100,7 @@ export interface CartItem {
   id: string;
   phoneNumber: string;
   friendlyDisplay: string;
+  friendlyName?: string;
   countryCode: string;
   numberType: 'local' | 'mobile' | 'toll_free';
   endUserType: 'business' | 'individual';
@@ -163,6 +164,7 @@ export default function NumberMarketplacePage() {
   // Selected Number Selection & Pre-Check Modal
   const [selectedNumber, setSelectedNumber] = useState<InventoryNumberItem | null>(null);
   const [endUserType, setEndUserType] = useState<'business' | 'individual'>('business');
+  const [friendlyNameInput, setFriendlyNameInput] = useState<string>('');
   const [isEvaluatingPreCheck, setIsEvaluatingPreCheck] = useState<boolean>(false);
   const [preCheckResult, setPreCheckResult] = useState<PreCheckResult | null>(null);
 
@@ -309,6 +311,7 @@ export default function NumberMarketplacePage() {
           numberType: cartItem.numberType,
           idempotencyKey,
           endUserType: cartItem.endUserType,
+          friendlyName: cartItem.friendlyName || 'Business Number',
         }),
       });
 
@@ -640,6 +643,7 @@ export default function NumberMarketplacePage() {
 
   const handleOpenNumberModal = (num: InventoryNumberItem) => {
     setSelectedNumber(num);
+    setFriendlyNameInput('');
     setCartFeedback(null);
     evaluatePreCheckAndPrice(num, endUserType);
   };
@@ -685,6 +689,7 @@ export default function NumberMarketplacePage() {
           id: `${selectedNumber.phoneNumber}_${endUserType}_${Date.now()}`,
           phoneNumber: selectedNumber.phoneNumber,
           friendlyDisplay: selectedNumber.friendlyDisplay,
+          friendlyName: friendlyNameInput.trim() || 'Business Number',
           countryCode: selectedNumber.countryCode,
           numberType: selectedNumber.numberType,
           endUserType,
@@ -1209,6 +1214,21 @@ export default function NumberMarketplacePage() {
               >
                 <XCircle className="w-5 h-5" />
               </button>
+            </div>
+
+            {/* Optional Friendly Name Entry */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
+                Friendly Name <span className="text-slate-400 font-normal">(Optional)</span>
+              </label>
+              <input
+                type="text"
+                maxLength={100}
+                value={friendlyNameInput}
+                onChange={(e) => setFriendlyNameInput(e.target.value)}
+                placeholder="e.g. Sales Enquiries, Customer Support (Default: Business Number)"
+                className="w-full px-3 py-2 rounded-xl text-xs font-medium bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+              />
             </div>
 
             {/* End-User Registration Type Selection */}
