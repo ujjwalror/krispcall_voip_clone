@@ -48,6 +48,7 @@ export function QueueManagement() {
   const [fallbackDestinationType, setFallbackDestinationType] = useState<'user' | 'ivr' | 'voicemail' | 'hangup'>('voicemail');
   const [fallbackDestinationId, setFallbackDestinationId] = useState('');
   const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>([]);
+  const [isVoicemailEntitled, setIsVoicemailEntitled] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -58,15 +59,22 @@ export function QueueManagement() {
     setLoading(true);
     setError(null);
     try {
-      const [qRes, tRes] = await Promise.all([
+      const [qRes, tRes, vmRes] = await Promise.all([
         fetch('/api/queues'),
         fetch('/api/users/presence'),
+        fetch('/api/voicemails'),
       ]);
 
       if (qRes.status === 403) {
         setError('Call Queue feature is not enabled for your subscription plan.');
         setLoading(false);
         return;
+      }
+
+      if (vmRes.status === 403) {
+        setIsVoicemailEntitled(false);
+      } else {
+        setIsVoicemailEntitled(true);
       }
 
       const qData = await qRes.json();
