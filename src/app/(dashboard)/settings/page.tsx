@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { PersonalRingtoneSettings } from '@/components/settings/PersonalRingtoneSettings';
 import { CRMIntegrationsSettings } from '@/components/settings/CRMIntegrationsSettings';
+import { IvrSettings } from '@/components/settings/IvrSettings';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -34,6 +35,7 @@ import {
   Clock,
   Zap,
   CreditCard,
+  GitFork,
 } from 'lucide-react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useTheme } from '@/components/providers/ThemeProvider';
@@ -70,11 +72,13 @@ function SettingsContent() {
       ? 'blocked'
       : rawTab === 'integrations'
       ? 'integrations'
+      : rawTab === 'ivr'
+      ? 'ivr'
       : 'general';
 
   const { theme, setTheme } = useTheme();
   const { profile, refreshProfile } = useAuth();
-  const [activeTab, setActiveTab] = useState<'general' | 'blocked' | 'integrations'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'general' | 'blocked' | 'integrations' | 'ivr'>(initialTab);
 
   useEffect(() => {
     const tabParam = searchParams.get('tab');
@@ -84,12 +88,14 @@ function SettingsContent() {
       setActiveTab('blocked');
     } else if (tabParam === 'integrations') {
       setActiveTab('integrations');
+    } else if (tabParam === 'ivr') {
+      setActiveTab('ivr');
     } else if (tabParam === 'general') {
       setActiveTab('general');
     }
   }, [searchParams, router]);
 
-  const handleTabChange = (tab: 'general' | 'blocked' | 'integrations') => {
+  const handleTabChange = (tab: 'general' | 'blocked' | 'integrations' | 'ivr') => {
     setActiveTab(tab);
     router.replace(`/settings?tab=${tab}`);
   };
@@ -312,6 +318,17 @@ function SettingsContent() {
           >
             <Zap className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400" />
             <span>CRM Integrations</span>
+          </button>
+          <button
+            onClick={() => handleTabChange('ivr')}
+            className={`px-3.5 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-2 ${
+              activeTab === 'ivr'
+                ? 'bg-blue-600 text-white shadow-md'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-900'
+            }`}
+          >
+            <GitFork className="w-3.5 h-3.5 text-blue-500 dark:text-blue-400" />
+            <span>IVR Phone Menu</span>
           </button>
         </div>
       </div>
@@ -714,6 +731,8 @@ function SettingsContent() {
             )}
           </Card>
         </div>
+      ) : activeTab === 'ivr' ? (
+        <IvrSettings />
       ) : (
         <CRMIntegrationsSettings />
       )}

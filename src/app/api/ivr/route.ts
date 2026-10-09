@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { IvrService } from '@/lib/telephony/ivrService';
+import { hasEntitlement } from '@/lib/entitlements/server';
 
 /**
  * GET /api/ivr - List IVR menus for authenticated organization
@@ -35,9 +36,11 @@ export async function GET() {
       );
     }
 
+    const entitled = await hasEntitlement('ivr', supabase);
     const menus = await IvrService.listIvrMenus(profile.organization_id, supabase);
 
     return NextResponse.json({
+      entitled,
       menus,
     });
   } catch (err: any) {
@@ -74,6 +77,14 @@ export async function POST(request: Request) {
     if (!profile || !profile.organization_id || profile.active === false) {
       return NextResponse.json(
         { error: 'unauthorized_profile', message: 'Active profile and organization assignment required.' },
+        { status: 403 }
+      );
+    }
+
+    const entitled = await hasEntitlement('ivr', supabase);
+    if (!entitled) {
+      return NextResponse.json(
+        { error: 'entitlement_required', message: 'IVR feature requires a Pro subscription plan.' },
         { status: 403 }
       );
     }

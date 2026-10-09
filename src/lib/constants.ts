@@ -13,6 +13,7 @@ import {
   Receipt,
   Hash,
   Sparkles,
+  GitFork,
 } from 'lucide-react';
 
 export interface NavItem {
@@ -109,6 +110,12 @@ export const NAVIGATION_ITEMS: NavItem[] = [
     name: 'Team & Users',
     href: '/settings/users',
     icon: Users,
+    category: 'admin',
+  },
+  {
+    name: 'IVR Phone Menu',
+    href: '/settings/ivr',
+    icon: GitFork,
     category: 'admin',
   },
   {

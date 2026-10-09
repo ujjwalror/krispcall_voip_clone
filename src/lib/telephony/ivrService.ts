@@ -281,6 +281,11 @@ export class IvrService {
   ): Promise<{ success: boolean; message: string }> {
     const supabase = clientOverride || (await createServerSupabaseClient());
 
+    const entitled = await hasEntitlement('ivr', supabase);
+    if (!entitled) {
+      return { success: false, message: 'IVR feature is under development or not enabled for your subscription plan.' };
+    }
+
     const updateObj: any = { updated_at: new Date().toISOString() };
     if (updates.name !== undefined) updateObj.name = updates.name.trim();
     if (updates.enabled !== undefined) updateObj.enabled = updates.enabled;
@@ -324,6 +329,11 @@ export class IvrService {
   ): Promise<{ success: boolean; option?: IvrOptionDTO; message: string }> {
     const supabase = clientOverride || (await createServerSupabaseClient());
 
+    const entitled = await hasEntitlement('ivr', supabase);
+    if (!entitled) {
+      return { success: false, message: 'IVR feature is under development or not enabled for your subscription plan.' };
+    }
+
     const digitClean = (optionData.digit || '').trim();
     if (!['0','1','2','3','4','5','6','7','8','9','*','#'].includes(digitClean)) {
       return { success: false, message: `Invalid DTMF digit '${digitClean}'. Allowed: 0-9, *, #.` };
@@ -352,8 +362,12 @@ export class IvrService {
       }
     }
 
-    // Validate Call Queue destination in Phase 19B
+    // Validate Call Queue destination in Phase 19B (requires call_queue entitlement)
     if (optionData.destinationType === 'call_queue') {
+      const queueEntitled = await hasEntitlement('call_queue', supabase);
+      if (!queueEntitled) {
+        return { success: false, message: 'Call Queue feature is not included in your current subscription plan.' };
+      }
       if (!optionData.destinationId) {
         return { success: false, message: 'Target Call Queue ID is required.' };
       }
@@ -406,6 +420,11 @@ export class IvrService {
     clientOverride?: SupabaseClient
   ): Promise<{ success: boolean; message: string }> {
     const supabase = clientOverride || (await createServerSupabaseClient());
+
+    const entitled = await hasEntitlement('ivr', supabase);
+    if (!entitled) {
+      return { success: false, message: 'IVR feature is under development or not enabled for your subscription plan.' };
+    }
 
     const { error } = await (supabase as any)
       .from('ivr_options')

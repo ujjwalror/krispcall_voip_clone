@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { IvrService } from '@/lib/telephony/ivrService';
+import { hasEntitlement } from '@/lib/entitlements/server';
 
 /**
  * GET /api/ivr/[id] - Get IVR menu details + options
@@ -74,6 +75,11 @@ export async function PATCH(
       return NextResponse.json({ error: 'unauthorized_profile', message: 'Active profile required.' }, { status: 403 });
     }
 
+    const entitled = await hasEntitlement('ivr', supabase);
+    if (!entitled) {
+      return NextResponse.json({ error: 'entitlement_required', message: 'IVR feature requires a Pro subscription plan.' }, { status: 403 });
+    }
+
     const role = (profile.role || '').toLowerCase();
     if (role !== 'owner' && role !== 'admin') {
       return NextResponse.json({ error: 'insufficient_permissions', message: 'Only Owners or Admins can update IVR menus.' }, { status: 403 });
@@ -124,6 +130,11 @@ export async function DELETE(
 
     if (!profile || !profile.organization_id || profile.active === false) {
       return NextResponse.json({ error: 'unauthorized_profile', message: 'Active profile required.' }, { status: 403 });
+    }
+
+    const entitled = await hasEntitlement('ivr', supabase);
+    if (!entitled) {
+      return NextResponse.json({ error: 'entitlement_required', message: 'IVR feature requires a Pro subscription plan.' }, { status: 403 });
     }
 
     const role = (profile.role || '').toLowerCase();

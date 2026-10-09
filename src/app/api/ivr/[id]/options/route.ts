@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { IvrService } from '@/lib/telephony/ivrService';
+import { hasEntitlement } from '@/lib/entitlements/server';
 
 /**
  * POST /api/ivr/[id]/options - Upsert DTMF keypress option node on IVR menu
@@ -30,6 +31,11 @@ export async function POST(
 
     if (!profile || !profile.organization_id || profile.active === false) {
       return NextResponse.json({ error: 'unauthorized_profile', message: 'Active profile required.' }, { status: 403 });
+    }
+
+    const entitled = await hasEntitlement('ivr', supabase);
+    if (!entitled) {
+      return NextResponse.json({ error: 'entitlement_required', message: 'IVR feature requires a Pro subscription plan.' }, { status: 403 });
     }
 
     const role = (profile.role || '').toLowerCase();

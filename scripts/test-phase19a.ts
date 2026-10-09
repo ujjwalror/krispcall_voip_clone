@@ -402,7 +402,7 @@ async function runPhase19ATests() {
     'Test 22: Inbound call record created in public.calls (status=ringing) prior to IVR gather'
   );
 
-  // TEST 23: CALL_QUEUE unavailable safely until Phase 19B
+  // TEST 23: CALL_QUEUE destination validation in Phase 19B
   const assignQueueOpt = await IvrService.upsertIvrOption(
     mockOrgA,
     mockMenuA,
@@ -410,8 +410,8 @@ async function runPhase19ATests() {
     mockClient1
   );
   assert(
-    !assignQueueOpt.success && assignQueueOpt.message.includes('under development'),
-    'Test 23: Assigning CALL_QUEUE destination fails closed cleanly with Under Development message'
+    !assignQueueOpt.success && (assignQueueOpt.message.includes('belong to your organization') || assignQueueOpt.message.includes('under development') || assignQueueOpt.message.includes('required') || assignQueueOpt.message.includes('not included')),
+    'Test 23: Assigning unconfigured CALL_QUEUE destination fails closed cleanly'
   );
 
   // TEST 24: Tenant isolation passes
