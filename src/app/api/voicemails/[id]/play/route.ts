@@ -7,6 +7,7 @@ import { VoicemailService } from '@/lib/telephony/voicemailService';
  * Authenticated, tenant-isolated audio streaming / playback route for voicemail.
  * Strictly verifies organization ownership of the requested voicemail.
  * Prevents cross-organization access and unauthorized public enumeration.
+ * Blocks playback of deleted voicemails.
  */
 export async function GET(
   request: Request,
@@ -50,8 +51,8 @@ export async function GET(
       supabase
     );
 
-    if (!voicemail) {
-      return NextResponse.json({ error: 'not_found', message: 'Voicemail not found or access denied.' }, { status: 404 });
+    if (!voicemail || voicemail.status === 'deleted' || voicemail.deletedAt !== null) {
+      return NextResponse.json({ error: 'not_found', message: 'Voicemail not found, deleted, or access denied.' }, { status: 404 });
     }
 
     // If caller requests JSON summary format (e.g. for audio player initialization)
@@ -60,8 +61,8 @@ export async function GET(
       return NextResponse.json({
         success: true,
         voicemailId: voicemail.id,
-        audioUrl: voicemail.recordingUrl,
         durationSeconds: voicemail.durationSeconds,
+        storageModel: voicemail.storageModel,
       });
     }
 
@@ -71,16 +72,21 @@ export async function GET(
       streamUrl = `${streamUrl}.mp3`;
     }
 
+    const headers: Record<string, string> = {
+      'Accept': 'audio/mpeg, audio/wav, audio/*',
+    };
+
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    if (accountSid && authToken && streamUrl.includes('twilio.com')) {
+      headers['Authorization'] = `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}`;
+    }
+
     try {
-      const audioRes = await fetch(streamUrl, {
-        headers: {
-          'Accept': 'audio/mpeg, audio/wav, audio/*',
-        },
-      });
+      const audioRes = await fetch(streamUrl, { headers });
 
       if (!audioRes.ok) {
-        // Fallback: return redirect or JSON audio location if direct proxy fails
-        return NextResponse.redirect(streamUrl);
+        return NextResponse.json({ error: 'audio_fetch_failed', message: 'Unable to stream audio recording.' }, { status: 502 });
       }
 
       const audioBuffer = await audioRes.arrayBuffer();
@@ -94,9 +100,9 @@ export async function GET(
           'Cache-Control': 'private, max-age=3600',
         },
       });
-    } catch (fetchErr) {
-      console.warn('[GET /api/voicemails/[id]/play] Direct proxy stream failed, redirecting to recording URL:', fetchErr);
-      return NextResponse.redirect(streamUrl);
+    } catch (fetchErr: any) {
+      console.error('[GET /api/voicemails/[id]/play] Audio stream exception:', fetchErr.message || fetchErr);
+      return NextResponse.json({ error: 'audio_stream_error', message: 'Failed to stream audio file.' }, { status: 500 });
     }
   } catch (err: any) {
     console.error('[GET /api/voicemails/[id]/play] Exception:', err.message || err);

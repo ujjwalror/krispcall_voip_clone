@@ -189,17 +189,25 @@ function createMockSupabase(planCode: string = 'pro', overrides: Record<string, 
                 eq: (col2: string, val2: string) => ({
                   is: () => ({
                     maybeSingle: async () => {
-                      const found = voicemailsStore.find((v) => v.id === val2 && v.organization_id === val1);
+                      const found = voicemailsStore.find((v) =>
+                        (v.id === val1 || v.id === val2) && (v.organization_id === val1 || v.organization_id === val2)
+                      );
                       return { data: found || null, error: null };
                     },
                   }),
+                  maybeSingle: async () => {
+                    const found = voicemailsStore.find((v) =>
+                      (v.id === val1 || v.id === val2) && (v.organization_id === val1 || v.organization_id === val2)
+                    );
+                    return { data: found || null, error: null };
+                  },
                 }),
                 maybeSingle: async () => {
                   if (col1 === 'provider_recording_sid') {
                     const found = voicemailsStore.find((v) => v.provider_recording_sid === val1);
                     return { data: found || null, error: null };
                   }
-                  const found = voicemailsStore.find((v) => v.organization_id === val1);
+                  const found = voicemailsStore.find((v) => v.organization_id === val1 || v.id === val1);
                   return { data: found || null, error: null };
                 },
               }),
@@ -381,7 +389,9 @@ async function runPhase19E1TestSuite() {
 
   // TEST 12: Soft delete operation
   await assertTest('12. Voicemail soft-delete sets status = deleted', async () => {
-    const mockClient = createMockSupabase('pro');
+    const mockClient = createMockSupabase('pro', {
+      voicemails: [{ id: 'vm-1', organization_id: 'org-pro', provider_recording_sid: 'RE-1', status: 'completed' }],
+    });
     const res = await VoicemailService.softDeleteVoicemail('org-pro', 'vm-1', mockClient as any);
     return res.success === true;
   });

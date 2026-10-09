@@ -1,6 +1,8 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { hasEntitlement } from '@/lib/entitlements/server';
+import { ProviderRecordingDeletionService } from './providerRecordingDeletionService';
+import { RecordingPricingPolicyService } from '@/lib/billing/telecom/recordingPricingPolicyService';
 
 export interface VoicemailDTO {
   id: string;
@@ -14,6 +16,9 @@ export interface VoicemailDTO {
   recordingUrl: string;
   durationSeconds: number;
   status: 'completed' | 'failed' | 'deleted';
+  storageModel: 'PROVIDER_MANAGED' | 'VOIPHUB_PRIVATE';
+  providerDeletionStatus: 'active' | 'delete_requested' | 'provider_delete_pending' | 'provider_deleted' | 'delete_failed' | 'gated';
+  providerDeletedAt: string | null;
   isRead: boolean;
   createdAt: string;
   updatedAt: string;
@@ -102,6 +107,9 @@ export class VoicemailService {
         recording_url,
         duration_seconds,
         status,
+        storage_model,
+        provider_deletion_status,
+        provider_deleted_at,
         is_read,
         created_at,
         updated_at,
@@ -144,6 +152,9 @@ export class VoicemailService {
       recordingUrl: row.recording_url,
       durationSeconds: row.duration_seconds || 0,
       status: row.status,
+      storageModel: row.storage_model || 'PROVIDER_MANAGED',
+      providerDeletionStatus: row.provider_deletion_status || 'active',
+      providerDeletedAt: row.provider_deleted_at || null,
       isRead: Boolean(row.is_read),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -185,6 +196,9 @@ export class VoicemailService {
         recording_url,
         duration_seconds,
         status,
+        storage_model,
+        provider_deletion_status,
+        provider_deleted_at,
         is_read,
         created_at,
         updated_at,
@@ -210,6 +224,9 @@ export class VoicemailService {
       recordingUrl: row.recording_url,
       durationSeconds: row.duration_seconds || 0,
       status: row.status,
+      storageModel: row.storage_model || 'PROVIDER_MANAGED',
+      providerDeletionStatus: row.provider_deletion_status || 'active',
+      providerDeletedAt: row.provider_deleted_at || null,
       isRead: Boolean(row.is_read),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -247,34 +264,29 @@ export class VoicemailService {
   }
 
   /**
-   * Soft-deletes a voicemail record for an organization.
+   * Durable server-side provider-synchronized deletion for an organization's voicemail.
    */
   static async softDeleteVoicemail(
     organizationId: string,
     voicemailId: string,
     clientOverride?: SupabaseClient
-  ): Promise<{ success: boolean; message?: string }> {
+  ): Promise<{ success: boolean; message?: string; status?: string }> {
     const supabase = clientOverride || (await createServerSupabaseClient());
-
-    const { error } = await (supabase as any)
-      .from('voicemails')
-      .update({
-        status: 'deleted',
-        deleted_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', voicemailId)
-      .eq('organization_id', organizationId);
-
-    if (error) {
-      return { success: false, message: `Failed to delete voicemail: ${error.message}` };
-    }
-
-    return { success: true };
+    const result = await ProviderRecordingDeletionService.requestVoicemailDeletion(
+      supabase,
+      organizationId,
+      voicemailId
+    );
+    return {
+      success: result.success,
+      message: result.message,
+      status: result.status,
+    };
   }
 
   /**
    * Idempotently persists a recorded voicemail from provider callback.
+   * Also calculates recording cost and records immutable financial snapshot.
    */
   static async recordVoicemail(
     data: {
@@ -287,6 +299,7 @@ export class VoicemailService {
       calledNumber: string;
       recordingUrl: string;
       durationSeconds: number;
+      providerUnitCostMicro?: bigint;
     },
     clientOverride?: SupabaseClient
   ): Promise<{ success: boolean; message?: string; voicemailId?: string }> {
@@ -327,6 +340,8 @@ export class VoicemailService {
         recording_url: recordingUrl,
         duration_seconds: data.durationSeconds,
         status: 'completed',
+        storage_model: 'PROVIDER_MANAGED',
+        provider_deletion_status: 'active',
         is_read: false,
       })
       .select('id')
@@ -335,6 +350,42 @@ export class VoicemailService {
     if (error) {
       console.error('[VoicemailService.recordVoicemail] Insert error:', error.message);
       return { success: false, message: `Failed to persist voicemail: ${error.message}` };
+    }
+
+    // Financial Snapshot Creation
+    try {
+      const policy = await RecordingPricingPolicyService.resolvePolicy(supabase, 'recording_capture');
+      const unitCostMicro = data.providerUnitCostMicro ?? BigInt(2500); // Reference AU rate: $0.0025/min = 2500 micro-units
+
+      const pricingCalc = RecordingPricingPolicyService.calculateRecordingCost({
+        providerUnitCostMicro: unitCostMicro,
+        durationSeconds: data.durationSeconds,
+        markupBps: policy.markupBps,
+        policyKey: policy.policyKey,
+        policyVersion: policy.version,
+      });
+
+      const idempotencyKey = `idemp_rec_snap_${data.providerRecordingSid}`;
+      await RecordingPricingPolicyService.recordFinancialSnapshot(supabase, {
+        organizationId: data.organizationId,
+        callId: data.callId || null,
+        voicemailId: created.id,
+        provider: 'twilio',
+        providerRecordingSid: data.providerRecordingSid,
+        durationSeconds: data.durationSeconds,
+        providerUnitCostMicro: pricingCalc.providerUnitCostMicro,
+        providerCalculatedCostMicro: pricingCalc.providerCalculatedCostMicro,
+        markupBps: pricingCalc.markupBps,
+        customerCalculatedCostMicro: pricingCalc.customerCalculatedCostMicro,
+        customerRetailChargeMinor: pricingCalc.customerRetailChargeMinor,
+        currency: pricingCalc.currency,
+        pricingPolicyKey: pricingCalc.policyKey,
+        pricingPolicyVersion: pricingCalc.policyVersion,
+        settlementStatus: 'settled',
+        idempotencyKey,
+      });
+    } catch (pricingErr: any) {
+      console.warn('[VoicemailService] Pricing snapshot warning:', pricingErr.message || pricingErr);
     }
 
     return { success: true, voicemailId: created.id };
