@@ -48,12 +48,14 @@ export async function POST(
 
     const routingType = (body.routingType || body.inbound_routing_type || 'user').toString();
     const destinationId = body.destinationId || body.inbound_routing_destination_id || null;
+    const unansweredCallStrategy = body.unansweredCallStrategy || body.unanswered_call_strategy || undefined;
 
     const result = await IvrService.setInboundRouting(
       profile.organization_id,
       id,
       routingType as any,
       destinationId,
+      unansweredCallStrategy,
       supabase
     );
 

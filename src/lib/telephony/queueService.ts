@@ -119,6 +119,13 @@ export class QueueService {
       return { success: false, message: 'Queue name is required.' };
     }
 
+    if (data.fallbackDestinationType === 'voicemail') {
+      const vmEntitled = await hasEntitlement('voicemail', supabase);
+      if (!vmEntitled) {
+        return { success: false, message: 'Voicemail queue fallback is not enabled for your subscription plan.' };
+      }
+    }
+
     const { data: queueRow, error } = await (supabase as any)
       .from('call_queues')
       .insert({
@@ -214,6 +221,13 @@ export class QueueService {
     const entitled = await hasEntitlement('call_queue', supabase);
     if (!entitled) {
       return { success: false, message: 'Call Queue feature is not enabled for your subscription plan.' };
+    }
+
+    if (updates.fallbackDestinationType === 'voicemail') {
+      const vmEntitled = await hasEntitlement('voicemail', supabase);
+      if (!vmEntitled) {
+        return { success: false, message: 'Voicemail queue fallback is not enabled for your subscription plan.' };
+      }
     }
 
     const payload: Record<string, any> = { updated_at: new Date().toISOString() };

@@ -87,9 +87,20 @@ export class IvrService {
     phoneId: string,
     routingType: InboundRoutingType,
     destinationId: string | null,
+    unansweredStrategyOrClient?: string | SupabaseClient,
     clientOverride?: SupabaseClient
   ): Promise<{ success: boolean; message: string }> {
-    const supabase = clientOverride || (await createServerSupabaseClient());
+    let unansweredStrategy: string | undefined;
+    let supabase: SupabaseClient;
+
+    if (typeof unansweredStrategyOrClient === 'string') {
+      unansweredStrategy = unansweredStrategyOrClient;
+      supabase = clientOverride || (await createServerSupabaseClient());
+    } else if (unansweredStrategyOrClient && typeof (unansweredStrategyOrClient as any).from === 'function') {
+      supabase = unansweredStrategyOrClient as SupabaseClient;
+    } else {
+      supabase = clientOverride || (await createServerSupabaseClient());
+    }
 
     // 1. Verify phone number belongs to organization and is active
     const { data: phone } = await (supabase as any)
@@ -112,6 +123,14 @@ export class IvrService {
       const entitled = await hasEntitlement('ivr', supabase);
       if (!entitled) {
         return { success: false, message: 'IVR feature is under development or not enabled for your subscription plan.' };
+      }
+    }
+
+    // 2b. Enforce Voicemail feature entitlement if routingType or unanswered strategy is 'voicemail'
+    if (routingType === 'voicemail' || (unansweredStrategy && unansweredStrategy === 'voicemail')) {
+      const vmEntitled = await hasEntitlement('voicemail', supabase);
+      if (!vmEntitled) {
+        return { success: false, message: 'Voicemail feature is not enabled for your subscription plan.' };
       }
     }
 
@@ -151,14 +170,20 @@ export class IvrService {
     }
 
     // 4. Update inbound routing configuration on phone number
+    const updatePayload: Record<string, any> = {
+      inbound_routing_type: routingType,
+      inbound_routing_destination_id: destinationId,
+      inbound_routing_updated_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    if (unansweredStrategy) {
+      updatePayload.unanswered_call_strategy = unansweredStrategy;
+    }
+
     const { error: updateErr } = await (supabase as any)
       .from('phone_numbers')
-      .update({
-        inbound_routing_type: routingType,
-        inbound_routing_destination_id: destinationId,
-        inbound_routing_updated_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq('id', phoneId)
       .eq('organization_id', organizationId);
 
@@ -228,7 +253,11 @@ export class IvrService {
     supabase: SupabaseClient
   ): Promise<{ valid: boolean; message: string }> {
     if (destType === 'voicemail') {
-      return { valid: false, message: 'Voicemail destination is not currently supported.' };
+      const vmEntitled = await hasEntitlement('voicemail', supabase);
+      if (!vmEntitled) {
+        return { valid: false, message: 'Voicemail destination is not enabled for your subscription plan.' };
+      }
+      return { valid: true, message: 'Voicemail destination valid.' };
     }
     if (destType === 'hangup') {
       return { valid: true, message: 'Hangup destination is valid.' };

@@ -215,6 +215,12 @@ function createMockSupabase(overrides: {
         enabled: entitledQueue,
         features: { code: 'call_queue', value_type: 'boolean' },
       },
+      {
+        plan_id: 'plan-id-1',
+        feature_code: 'voicemail',
+        enabled: true,
+        features: { code: 'voicemail', value_type: 'boolean' },
+      },
     ],
   };
 
@@ -429,9 +435,9 @@ async function runPhase19C2Tests() {
   const foreignQueueValid = await (IvrService as any).validateDestination(env.mockOrgA, 'call_queue', env.mockQueueForeign, null, env.client);
   assert(!foreignQueueValid.valid && (foreignQueueValid.message?.includes('another organization') || foreignQueueValid.message?.includes('invalid')), 'Test 22: Foreign organization queue rejected');
 
-  // 23. voicemail hidden if incomplete
-  const voicemailValid = await (IvrService as any).validateDestination(env.mockOrgA, 'voicemail' as any, 'vm-box-1', null, env.client);
-  assert(!voicemailValid.valid && voicemailValid.message?.includes('not currently supported'), 'Test 23: Voicemail destination explicitly rejected until feature is complete');
+  // 23. Voicemail restored for entitled Pro in Phase 19E.1
+  const voicemailValid = await (IvrService as any).validateDestination(env.mockOrgA, 'voicemail' as any, null, null, env.client);
+  assert(voicemailValid.valid === true, 'Test 23: Voicemail destination valid for entitled Pro (Phase 19E.1 restored)');
 
   // 24. nested IVR exposed only if genuinely supported
   const nestedValid = await (IvrService as any).validateDestination(env.mockOrgA, 'ivr', env.mockSubMenuA, env.mockMenuA, env.client);

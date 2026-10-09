@@ -175,6 +175,22 @@ export async function POST(request: Request) {
           twiml.say('The requested queue is currently unavailable.');
           twiml.hangup();
           return new NextResponse(twiml.toString(), { status: 200, headers: { 'Content-Type': 'text/xml' } });
+        } else if (destType === 'voicemail') {
+          const vmEntitled = await hasEntitlement('voicemail', adminSupabase);
+          if (vmEntitled) {
+            twiml.say('The person you are trying to reach is unavailable. Please leave a message after the tone.');
+            twiml.record({
+              action: `/api/twilio/voice/voicemail/complete?callId=${encodeURIComponent(dbCallId)}&orgId=${encodeURIComponent(organizationId)}`,
+              maxLength: 120,
+              playBeep: true,
+              finishOnKey: '#*',
+            });
+            return new NextResponse(twiml.toString(), { status: 200, headers: { 'Content-Type': 'text/xml' } });
+          } else {
+            twiml.say('Voicemail is unavailable.');
+            twiml.hangup();
+            return new NextResponse(twiml.toString(), { status: 200, headers: { 'Content-Type': 'text/xml' } });
+          }
         } else if (destType === 'hangup') {
           twiml.say('Thank you for calling. Goodbye.');
           twiml.hangup();
@@ -206,6 +222,20 @@ export async function POST(request: Request) {
       const dial = twiml.dial({ timeout: 25 });
       dial.client(fallbackId);
       return new NextResponse(twiml.toString(), { status: 200, headers: { 'Content-Type': 'text/xml' } });
+    }
+
+    if (fallbackType === 'voicemail') {
+      const vmEntitled = await hasEntitlement('voicemail', adminSupabase);
+      if (vmEntitled) {
+        twiml.say('The person you are trying to reach is unavailable. Please leave a message after the tone.');
+        twiml.record({
+          action: `/api/twilio/voice/voicemail/complete?callId=${encodeURIComponent(dbCallId)}&orgId=${encodeURIComponent(organizationId)}`,
+          maxLength: 120,
+          playBeep: true,
+          finishOnKey: '#*',
+        });
+        return new NextResponse(twiml.toString(), { status: 200, headers: { 'Content-Type': 'text/xml' } });
+      }
     }
 
     twiml.say('Thank you for calling. Goodbye.');

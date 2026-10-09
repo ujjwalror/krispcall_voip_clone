@@ -100,6 +100,7 @@ export default function NumberDetailPage({ params }: { params: Promise<{ id: str
   // IVR Menu Integration State
   const [ivrMenus, setIvrMenus] = useState<IvrMenuOption[]>([]);
   const [isIvrEntitled, setIsIvrEntitled] = useState<boolean>(false);
+  const [isVoicemailEntitled, setIsVoicemailEntitled] = useState<boolean>(false);
   const [isLoadingIvrMenus, setIsLoadingIvrMenus] = useState<boolean>(false);
   const [selectedIvrMenuId, setSelectedIvrMenuId] = useState<string>('');
 
@@ -117,6 +118,9 @@ export default function NumberDetailPage({ params }: { params: Promise<{ id: str
         setPhoneNumber(num);
         if (num) {
           setFriendlyNameInput(num.friendly_name || '');
+          if (num.unanswered_call_strategy) {
+            setUnansweredCallStrategy(num.unanswered_call_strategy);
+          }
           const currentRouting = num.inbound_routing_type || 'user';
           if (currentRouting === 'ivr') {
             setStrategyTab('ivr');
@@ -197,12 +201,26 @@ export default function NumberDetailPage({ params }: { params: Promise<{ id: str
     }
   }, [selectedIvrMenuId]);
 
+  const fetchVoicemailEntitlement = useCallback(async () => {
+    try {
+      const res = await fetch('/api/voicemails');
+      if (res.status === 403) {
+        setIsVoicemailEntitled(false);
+      } else if (res.ok) {
+        setIsVoicemailEntitled(true);
+      }
+    } catch {
+      setIsVoicemailEntitled(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchNumberDetail();
     fetchAllOrgNumbers();
     fetchAssignments();
     fetchIvrMenus();
-  }, [fetchNumberDetail, fetchAllOrgNumbers, fetchAssignments, fetchIvrMenus]);
+    fetchVoicemailEntitlement();
+  }, [fetchNumberDetail, fetchAllOrgNumbers, fetchAssignments, fetchIvrMenus, fetchVoicemailEntitlement]);
 
   // Copy E.164 Action
   const handleCopyNumber = () => {
@@ -370,6 +388,7 @@ export default function NumberDetailPage({ params }: { params: Promise<{ id: str
         body: JSON.stringify({
           routingType: targetStrategy,
           destinationId,
+          unansweredCallStrategy,
         }),
       });
 
@@ -381,6 +400,7 @@ export default function NumberDetailPage({ params }: { params: Promise<{ id: str
                 ...prev,
                 inbound_routing_type: targetStrategy,
                 inbound_routing_destination_id: destinationId,
+                unanswered_call_strategy: unansweredCallStrategy,
               }
             : null
         );
@@ -982,13 +1002,17 @@ export default function NumberDetailPage({ params }: { params: Promise<{ id: str
                   className="w-full px-3 py-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none text-xs font-semibold"
                 >
                   <option value="dismiss">Dismiss Call</option>
-                  <option value="voicemail" disabled>
-                    Voicemail — Coming Soon
-                  </option>
+                  {isVoicemailEntitled ? (
+                    <option value="voicemail">Voicemail</option>
+                  ) : (
+                    <option value="voicemail" disabled>
+                      Voicemail — Upgrade Required (Pro/Business)
+                    </option>
+                  )}
                 </select>
               </div>
 
-              {phoneNumber.inbound_routing_type !== 'user' && canManageNumbers && (
+              {canManageNumbers && (
                 <div className="pt-2 flex justify-end">
                   <Button
                     size="sm"
@@ -1043,9 +1067,13 @@ export default function NumberDetailPage({ params }: { params: Promise<{ id: str
                   className="w-full px-3 py-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none text-xs font-semibold"
                 >
                   <option value="dismiss">Dismiss Call</option>
-                  <option value="voicemail" disabled>
-                    Voicemail — Coming Soon
-                  </option>
+                  {isVoicemailEntitled ? (
+                    <option value="voicemail">Voicemail</option>
+                  ) : (
+                    <option value="voicemail" disabled>
+                      Voicemail — Upgrade Required (Pro/Business)
+                    </option>
+                  )}
                 </select>
               </div>
 

@@ -14,6 +14,7 @@ import {
   Hash,
   Sparkles,
   GitFork,
+  Voicemail as VoicemailIcon,
 } from 'lucide-react';
 
 export interface NavItem {
@@ -42,6 +43,12 @@ export const NAVIGATION_ITEMS: NavItem[] = [
     name: 'Calls',
     href: '/calls',
     icon: History,
+    category: 'main',
+  },
+  {
+    name: 'Voicemail',
+    href: '/voicemail',
+    icon: VoicemailIcon,
     category: 'main',
   },
   {

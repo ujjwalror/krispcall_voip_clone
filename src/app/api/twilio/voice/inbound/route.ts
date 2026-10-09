@@ -80,7 +80,7 @@ export async function POST(request: Request) {
 
     const { data: phoneRecord } = await (adminSupabase as any)
       .from('phone_numbers')
-      .select('organization_id, active, inbound_routing_type, inbound_routing_destination_id')
+      .select('id, organization_id, active, inbound_routing_type, inbound_routing_destination_id, unanswered_call_strategy')
       .eq('phone_number', companyTo)
       .eq('active', true)
       .maybeSingle();
@@ -306,6 +306,35 @@ export async function POST(request: Request) {
       }
     }
 
+    // 3.7 Check for Inbound Direct-to-Voicemail Routing Strategy
+    if (phoneRecord.inbound_routing_type === 'voicemail') {
+      const vmEntitled = await hasEntitlement('voicemail', adminSupabase);
+      if (vmEntitled) {
+        console.log('[TWILIO INBOUND VOICEMAIL ROUTE] Direct voicemail routing active.');
+        const vmTwiml = new twilio.twiml.VoiceResponse();
+        vmTwiml.say('The person you are trying to reach is unavailable. Please leave a message after the tone.');
+        vmTwiml.record({
+          action: `/api/twilio/voice/voicemail/complete?callId=${encodeURIComponent(dbCallId)}&phoneId=${encodeURIComponent(phoneRecord.id || '')}&orgId=${encodeURIComponent(organizationId)}`,
+          maxLength: 120,
+          playBeep: true,
+          finishOnKey: '#*',
+        });
+        return new NextResponse(vmTwiml.toString(), {
+          status: 200,
+          headers: { 'Content-Type': 'text/xml' },
+        });
+      } else {
+        console.warn('[TWILIO INBOUND VOICEMAIL ROUTE] Voicemail entitlement not enabled for org. Disconnecting call.');
+        const vmTwiml = new twilio.twiml.VoiceResponse();
+        vmTwiml.say('The person you are trying to reach is unavailable.');
+        vmTwiml.hangup();
+        return new NextResponse(vmTwiml.toString(), {
+          status: 200,
+          headers: { 'Content-Type': 'text/xml' },
+        });
+      }
+    }
+
     // 4. Reserve target agents using atomic database RPC functions
     let reservedAgents: { id: string; full_name: string; twilio_identity: string }[] = [];
     let isPreferredAttempt = false;
@@ -501,6 +530,24 @@ export async function POST(request: Request) {
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://krispcall-voip-clone-udlg.vercel.app';
 
     if (reservedAgents.length === 0) {
+      if (phoneRecord.unanswered_call_strategy === 'voicemail') {
+        const vmEntitled = await hasEntitlement('voicemail', adminSupabase);
+        if (vmEntitled) {
+          console.log('[Twilio Inbound Webhook] No agents available. Routing to voicemail as configured in unanswered strategy.');
+          voiceResponse.say('The person you are trying to reach is unavailable. Please leave a message after the tone.');
+          voiceResponse.record({
+            action: `/api/twilio/voice/voicemail/complete?callId=${encodeURIComponent(dbCallId)}&phoneId=${encodeURIComponent(phoneRecord.id || '')}&orgId=${encodeURIComponent(organizationId)}`,
+            maxLength: 120,
+            playBeep: true,
+            finishOnKey: '#*',
+          });
+          return new NextResponse(voiceResponse.toString(), {
+            status: 200,
+            headers: { 'Content-Type': 'text/xml' },
+          });
+        }
+      }
+
       console.log('[Twilio Inbound Webhook] No free, unreserved agents available in organization. Playing busy message.');
       voiceResponse.say('Thank you for calling. All of our agents are currently busy or unavailable. Please leave a message or call back shortly.');
       voiceResponse.hangup();
