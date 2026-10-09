@@ -463,6 +463,68 @@ export class IvrService {
   }
 
   /**
+   * Deletes an IVR menu safely, verifying that no active phone numbers
+   * or nested IVR menu options are currently using it.
+   */
+  static async deleteIvrMenu(
+    organizationId: string,
+    menuId: string,
+    clientOverride?: SupabaseClient
+  ): Promise<{ success: boolean; message: string }> {
+    const supabase = clientOverride || (await createServerSupabaseClient());
+
+    const entitled = await hasEntitlement('ivr', supabase);
+    if (!entitled) {
+      return { success: false, message: 'IVR feature requires a Pro subscription plan.' };
+    }
+
+    // 1. Check if assigned to any active phone number
+    const { data: numRef } = await (supabase as any)
+      .from('phone_numbers')
+      .select('id, phone_number')
+      .eq('organization_id', organizationId)
+      .eq('inbound_routing_type', 'ivr')
+      .eq('inbound_routing_destination_id', menuId)
+      .limit(1);
+
+    if (numRef && numRef.length > 0) {
+      return {
+        success: false,
+        message: `Cannot delete Call Menu: It is currently assigned to phone number ${numRef[0].phone_number || numRef[0].id}. Please reassign the phone number first.`,
+      };
+    }
+
+    // 2. Check if referenced by another IVR menu option
+    const { data: ivrRef } = await (supabase as any)
+      .from('ivr_options')
+      .select('id, ivr_menu_id')
+      .eq('organization_id', organizationId)
+      .eq('destination_type', 'ivr')
+      .eq('destination_id', menuId)
+      .limit(1);
+
+    if (ivrRef && ivrRef.length > 0) {
+      return {
+        success: false,
+        message: 'Cannot delete Call Menu: It is currently referenced as a target in another Call Menu option. Please remove the menu option link first.',
+      };
+    }
+
+    // 3. Safe to delete menu
+    const { error } = await (supabase as any)
+      .from('ivr_menus')
+      .delete()
+      .eq('id', menuId)
+      .eq('organization_id', organizationId);
+
+    if (error) {
+      return { success: false, message: `Failed to delete Call Menu: ${error.message}` };
+    }
+
+    return { success: true, message: 'Call Menu deleted successfully.' };
+  }
+
+  /**
    * Adds or updates a DTMF keypress option on an IVR menu.
    * Validates digits (0-9, *, #), destination type/ID, and checks against graph cycles.
    */

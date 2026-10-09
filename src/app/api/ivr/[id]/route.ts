@@ -142,7 +142,11 @@ export async function DELETE(
       return NextResponse.json({ error: 'insufficient_permissions', message: 'Only Owners or Admins can disable IVR menus.' }, { status: 403 });
     }
 
-    const result = await IvrService.updateIvrMenu(profile.organization_id, id, { enabled: false }, supabase);
+    const result = await IvrService.deleteIvrMenu(profile.organization_id, id, supabase);
+
+    if (!result.success) {
+      return NextResponse.json({ error: 'delete_failed', message: result.message }, { status: 400 });
+    }
 
     return NextResponse.json({ result });
   } catch (err: any) {

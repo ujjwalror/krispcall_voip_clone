@@ -114,8 +114,25 @@ export async function POST(request: Request) {
             .maybeSingle();
 
           if (targetProfile) {
+            const unansweredStrategy = selectedOption.unanswered_call_strategy || 'voicemail';
+            const vmEntitled = await hasEntitlement('voicemail', adminSupabase);
+
             const dial = twiml.dial({ timeout: 25 });
             dial.client(destId);
+
+            if (unansweredStrategy === 'voicemail' && vmEntitled) {
+              twiml.say('The person you are trying to reach is unavailable. Please leave a message after the tone.');
+              twiml.record({
+                action: `/api/twilio/voice/voicemail/complete?callId=${encodeURIComponent(dbCallId)}&orgId=${encodeURIComponent(organizationId)}`,
+                maxLength: 120,
+                playBeep: true,
+                finishOnKey: '#*',
+              });
+            } else {
+              twiml.say('Thank you for calling. Goodbye.');
+              twiml.hangup();
+            }
+
             return new NextResponse(twiml.toString(), { status: 200, headers: { 'Content-Type': 'text/xml' } });
           }
         } else if (destType === 'ivr' && destId) {

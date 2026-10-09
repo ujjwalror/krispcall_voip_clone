@@ -37,10 +37,14 @@ export async function GET() {
     }
 
     const entitled = await hasEntitlement('ivr', supabase);
+    const callQueueEntitled = await hasEntitlement('call_queue', supabase);
+    const voicemailEntitled = await hasEntitlement('voicemail', supabase);
     const menus = await IvrService.listIvrMenus(profile.organization_id, supabase);
 
     return NextResponse.json({
       entitled,
+      callQueueEntitled,
+      voicemailEntitled,
       menus,
     });
   } catch (err: any) {

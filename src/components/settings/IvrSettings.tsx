@@ -140,11 +140,17 @@ export function IvrSettings() {
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      // 1. Fetch IVR Menus & entitlement
+      // 1. Fetch IVR Menus & entitlements
       const ivrRes = await fetch('/api/ivr');
       if (ivrRes.ok) {
         const data = await ivrRes.json();
         setEntitled(Boolean(data.entitled));
+        if (typeof data.callQueueEntitled === 'boolean') {
+          setCallQueueEntitled(data.callQueueEntitled);
+        }
+        if (typeof data.voicemailEntitled === 'boolean') {
+          setVoicemailEntitled(data.voicemailEntitled);
+        }
         setMenus(data.menus || []);
       } else if (ivrRes.status === 403) {
         setEntitled(false);
@@ -192,22 +198,20 @@ export function IvrSettings() {
           }))
       );
 
-      // 4. Fetch Call Queues
+      // 4. Fetch Call Queues (fallback check)
       const qRes = await fetch('/api/queues');
       if (qRes.ok) {
         const qData = await qRes.json();
-        setCallQueueEntitled(qData.entitled !== false);
+        if (qData.entitled !== undefined) {
+          setCallQueueEntitled(Boolean(qData.entitled));
+        }
         setOrgQueues(qData.queues || []);
-      } else {
-        setCallQueueEntitled(false);
       }
 
-      // 5. Fetch Voicemail entitlement status
+      // 5. Fetch Voicemail status (fallback check)
       const vmRes = await fetch('/api/voicemails');
       if (vmRes.ok) {
         setVoicemailEntitled(true);
-      } else {
-        setVoicemailEntitled(false);
       }
     } catch (err: any) {
       console.error('[IvrSettings] Error loading data:', err);
