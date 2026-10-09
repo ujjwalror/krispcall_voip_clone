@@ -157,8 +157,13 @@ async function runTests() {
   assert.strictEqual(emptyUserVal.valid, false);
   console.log('[PASS] User destination requires destination ID');
 
+  console.log('[TEST 9] Call Queue destination is denied when deferred in V1');
+  const queueVal = await IvrService.validateDestination('org-pro', 'call_queue', 'queue-1', null, proMock as any);
+  assert.strictEqual(queueVal.valid, false);
+  console.log('[PASS] Call Queue destination is denied when deferred in V1');
+
   console.log('====================================================');
-  console.log(' RESULTS: ALL 8 PHASE 19E.2 TESTS PASSED CLEANLY');
+  console.log(' RESULTS: ALL 9 PHASE 19E.2 TESTS PASSED CLEANLY');
   console.log('====================================================\n');
 }
 

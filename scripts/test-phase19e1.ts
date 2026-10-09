@@ -408,8 +408,8 @@ async function runPhase19E1TestSuite() {
     return res.success === true && res.voicemails.length === 1 && res.unreadCount === 1;
   });
 
-  // TEST 14: Queue fallback destination entitlement check
-  await assertTest('14. Queue fallback destination voicemail allowed for entitled Pro', async () => {
+  // TEST 14: Queue creation is denied when Call Queue is deferred in V1
+  await assertTest('14. Queue creation is DENIED when Call Queue is deferred in V1', async () => {
     const mockClient = createMockSupabase('pro');
     const res = await QueueService.createQueue(
       'org-pro',
@@ -420,7 +420,7 @@ async function runPhase19E1TestSuite() {
       },
       mockClient as any
     );
-    return res.success === true;
+    return res.success === false;
   });
 
   // TEST 15: Queue fallback destination voicemail denied for Starter

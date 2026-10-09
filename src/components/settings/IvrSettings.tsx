@@ -978,7 +978,6 @@ export function IvrSettings() {
                                 className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs p-2 font-medium"
                               >
                                 <option value="user">Forward To</option>
-                                {callQueueEntitled && <option value="call_queue">Send To Queue</option>}
                                 <option value="ivr">Send To IVR</option>
                                 {voicemailEntitled && <option value="voicemail">Send To Voicemail</option>}
                               </select>

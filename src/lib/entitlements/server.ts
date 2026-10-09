@@ -324,6 +324,10 @@ export async function hasEntitlement(
   featureCode: string,
   clientOverride?: SupabaseClient
 ): Promise<boolean> {
+  // Call Queue feature is deferred in V1
+  if (featureCode === 'call_queue' || featureCode === 'queue' || featureCode === 'call_queues') {
+    return false;
+  }
   const result = await getOrganizationEntitlements(clientOverride);
   if (!result.success || !result.isSubscriptionActive) return false;
 
