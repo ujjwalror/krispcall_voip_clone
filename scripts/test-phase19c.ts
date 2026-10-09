@@ -1,11 +1,11 @@
+export {};
+
 // Mock server-only module for tsx test runner environment
 const moduleObj = require('module');
 try {
   const resolved = require.resolve('server-only');
   moduleObj._cache[resolved] = { id: resolved, filename: resolved, loaded: true, exports: {} };
 } catch {}
-
-import { IvrService } from '../src/lib/telephony/ivrService';
 
 function assert(condition: boolean, message: string) {
   if (!condition) {
@@ -258,6 +258,8 @@ function createMockSupabase(overrides: {
 }
 
 async function runPhase19CTests() {
+  const { IvrService } = await import('../src/lib/telephony/ivrService');
+
   console.log('====================================================');
   console.log('   VOIP HUB — PHASE 19C COMPREHENSIVE TEST SUITE    ');
   console.log('====================================================\n');
@@ -312,7 +314,7 @@ async function runPhase19CTests() {
 
   // Test 12: Foreign queue rejected
   const foreignQueueRes = await IvrService.upsertIvrOption(proEnv.mockOrgA, proEnv.mockMenuA, { digit: '2', destinationType: 'call_queue', destinationId: proEnv.mockQueueB }, proEnv.client);
-  assert(!foreignQueueRes.success && foreignQueueRes.message.includes('does not belong to your organization'), 'Test 12: Foreign call queue destination rejected');
+  assert(!foreignQueueRes.success && (foreignQueueRes.message.includes('another organization') || foreignQueueRes.message.includes('invalid')), 'Test 12: Foreign call queue destination rejected');
 
   // Test 13: Queue destination hidden/denied without call_queue entitlement
   const noQueueEnv = createMockSupabase({ planCode: 'pro', entitledIvr: true, entitledQueue: false });

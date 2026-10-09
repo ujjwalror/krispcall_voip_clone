@@ -212,6 +212,88 @@ export class IvrService {
 
   /**
    * Creates a new IVR menu for an organization.
+  /**
+   * Helper to validate a destination type and destination ID.
+   */
+  private static async validateDestination(
+    organizationId: string,
+    destType: DestinationType,
+    destId: string | null | undefined,
+    currentMenuId: string | null,
+    supabase: SupabaseClient
+  ): Promise<{ valid: boolean; message: string }> {
+    if (destType === 'voicemail') {
+      return { valid: false, message: 'Voicemail destination is not currently supported.' };
+    }
+    if (destType === 'hangup') {
+      return { valid: true, message: 'Hangup destination is valid.' };
+    }
+    if (!destId || !destId.trim()) {
+      return { valid: false, message: `Destination ID is required for destination type '${destType}'.` };
+    }
+    const cleanId = destId.trim();
+
+    if (destType === 'user') {
+      const { data: profile } = await (supabase as any)
+        .from('profiles')
+        .select('id, organization_id, active')
+        .eq('id', cleanId)
+        .eq('organization_id', organizationId)
+        .maybeSingle();
+
+      if (!profile || profile.active === false) {
+        return { valid: false, message: 'Target team member is inactive, invalid, or belongs to another organization.' };
+      }
+      return { valid: true, message: 'User destination valid.' };
+    }
+
+    if (destType === 'call_queue') {
+      const queueEntitled = await hasEntitlement('call_queue', supabase);
+      if (!queueEntitled) {
+        return { valid: false, message: 'Call Queue feature is not included in your current subscription plan.' };
+      }
+      const { data: queue } = await (supabase as any)
+        .from('call_queues')
+        .select('id, organization_id, enabled')
+        .eq('id', cleanId)
+        .eq('organization_id', organizationId)
+        .maybeSingle();
+
+      if (!queue || queue.enabled === false) {
+        return { valid: false, message: 'Target Call Queue is disabled, invalid, or belongs to another organization.' };
+      }
+      return { valid: true, message: 'Call Queue destination valid.' };
+    }
+
+    if (destType === 'ivr') {
+      if (currentMenuId && cleanId === currentMenuId) {
+        return { valid: false, message: 'IVR menu cannot route to itself. Direct loop prevented.' };
+      }
+      const { data: targetMenu } = await (supabase as any)
+        .from('ivr_menus')
+        .select('id, organization_id, enabled')
+        .eq('id', cleanId)
+        .eq('organization_id', organizationId)
+        .maybeSingle();
+
+      if (!targetMenu || targetMenu.enabled === false) {
+        return { valid: false, message: 'Target sub-menu is disabled, invalid, or belongs to another organization.' };
+      }
+
+      if (currentMenuId) {
+        const hasCycle = await this.detectIvrCycle(organizationId, currentMenuId, cleanId, supabase);
+        if (hasCycle) {
+          return { valid: false, message: 'Nested IVR routing loop detected. Cyclic menu paths are strictly prevented.' };
+        }
+      }
+      return { valid: true, message: 'IVR sub-menu destination valid.' };
+    }
+
+    return { valid: false, message: `Unsupported destination type '${destType}'.` };
+  }
+
+  /**
+   * Creates a new IVR menu for an organization.
    */
   static async createIvrMenu(
     organizationId: string,
@@ -238,6 +320,22 @@ export class IvrService {
 
     if (!menuData.name || !menuData.name.trim()) {
       return { success: false, message: 'IVR menu name is required.' };
+    }
+
+    // Validate timeout destination if provided
+    if (menuData.timeoutDestinationType) {
+      const tVal = await this.validateDestination(organizationId, menuData.timeoutDestinationType, menuData.timeoutDestinationId, null, supabase);
+      if (!tVal.valid) {
+        return { success: false, message: `Invalid timeout destination: ${tVal.message}` };
+      }
+    }
+
+    // Validate fallback destination if provided
+    if (menuData.fallbackDestinationType) {
+      const fVal = await this.validateDestination(organizationId, menuData.fallbackDestinationType, menuData.fallbackDestinationId, null, supabase);
+      if (!fVal.valid) {
+        return { success: false, message: `Invalid fallback destination: ${fVal.message}` };
+      }
     }
 
     const { data: newMenu, error } = await (supabase as any)
@@ -284,6 +382,24 @@ export class IvrService {
     const entitled = await hasEntitlement('ivr', supabase);
     if (!entitled) {
       return { success: false, message: 'IVR feature is under development or not enabled for your subscription plan.' };
+    }
+
+    if (updates.timeoutDestinationType !== undefined || updates.timeoutDestinationId !== undefined) {
+      const destType = updates.timeoutDestinationType || 'user';
+      const destId = updates.timeoutDestinationId || null;
+      const tVal = await this.validateDestination(organizationId, destType, destId, menuId, supabase);
+      if (!tVal.valid) {
+        return { success: false, message: `Invalid timeout destination: ${tVal.message}` };
+      }
+    }
+
+    if (updates.fallbackDestinationType !== undefined || updates.fallbackDestinationId !== undefined) {
+      const destType = updates.fallbackDestinationType || 'user';
+      const destId = updates.fallbackDestinationId || null;
+      const fVal = await this.validateDestination(organizationId, destType, destId, menuId, supabase);
+      if (!fVal.valid) {
+        return { success: false, message: `Invalid fallback destination: ${fVal.message}` };
+      }
     }
 
     const updateObj: any = { updated_at: new Date().toISOString() };
@@ -351,35 +467,17 @@ export class IvrService {
       return { success: false, message: 'Target IVR menu not found or unauthorized.' };
     }
 
-    // Prevent IVR -> IVR loop (self-reference or cycle)
-    if (optionData.destinationType === 'ivr' && optionData.destinationId) {
-      if (optionData.destinationId === menuId) {
-        return { success: false, message: 'IVR menu cannot route to itself. Direct loop prevented.' };
-      }
-      const hasCycle = await this.detectIvrCycle(organizationId, menuId, optionData.destinationId, supabase);
-      if (hasCycle) {
-        return { success: false, message: 'Nested IVR routing loop detected. Cyclic menu paths are strictly prevented.' };
-      }
-    }
+    // Validate destination
+    const destVal = await this.validateDestination(
+      organizationId,
+      optionData.destinationType,
+      optionData.destinationId,
+      menuId,
+      supabase
+    );
 
-    // Validate Call Queue destination in Phase 19B (requires call_queue entitlement)
-    if (optionData.destinationType === 'call_queue') {
-      const queueEntitled = await hasEntitlement('call_queue', supabase);
-      if (!queueEntitled) {
-        return { success: false, message: 'Call Queue feature is not included in your current subscription plan.' };
-      }
-      if (!optionData.destinationId) {
-        return { success: false, message: 'Target Call Queue ID is required.' };
-      }
-      const { data: queue } = await (supabase as any)
-        .from('call_queues')
-        .select('id, organization_id, enabled')
-        .eq('id', optionData.destinationId)
-        .maybeSingle();
-
-      if (!queue || queue.organization_id !== organizationId || queue.enabled === false) {
-        return { success: false, message: 'Target Call Queue does not belong to your organization or is disabled.' };
-      }
+    if (!destVal.valid) {
+      return { success: false, message: `Invalid option destination: ${destVal.message}` };
     }
 
     const { data: optionRow, error } = await (supabase as any)

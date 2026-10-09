@@ -1,7 +1,16 @@
-import { QueueService } from '../src/lib/telephony/queueService';
-import { IvrService } from '../src/lib/telephony/ivrService';
+export {};
+
+// Mock server-only module for tsx test runner environment
+const moduleObj = require('module');
+try {
+  const resolved = require.resolve('server-only');
+  moduleObj._cache[resolved] = { id: resolved, filename: resolved, loaded: true, exports: {} };
+} catch {}
 
 async function runPhase19BTests() {
+  const { QueueService } = await import('../src/lib/telephony/queueService');
+  const { IvrService } = await import('../src/lib/telephony/ivrService');
+
   console.log('===================================================');
   console.log('PHASE 19B TEST SUITE: CALL QUEUE ENGINE & DASHBOARD');
   console.log('===================================================\n');

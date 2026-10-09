@@ -1,7 +1,16 @@
-import { IvrService } from '../src/lib/telephony/ivrService';
-import { hasEntitlement } from '../src/lib/entitlements/server';
+export {};
+
+// Mock server-only module for tsx test runner environment
+const moduleObj = require('module');
+try {
+  const resolved = require.resolve('server-only');
+  moduleObj._cache[resolved] = { id: resolved, filename: resolved, loaded: true, exports: {} };
+} catch {}
 
 async function runPhase19ATests() {
+  const { IvrService } = await import('../src/lib/telephony/ivrService');
+  const { hasEntitlement } = await import('../src/lib/entitlements/server');
+
   console.log('===================================================');
   console.log('PHASE 19A TEST SUITE: INBOUND ROUTING & IVR FOUNDATION');
   console.log('===================================================\n');

@@ -1,11 +1,11 @@
+export {};
+
 // Mock server-only module for tsx test runner environment
 const moduleObj = require('module');
 try {
   const resolved = require.resolve('server-only');
   moduleObj._cache[resolved] = { id: resolved, filename: resolved, loaded: true, exports: {} };
 } catch {}
-
-import { IvrService } from '../src/lib/telephony/ivrService';
 
 function assert(condition: boolean, message: string) {
   if (!condition) {
@@ -204,6 +204,8 @@ function createMockSupabase(overrides: {
 }
 
 async function runPhase19C1Tests() {
+  const { IvrService } = await import('../src/lib/telephony/ivrService');
+
   console.log('====================================================');
   console.log('   VOIP HUB — PHASE 19C.1 COMPREHENSIVE TEST SUITE  ');
   console.log('====================================================\n');

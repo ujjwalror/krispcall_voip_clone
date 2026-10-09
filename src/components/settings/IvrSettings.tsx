@@ -32,7 +32,7 @@ import { useAuth } from '@/components/providers/AuthProvider';
 export interface IvrOption {
   id?: string;
   digit: string;
-  destinationType: 'user' | 'ivr' | 'voicemail' | 'call_queue' | 'hangup';
+  destinationType: 'user' | 'ivr' | 'call_queue' | 'hangup';
   destinationId: string | null;
   enabled?: boolean;
 }
@@ -47,9 +47,9 @@ export interface IvrMenu {
   greetingAudioUrl: string | null;
   timeoutSeconds: number;
   maxRetries: number;
-  timeoutDestinationType: 'user' | 'ivr' | 'voicemail' | 'call_queue' | 'hangup';
+  timeoutDestinationType: 'user' | 'ivr' | 'call_queue' | 'hangup';
   timeoutDestinationId: string | null;
-  fallbackDestinationType: 'user' | 'ivr' | 'voicemail' | 'call_queue' | 'hangup';
+  fallbackDestinationType: 'user' | 'ivr' | 'call_queue' | 'hangup';
   fallbackDestinationId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -111,17 +111,17 @@ export function IvrSettings() {
     greetingAudioUrl: string;
     timeoutSeconds: number;
     maxRetries: number;
-    timeoutDestinationType: 'user' | 'ivr' | 'voicemail' | 'call_queue' | 'hangup';
+    timeoutDestinationType: 'user' | 'ivr' | 'call_queue' | 'hangup';
     timeoutDestinationId: string;
-    fallbackDestinationType: 'user' | 'ivr' | 'voicemail' | 'call_queue' | 'hangup';
+    fallbackDestinationType: 'user' | 'ivr' | 'call_queue' | 'hangup';
     fallbackDestinationId: string;
     assignedPhoneId: string;
     enabled: boolean;
     options: IvrOption[];
   }>({
-    name: 'Main Business Menu',
+    name: '',
     greetingType: 'tts',
-    greetingText: 'Thank you for calling Acme. Press 1 for Sales. Press 2 for Support. Press 0 for Reception.',
+    greetingText: '',
     greetingAudioUrl: '',
     timeoutSeconds: 5,
     maxRetries: 3,
@@ -131,11 +131,7 @@ export function IvrSettings() {
     fallbackDestinationId: '',
     assignedPhoneId: '',
     enabled: true,
-    options: [
-      { digit: '1', destinationType: 'user', destinationId: '' },
-      { digit: '2', destinationType: 'user', destinationId: '' },
-      { digit: '0', destinationType: 'user', destinationId: '' },
-    ],
+    options: [],
   });
 
   const fetchData = useCallback(async () => {
@@ -169,21 +165,30 @@ export function IvrSettings() {
         );
       }
 
-      // 3. Fetch Org Users
-      const uRes = await fetch('/api/users');
+      // 3. Fetch Org Users via canonical endpoints (/api/users/manage with fallback to /api/users/presence)
+      let rawUsers: any[] = [];
+      const uRes = await fetch('/api/users/manage');
       if (uRes.ok) {
         const uData = await uRes.json();
-        const rawUsers = uData.users || uData.members || [];
-        setOrgUsers(
-          rawUsers.map((u: any) => ({
+        rawUsers = uData.members || uData.users || [];
+      } else {
+        const pRes = await fetch('/api/users/presence');
+        if (pRes.ok) {
+          const pData = await pRes.json();
+          rawUsers = pData.team || [];
+        }
+      }
+      setOrgUsers(
+        rawUsers
+          .filter((u: any) => u && u.active !== false)
+          .map((u: any) => ({
             id: u.id,
             fullName: u.full_name || u.email || 'Team Member',
             email: u.email,
             role: u.role || 'member',
-            active: u.active !== false,
+            active: true,
           }))
-        );
-      }
+      );
 
       // 4. Fetch Call Queues (if available)
       const qRes = await fetch('/api/queues');
@@ -208,24 +213,21 @@ export function IvrSettings() {
 
   const openCreateModal = () => {
     setEditingMenuId(null);
+    const defaultUserId = orgUsers[0]?.id || '';
     setFormData({
-      name: 'Main Business Menu',
+      name: '',
       greetingType: 'tts',
-      greetingText: 'Thank you for calling Acme. Press 1 for Sales. Press 2 for Support. Press 0 for Reception.',
+      greetingText: 'Thank you for calling. Please make a selection.',
       greetingAudioUrl: '',
       timeoutSeconds: 5,
       maxRetries: 3,
       timeoutDestinationType: 'user',
-      timeoutDestinationId: orgUsers[0]?.id || '',
+      timeoutDestinationId: defaultUserId,
       fallbackDestinationType: 'user',
-      fallbackDestinationId: orgUsers[0]?.id || '',
+      fallbackDestinationId: defaultUserId,
       assignedPhoneId: '',
       enabled: true,
-      options: [
-        { digit: '1', destinationType: callQueueEntitled && orgQueues[0] ? 'call_queue' : 'user', destinationId: callQueueEntitled && orgQueues[0] ? orgQueues[0].id : (orgUsers[0]?.id || '') },
-        { digit: '2', destinationType: 'user', destinationId: orgUsers[0]?.id || '' },
-        { digit: '0', destinationType: 'user', destinationId: orgUsers[0]?.id || '' },
-      ],
+      options: [],
     });
     setActiveStep(1);
     setIsModalOpen(true);
@@ -244,9 +246,9 @@ export function IvrSettings() {
       greetingAudioUrl: menu.greetingAudioUrl || '',
       timeoutSeconds: menu.timeoutSeconds || 5,
       maxRetries: menu.maxRetries || 3,
-      timeoutDestinationType: menu.timeoutDestinationType || 'user',
+      timeoutDestinationType: (menu.timeoutDestinationType as any) || 'user',
       timeoutDestinationId: menu.timeoutDestinationId || '',
-      fallbackDestinationType: menu.fallbackDestinationType || 'user',
+      fallbackDestinationType: (menu.fallbackDestinationType as any) || 'user',
       fallbackDestinationId: menu.fallbackDestinationId || '',
       assignedPhoneId: assignedNum?.id || '',
       enabled: menu.enabled,
@@ -261,10 +263,19 @@ export function IvrSettings() {
     setIsModalOpen(true);
   };
 
+  const availableDigitsForIndex = (index: number) => {
+    const usedByOthers = formData.options
+      .filter((_, i) => i !== index)
+      .map((o) => o.digit);
+    return ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '*', '#'].filter(
+      (d) => !usedByOthers.includes(d)
+    );
+  };
+
   const handleAddOption = () => {
-    const existingDigits = formData.options.map((o) => o.digit);
+    const usedDigits = formData.options.map((o) => o.digit);
     const availableDigits = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '*', '#'].filter(
-      (d) => !existingDigits.includes(d)
+      (d) => !usedDigits.includes(d)
     );
     if (availableDigits.length === 0) return;
 
@@ -291,12 +302,116 @@ export function IvrSettings() {
   const handleUpdateOption = (index: number, key: keyof IvrOption, val: any) => {
     setFormData((prev) => {
       const updated = [...prev.options];
-      updated[index] = { ...updated[index], [key]: val };
+      const targetOpt = { ...updated[index], [key]: val };
+
+      if (key === 'destinationType') {
+        if (val === 'user') targetOpt.destinationId = orgUsers[0]?.id || '';
+        else if (val === 'call_queue') targetOpt.destinationId = orgQueues[0]?.id || '';
+        else if (val === 'ivr') targetOpt.destinationId = menus.find((m) => m.id !== editingMenuId)?.id || '';
+        else targetOpt.destinationId = '';
+      }
+
+      updated[index] = targetOpt;
       return { ...prev, options: updated };
     });
   };
 
+  const validateFormReadiness = (
+    data: typeof formData,
+    users: OrgUser[],
+    queues: OrgQueue[],
+    allMenus: IvrMenu[],
+    currentMenuId: string | null
+  ): { ready: boolean; errors: string[] } => {
+    const errors: string[] = [];
+
+    if (!data.name || !data.name.trim()) {
+      errors.push('IVR Menu Name is required.');
+    }
+
+    if (data.greetingType === 'tts' && (!data.greetingText || !data.greetingText.trim())) {
+      errors.push('Greeting prompt text is required.');
+    }
+
+    if (data.greetingType === 'audio_url' && (!data.greetingAudioUrl || !data.greetingAudioUrl.trim())) {
+      errors.push('Greeting audio URL is required.');
+    }
+
+    // Check options
+    const digitsSeen = new Set<string>();
+    for (let i = 0; i < data.options.length; i++) {
+      const opt = data.options[i];
+      if (!opt.digit) {
+        errors.push(`Option ${i + 1}: Keypress digit is required.`);
+      } else if (digitsSeen.has(opt.digit)) {
+        errors.push(`Option ${i + 1}: Keypress '${opt.digit}' is duplicated.`);
+      } else {
+        digitsSeen.add(opt.digit);
+      }
+
+      if (opt.destinationType === 'user') {
+        if (!opt.destinationId || !users.some((u) => u.id === opt.destinationId)) {
+          errors.push(`Press ${opt.digit || i + 1} requires a valid team member destination.`);
+        }
+      } else if (opt.destinationType === 'call_queue') {
+        if (!callQueueEntitled || !opt.destinationId || !queues.some((q) => q.id === opt.destinationId)) {
+          errors.push(`Press ${opt.digit || i + 1} requires a valid Call Queue destination.`);
+        }
+      } else if (opt.destinationType === 'ivr') {
+        if (!opt.destinationId || opt.destinationId === currentMenuId || !allMenus.some((m) => m.id === opt.destinationId)) {
+          errors.push(`Press ${opt.digit || i + 1} requires a valid sub-menu destination.`);
+        }
+      } else if (opt.destinationType === 'hangup') {
+        // valid
+      } else {
+        errors.push(`Press ${opt.digit || i + 1} has an invalid destination type.`);
+      }
+    }
+
+    // Check timeout destination
+    if (data.timeoutDestinationType === 'user') {
+      if (!data.timeoutDestinationId || !users.some((u) => u.id === data.timeoutDestinationId)) {
+        errors.push('Timeout destination requires a valid team member.');
+      }
+    } else if (data.timeoutDestinationType === 'call_queue') {
+      if (!callQueueEntitled || !data.timeoutDestinationId || !queues.some((q) => q.id === data.timeoutDestinationId)) {
+        errors.push('Timeout destination requires a valid Call Queue.');
+      }
+    } else if (data.timeoutDestinationType === 'ivr') {
+      if (!data.timeoutDestinationId || data.timeoutDestinationId === currentMenuId || !allMenus.some((m) => m.id === data.timeoutDestinationId)) {
+        errors.push('Timeout destination requires a valid sub-menu.');
+      }
+    }
+
+    // Check fallback destination
+    if (data.fallbackDestinationType === 'user') {
+      if (!data.fallbackDestinationId || !users.some((u) => u.id === data.fallbackDestinationId)) {
+        errors.push('Fallback destination requires a valid team member.');
+      }
+    } else if (data.fallbackDestinationType === 'call_queue') {
+      if (!callQueueEntitled || !data.fallbackDestinationId || !queues.some((q) => q.id === data.fallbackDestinationId)) {
+        errors.push('Fallback destination requires a valid Call Queue.');
+      }
+    } else if (data.fallbackDestinationType === 'ivr') {
+      if (!data.fallbackDestinationId || data.fallbackDestinationId === currentMenuId || !allMenus.some((m) => m.id === data.fallbackDestinationId)) {
+        errors.push('Fallback destination requires a valid sub-menu.');
+      }
+    }
+
+    return {
+      ready: errors.length === 0,
+      errors,
+    };
+  };
+
+  const validationResult = validateFormReadiness(formData, orgUsers, orgQueues, menus, editingMenuId);
+
   const handleSaveIvr = async () => {
+    if (!validationResult.ready) {
+      setErrorMessage(validationResult.errors[0] || 'Configuration is incomplete.');
+      return;
+    }
+
     setIsSaving(true);
     setErrorMessage(null);
     setSuccessMessage(null);
@@ -426,17 +541,16 @@ export function IvrSettings() {
   const getDestinationLabel = (type: string, id: string | null) => {
     if (type === 'user') {
       const u = orgUsers.find((user) => user.id === id);
-      return u ? `User: ${u.fullName}` : 'User (Unassigned)';
+      return u ? `${u.fullName} (${u.role ? u.role.charAt(0).toUpperCase() + u.role.slice(1) : 'Member'})` : 'User (Unassigned)';
     }
     if (type === 'call_queue') {
       const q = orgQueues.find((queue) => queue.id === id);
-      return q ? `Queue: ${q.name}` : 'Call Queue';
+      return q ? `Queue: ${q.name}` : 'Queue (Unassigned)';
     }
     if (type === 'ivr') {
       const m = menus.find((menu) => menu.id === id);
-      return m ? `Sub-menu: ${m.name}` : 'Nested IVR';
+      return m ? `Sub-menu: ${m.name}` : 'Sub-menu (Unassigned)';
     }
-    if (type === 'voicemail') return 'Voicemail Box';
     if (type === 'hangup') return 'Hang Up Call';
     return 'Default Fallback';
   };
@@ -652,7 +766,7 @@ export function IvrSettings() {
               } else if (menu.enabled && !assignedNum) {
                 statusBadge = (
                   <Badge variant="amber" size="sm">
-                    ENABLED — NO NUMBER ASSIGNED
+                    ENABLED — NOT ASSIGNED
                   </Badge>
                 );
               }
@@ -824,7 +938,7 @@ export function IvrSettings() {
                     className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-900 dark:text-slate-100 p-2.5 outline-none"
                   >
                     <option value="tts">Text-To-Speech (TTS)</option>
-                    <option value="audio_url">Audio URL Broadcast</option>
+                    <option value="audio_url">Recorded Audio</option>
                   </select>
                 </div>
 
@@ -838,7 +952,7 @@ export function IvrSettings() {
                       value={formData.greetingText}
                       onChange={(e) => setFormData((p) => ({ ...p, greetingText: e.target.value }))}
                       className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-900 dark:text-slate-100 p-3 outline-none focus:border-blue-500"
-                      placeholder="Thank you for calling..."
+                      placeholder="Thank you for calling. Press 1 for..."
                     />
                     <p className="text-[11px] text-slate-500 mt-1">
                       This text will be spoken to the caller when they dial your business number.
@@ -847,13 +961,16 @@ export function IvrSettings() {
                 ) : (
                   <div>
                     <label className="text-xs font-bold text-slate-800 dark:text-slate-200 block mb-1.5">
-                      Greeting Audio File URL (.mp3 / .wav)
+                      Recorded Audio File URL (.mp3 / .wav)
                     </label>
                     <Input
                       placeholder="https://example.com/audio/greeting.mp3"
                       value={formData.greetingAudioUrl}
                       onChange={(e) => setFormData((p) => ({ ...p, greetingAudioUrl: e.target.value }))}
                     />
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Provide a publicly accessible audio file URL to play as your greeting prompt.
+                    </p>
                   </div>
                 )}
               </div>
@@ -872,87 +989,117 @@ export function IvrSettings() {
                   </Button>
                 </div>
 
-                <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
-                  {formData.options.map((opt, idx) => (
-                    <div
-                      key={idx}
-                      className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 flex items-center gap-3"
-                    >
-                      <div className="w-16">
-                        <label className="text-[10px] font-bold text-slate-400 block mb-1">Keypress</label>
-                        <select
-                          value={opt.digit}
-                          onChange={(e) => handleUpdateOption(idx, 'digit', e.target.value)}
-                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs p-1.5 font-mono font-bold"
+                {formData.options.length === 0 ? (
+                  <div className="p-6 text-center text-xs text-slate-500 border border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
+                    No key options configured yet. Click &quot;Add Key Option&quot; to configure custom routes.
+                  </div>
+                ) : (
+                  <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
+                    {formData.options.map((opt, idx) => {
+                      const avail = availableDigitsForIndex(idx);
+                      return (
+                        <div
+                          key={idx}
+                          className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 flex items-center gap-3"
                         >
-                          {['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '*', '#'].map((d) => (
-                            <option key={d} value={d}>
-                              Press {d}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                          <div className="w-20">
+                            <label className="text-[10px] font-bold text-slate-400 block mb-1">Keypress</label>
+                            <select
+                              value={opt.digit}
+                              onChange={(e) => handleUpdateOption(idx, 'digit', e.target.value)}
+                              className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs p-1.5 font-mono font-bold"
+                            >
+                              {opt.digit && !avail.includes(opt.digit) && (
+                                <option value={opt.digit}>Press {opt.digit}</option>
+                              )}
+                              {avail.map((d) => (
+                                <option key={d} value={d}>
+                                  Press {d}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
 
-                      <div className="flex-1">
-                        <label className="text-[10px] font-bold text-slate-400 block mb-1">Destination Type</label>
-                        <select
-                          value={opt.destinationType}
-                          onChange={(e) => handleUpdateOption(idx, 'destinationType', e.target.value)}
-                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs p-1.5"
-                        >
-                          <option value="user">User / Team Member</option>
-                          {callQueueEntitled && <option value="call_queue">Call Queue</option>}
-                          <option value="voicemail">Voicemail</option>
-                          <option value="hangup">Hang Up</option>
-                        </select>
-                      </div>
+                          <div className="flex-1">
+                            <label className="text-[10px] font-bold text-slate-400 block mb-1">Destination Type</label>
+                            <select
+                              value={opt.destinationType}
+                              onChange={(e) => handleUpdateOption(idx, 'destinationType', e.target.value)}
+                              className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs p-1.5"
+                            >
+                              <option value="user">User / Team Member</option>
+                              {callQueueEntitled && <option value="call_queue">Call Queue</option>}
+                              <option value="ivr">Sub-menu (Nested IVR)</option>
+                              <option value="hangup">Hang Up</option>
+                            </select>
+                          </div>
 
-                      {opt.destinationType === 'user' && (
-                        <div className="flex-1">
-                          <label className="text-[10px] font-bold text-slate-400 block mb-1">Target User</label>
-                          <select
-                            value={opt.destinationId || ''}
-                            onChange={(e) => handleUpdateOption(idx, 'destinationId', e.target.value)}
-                            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs p-1.5"
+                          {opt.destinationType === 'user' && (
+                            <div className="flex-1">
+                              <label className="text-[10px] font-bold text-slate-400 block mb-1">Target User</label>
+                              <select
+                                value={opt.destinationId || ''}
+                                onChange={(e) => handleUpdateOption(idx, 'destinationId', e.target.value)}
+                                className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs p-1.5"
+                              >
+                                <option value="">Select User...</option>
+                                {orgUsers.map((u) => (
+                                  <option key={u.id} value={u.id}>
+                                    {u.fullName} ({u.role ? u.role.charAt(0).toUpperCase() + u.role.slice(1) : 'Member'})
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
+
+                          {opt.destinationType === 'call_queue' && callQueueEntitled && (
+                            <div className="flex-1">
+                              <label className="text-[10px] font-bold text-slate-400 block mb-1">Target Queue</label>
+                              <select
+                                value={opt.destinationId || ''}
+                                onChange={(e) => handleUpdateOption(idx, 'destinationId', e.target.value)}
+                                className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs p-1.5"
+                              >
+                                <option value="">Select Queue...</option>
+                                {orgQueues.map((q) => (
+                                  <option key={q.id} value={q.id}>
+                                    {q.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
+
+                          {opt.destinationType === 'ivr' && (
+                            <div className="flex-1">
+                              <label className="text-[10px] font-bold text-slate-400 block mb-1">Target Sub-menu</label>
+                              <select
+                                value={opt.destinationId || ''}
+                                onChange={(e) => handleUpdateOption(idx, 'destinationId', e.target.value)}
+                                className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs p-1.5"
+                              >
+                                <option value="">Select Sub-menu...</option>
+                                {menus.filter((m) => m.id !== editingMenuId).map((m) => (
+                                  <option key={m.id} value={m.id}>
+                                    {m.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
+
+                          <button
+                            onClick={() => handleRemoveOption(idx)}
+                            className="text-slate-400 hover:text-rose-500 p-1.5 shrink-0 mt-4"
+                            title="Remove Option"
                           >
-                            <option value="">Select User...</option>
-                            {orgUsers.map((u) => (
-                              <option key={u.id} value={u.id}>
-                                {u.fullName}
-                              </option>
-                            ))}
-                          </select>
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </div>
-                      )}
-
-                      {opt.destinationType === 'call_queue' && callQueueEntitled && (
-                        <div className="flex-1">
-                          <label className="text-[10px] font-bold text-slate-400 block mb-1">Target Queue</label>
-                          <select
-                            value={opt.destinationId || ''}
-                            onChange={(e) => handleUpdateOption(idx, 'destinationId', e.target.value)}
-                            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs p-1.5"
-                          >
-                            <option value="">Select Queue...</option>
-                            {orgQueues.map((q) => (
-                              <option key={q.id} value={q.id}>
-                                {q.name}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      )}
-
-                      <button
-                        onClick={() => handleRemoveOption(idx)}
-                        className="text-slate-400 hover:text-rose-500 p-1.5 shrink-0 mt-4"
-                        title="Remove Option"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
 
@@ -997,9 +1144,9 @@ export function IvrSettings() {
                       onChange={(e) => setFormData((p) => ({ ...p, timeoutDestinationType: e.target.value as any }))}
                       className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs p-2.5 outline-none"
                     >
-                      <option value="user font-semibold">User / Team Member</option>
+                      <option value="user">User / Team Member</option>
                       {callQueueEntitled && <option value="call_queue">Call Queue</option>}
-                      <option value="voicemail">Voicemail Box</option>
+                      <option value="ivr">Sub-menu (Nested IVR)</option>
                       <option value="hangup">Hang Up</option>
                     </select>
 
@@ -1011,7 +1158,9 @@ export function IvrSettings() {
                       >
                         <option value="">Select User...</option>
                         {orgUsers.map((u) => (
-                          <option key={u.id} value={u.id}>{u.fullName}</option>
+                          <option key={u.id} value={u.id}>
+                            {u.fullName} ({u.role ? u.role.charAt(0).toUpperCase() + u.role.slice(1) : 'Member'})
+                          </option>
                         ))}
                       </select>
                     )}
@@ -1025,6 +1174,19 @@ export function IvrSettings() {
                         <option value="">Select Queue...</option>
                         {orgQueues.map((q) => (
                           <option key={q.id} value={q.id}>{q.name}</option>
+                        ))}
+                      </select>
+                    )}
+
+                    {formData.timeoutDestinationType === 'ivr' && (
+                      <select
+                        value={formData.timeoutDestinationId}
+                        onChange={(e) => setFormData((p) => ({ ...p, timeoutDestinationId: e.target.value }))}
+                        className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs p-2.5 outline-none"
+                      >
+                        <option value="">Select Sub-menu...</option>
+                        {menus.filter((m) => m.id !== editingMenuId).map((m) => (
+                          <option key={m.id} value={m.id}>{m.name}</option>
                         ))}
                       </select>
                     )}
@@ -1043,7 +1205,7 @@ export function IvrSettings() {
                     >
                       <option value="user">User / Team Member</option>
                       {callQueueEntitled && <option value="call_queue">Call Queue</option>}
-                      <option value="voicemail">Voicemail Box</option>
+                      <option value="ivr">Sub-menu (Nested IVR)</option>
                       <option value="hangup">Hang Up</option>
                     </select>
 
@@ -1055,7 +1217,9 @@ export function IvrSettings() {
                       >
                         <option value="">Select User...</option>
                         {orgUsers.map((u) => (
-                          <option key={u.id} value={u.id}>{u.fullName}</option>
+                          <option key={u.id} value={u.id}>
+                            {u.fullName} ({u.role ? u.role.charAt(0).toUpperCase() + u.role.slice(1) : 'Member'})
+                          </option>
                         ))}
                       </select>
                     )}
@@ -1069,6 +1233,19 @@ export function IvrSettings() {
                         <option value="">Select Queue...</option>
                         {orgQueues.map((q) => (
                           <option key={q.id} value={q.id}>{q.name}</option>
+                        ))}
+                      </select>
+                    )}
+
+                    {formData.fallbackDestinationType === 'ivr' && (
+                      <select
+                        value={formData.fallbackDestinationId}
+                        onChange={(e) => setFormData((p) => ({ ...p, fallbackDestinationId: e.target.value }))}
+                        className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs p-2.5 outline-none"
+                      >
+                        <option value="">Select Sub-menu...</option>
+                        {menus.filter((m) => m.id !== editingMenuId).map((m) => (
+                          <option key={m.id} value={m.id}>{m.name}</option>
                         ))}
                       </select>
                     )}
@@ -1100,7 +1277,7 @@ export function IvrSettings() {
                   </select>
                 </div>
 
-                {formData.assignedPhoneId && (
+                {formData.assignedPhoneId ? (
                   <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-300 dark:border-amber-700/60 text-amber-800 dark:text-amber-200 text-xs flex items-start gap-2">
                     <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                     <div>
@@ -1109,6 +1286,13 @@ export function IvrSettings() {
                         Enabling this IVR menu will set the inbound routing for the selected phone number to this IVR menu. Callers to this number will enter the automated menu tree.
                       </p>
                     </div>
+                  </div>
+                ) : (
+                  <div className="p-3.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs">
+                    <p className="font-semibold text-slate-800 dark:text-slate-200">Enabled — Not Assigned</p>
+                    <p className="text-[11px] mt-0.5">
+                      This IVR is configured but will not receive calls until a phone number is assigned.
+                    </p>
                   </div>
                 )}
               </div>
@@ -1119,29 +1303,51 @@ export function IvrSettings() {
               <div className="space-y-4">
                 <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-3 text-xs">
                   <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
-                    <span className="font-bold text-slate-900 dark:text-slate-100">{formData.name}</span>
-                    <Badge variant="blue" size="sm">READY TO ENABLE</Badge>
+                    <span className="font-bold text-slate-900 dark:text-slate-100">{formData.name || '(Unnamed Menu)'}</span>
+                    {validationResult.ready ? (
+                      <Badge variant="blue" size="sm">READY TO ENABLE</Badge>
+                    ) : (
+                      <Badge variant="rose" size="sm">CONFIGURATION INCOMPLETE</Badge>
+                    )}
                   </div>
+
+                  {!validationResult.ready && (
+                    <div className="p-3 rounded-lg bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-200 space-y-1">
+                      <p className="font-bold text-[11px] flex items-center gap-1">
+                        <AlertCircle className="w-3.5 h-3.5" />
+                        <span>The following items require attention before enabling:</span>
+                      </p>
+                      <ul className="list-disc list-inside text-[11px] space-y-0.5">
+                        {validationResult.errors.map((err, idx) => (
+                          <li key={idx}>{err}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
 
                   <div>
                     <span className="text-[10px] uppercase font-bold text-slate-400 block">Greeting Prompt</span>
                     <p className="italic text-slate-700 dark:text-slate-300 font-sans mt-0.5">
-                      &quot;{formData.greetingText}&quot;
+                      &quot;{formData.greetingText || '(No prompt text)'}&quot;
                     </p>
                   </div>
 
                   <div>
                     <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Keypress Routes</span>
-                    <div className="space-y-1 font-mono text-[11px]">
-                      {formData.options.map((o) => (
-                        <div key={o.digit} className="flex items-center gap-2">
-                          <span className="px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-bold">
-                            Press {o.digit}
-                          </span>
-                          <span>→ {getDestinationLabel(o.destinationType, o.destinationId)}</span>
-                        </div>
-                      ))}
-                    </div>
+                    {formData.options.length === 0 ? (
+                      <span className="text-slate-400 italic text-[11px]">No keypress options defined</span>
+                    ) : (
+                      <div className="space-y-1 font-mono text-[11px]">
+                        {formData.options.map((o) => (
+                          <div key={o.digit} className="flex items-center gap-2">
+                            <span className="px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-bold">
+                              Press {o.digit}
+                            </span>
+                            <span>→ {getDestinationLabel(o.destinationType, o.destinationId)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   <div className="pt-2 border-t border-slate-200 dark:border-slate-800 grid grid-cols-2 gap-2">
@@ -1161,13 +1367,32 @@ export function IvrSettings() {
             {/* STEP 7 — CONFIRM & SAVE */}
             {activeStep === 7 && (
               <div className="space-y-4 text-center py-4">
-                <div className="w-12 h-12 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-600 flex items-center justify-center mx-auto">
-                  <CheckCircle2 className="w-6 h-6" />
-                </div>
-                <h4 className="text-sm font-bold text-slate-900 dark:text-slate-100">Ready to Save & Enable IVR Menu</h4>
-                <p className="text-xs text-slate-500 max-w-md mx-auto">
-                  The server will validate Pro IVR entitlement, user authorization, and destination ownership before enabling this menu.
-                </p>
+                {validationResult.ready ? (
+                  <>
+                    <div className="w-12 h-12 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-600 flex items-center justify-center mx-auto">
+                      <CheckCircle2 className="w-6 h-6" />
+                    </div>
+                    <h4 className="text-sm font-bold text-slate-900 dark:text-slate-100">Ready to Save & Enable IVR Menu</h4>
+                    <p className="text-xs text-slate-500 max-w-md mx-auto">
+                      The server will validate Pro IVR entitlement, user authorization, and destination ownership before enabling this menu.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <div className="w-12 h-12 rounded-full bg-rose-100 dark:bg-rose-950 text-rose-600 flex items-center justify-center mx-auto">
+                      <AlertCircle className="w-6 h-6" />
+                    </div>
+                    <h4 className="text-sm font-bold text-rose-900 dark:text-rose-200">Configuration Incomplete</h4>
+                    <p className="text-xs text-rose-600 dark:text-rose-400 max-w-md mx-auto">
+                      Please resolve validation errors in previous steps before saving and enabling this IVR menu.
+                    </p>
+                    <ul className="list-disc list-inside text-xs text-rose-700 dark:text-rose-300 text-left max-w-md mx-auto">
+                      {validationResult.errors.map((err, idx) => (
+                        <li key={idx}>{err}</li>
+                      ))}
+                    </ul>
+                  </>
+                )}
               </div>
             )}
 
@@ -1200,8 +1425,8 @@ export function IvrSettings() {
                   variant="primary"
                   size="sm"
                   onClick={handleSaveIvr}
-                  disabled={isSaving}
-                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold"
+                  disabled={isSaving || !validationResult.ready}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold disabled:opacity-50"
                 >
                   {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save & Enable IVR'}
                 </Button>
