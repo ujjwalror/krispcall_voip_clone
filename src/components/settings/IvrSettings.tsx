@@ -544,7 +544,7 @@ export function IvrSettings() {
     return (
       <div className="p-12 text-center text-xs text-slate-500 dark:text-slate-400">
         <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-blue-500" />
-        <span>Loading Call Menu system...</span>
+        <span>Loading call menus...</span>
       </div>
     );
   }
@@ -558,7 +558,7 @@ export function IvrSettings() {
             <div className="flex items-center justify-between">
               <CardTitle className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
                 <GitFork className="w-5 h-5 text-amber-500" />
-                <span>Call Menu (IVR)</span>
+                <span>Call Menus</span>
               </CardTitle>
               <Badge variant="amber" size="sm" className="font-bold flex items-center gap-1">
                 <Lock className="w-3 h-3" />
@@ -570,10 +570,10 @@ export function IvrSettings() {
           <div className="space-y-6">
             <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-200 dark:border-amber-800/60 text-slate-800 dark:text-slate-200 text-xs leading-relaxed">
               <p className="font-semibold text-slate-900 dark:text-slate-100 mb-1">
-                Set up automated phone menus to greet callers and direct them to team members, queues, or voicemail.
+                Create menus that direct incoming calls to the right person, another menu, or voicemail.
               </p>
               <p className="text-slate-600 dark:text-slate-400">
-                Call Menus (IVR) allow your business to present professional greetings, accept keypress options (e.g., Press 1 for Sales, Press 2 for Support), and direct incoming phone calls automatically.
+                Call Menus allow your business to present professional greetings, accept keypress options (e.g., Press 1 for Sales, Press 2 for Support), and direct incoming phone calls automatically.
               </p>
             </div>
 
@@ -603,8 +603,8 @@ export function IvrSettings() {
                   <Users className="w-4 h-4" />
                 </div>
                 <div>
-                  <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">Team & Queue Forwarding</h4>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">Direct callers straight to team members or support queues.</p>
+                  <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">Team Forwarding</h4>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">Direct callers straight to available team members.</p>
                 </div>
               </div>
 
@@ -623,10 +623,10 @@ export function IvrSettings() {
               <div className="space-y-1 text-center sm:text-left">
                 <p className="text-sm font-bold flex items-center justify-center sm:justify-start gap-2">
                   <Sparkles className="w-4 h-4 text-amber-400" />
-                  <span>Unlock Call Menus (IVR) on Pro</span>
+                  <span>Unlock Call Menus on Pro</span>
                 </p>
                 <p className="text-xs text-slate-300">
-                  Upgrade your workspace to enable Call Menus, call queues, and automated call distribution.
+                  Upgrade your workspace to enable Call Menus and automated call distribution.
                 </p>
               </div>
               <Button
@@ -653,10 +653,10 @@ export function IvrSettings() {
         <div>
           <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
             <GitFork className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-            <span>Call Menu (IVR)</span>
+            <span>Call Menus</span>
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Set up automated phone menus to greet callers and direct them to team members, queues, or voicemail.
+            Create menus that direct incoming calls to the right person, another menu, or voicemail.
           </p>
         </div>
 

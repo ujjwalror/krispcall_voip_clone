@@ -272,10 +272,10 @@ function SettingsContent() {
         <div>
           <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
             <Settings className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-            <span>Settings & Administration</span>
+            <span>Settings</span>
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Manage WebRTC audio devices, workspace preferences, themes, and organization blocklists.
+            Manage your workspace, calling preferences and phone settings.
           </p>
         </div>
 
@@ -290,7 +290,7 @@ function SettingsContent() {
             }`}
           >
             <Sliders className="w-3.5 h-3.5" />
-            <span>General & Audio</span>
+            <span>General</span>
           </button>
           <button
             onClick={() => handleTabChange('blocked')}
@@ -328,7 +328,7 @@ function SettingsContent() {
             }`}
           >
             <GitFork className="w-3.5 h-3.5 text-blue-500 dark:text-blue-400" />
-            <span>IVR Phone Menu</span>
+            <span>Call Menus</span>
           </button>
         </div>
       </div>
@@ -552,12 +552,12 @@ function SettingsContent() {
             </div>
           </Card>
 
-          {/* WebRTC Audio Preferences */}
+          {/* Calling & Audio Preferences */}
           <Card>
             <CardHeader>
               <CardTitle className="text-sm flex items-center gap-2">
                 <Mic className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                <span>WebRTC Audio Devices</span>
+                <span>Calling & Audio Devices</span>
               </CardTitle>
             </CardHeader>
             <div className="space-y-4">
