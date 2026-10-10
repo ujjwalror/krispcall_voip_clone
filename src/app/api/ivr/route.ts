@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { IvrService } from '@/lib/telephony/ivrService';
-import { hasEntitlement } from '@/lib/entitlements/server';
+import { getOrganizationEntitlements, hasEntitlement } from '@/lib/entitlements/server';
 
 /**
  * GET /api/ivr - List IVR menus for authenticated organization
@@ -36,10 +36,15 @@ export async function GET() {
       );
     }
 
-    const entitled = await hasEntitlement('ivr', supabase);
-    const callQueueEntitled = await hasEntitlement('call_queue', supabase);
-    const voicemailEntitled = await hasEntitlement('voicemail', supabase);
-    const menus = await IvrService.listIvrMenus(profile.organization_id, supabase);
+    const [entsResult, menus] = await Promise.all([
+      getOrganizationEntitlements(supabase),
+      IvrService.listIvrMenus(profile.organization_id, supabase),
+    ]);
+
+    const entitlements = entsResult.success ? entsResult.entitlements : {};
+    const entitled = Boolean(entsResult.success && entsResult.isSubscriptionActive && entitlements['ivr']?.enabled);
+    const callQueueEntitled = false;
+    const voicemailEntitled = Boolean(entsResult.success && entsResult.isSubscriptionActive && entitlements['voicemail']?.enabled);
 
     return NextResponse.json({
       entitled,

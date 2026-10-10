@@ -136,12 +136,19 @@ export function IvrSettings() {
     options: [],
   });
 
-  const fetchData = useCallback(async () => {
-    setIsLoading(true);
+  const fetchData = useCallback(async (showFullLoading = true) => {
+    if (showFullLoading) {
+      setIsLoading(true);
+    }
     setErrorMessage(null);
     try {
-      // 1. Fetch IVR Menus & entitlements
-      const ivrRes = await fetch('/api/ivr');
+      // Fetch required data concurrently
+      const [ivrRes, numRes, userRes] = await Promise.all([
+        fetch('/api/ivr'),
+        fetch('/api/phone-numbers'),
+        fetch('/api/users/manage'),
+      ]);
+
       if (ivrRes.ok) {
         const data = await ivrRes.json();
         setEntitled(Boolean(data.entitled));
@@ -156,8 +163,6 @@ export function IvrSettings() {
         setEntitled(false);
       }
 
-      // 2. Fetch Phone Numbers
-      const numRes = await fetch('/api/phone-numbers');
       if (numRes.ok) {
         const nData = await numRes.json();
         const rawList = nData.phoneNumbers || nData.numbers || [];
@@ -173,11 +178,9 @@ export function IvrSettings() {
         );
       }
 
-      // 3. Fetch Org Users
       let rawUsers: any[] = [];
-      const uRes = await fetch('/api/users/manage');
-      if (uRes.ok) {
-        const uData = await uRes.json();
+      if (userRes.ok) {
+        const uData = await userRes.json();
         rawUsers = uData.members || uData.users || [];
       } else {
         const pRes = await fetch('/api/users/presence');
@@ -197,22 +200,6 @@ export function IvrSettings() {
             active: true,
           }))
       );
-
-      // 4. Fetch Call Queues (fallback check)
-      const qRes = await fetch('/api/queues');
-      if (qRes.ok) {
-        const qData = await qRes.json();
-        if (qData.entitled !== undefined) {
-          setCallQueueEntitled(Boolean(qData.entitled));
-        }
-        setOrgQueues(qData.queues || []);
-      }
-
-      // 5. Fetch Voicemail status (fallback check)
-      const vmRes = await fetch('/api/voicemails');
-      if (vmRes.ok) {
-        setVoicemailEntitled(true);
-      }
     } catch (err: any) {
       console.error('[IvrSettings] Error loading data:', err);
       setErrorMessage('Failed to load Call Menu configuration details.');
@@ -459,23 +446,25 @@ export function IvrSettings() {
         }
       }
 
-      // Save options
-      if (menuId) {
-        for (const opt of formData.options) {
-          const optRes = await fetch(`/api/ivr/${menuId}/options`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              digit: opt.digit,
-              destinationType: opt.destinationType,
-              destinationId: opt.destinationId || null,
-            }),
-          });
-          const optData = await optRes.json();
-          if (!optRes.ok || !optData.result?.success) {
-            throw new Error(optData.message || `Failed to save Press ${opt.digit}`);
-          }
-        }
+      // Save options concurrently
+      if (menuId && formData.options.length > 0) {
+        await Promise.all(
+          formData.options.map(async (opt) => {
+            const optRes = await fetch(`/api/ivr/${menuId}/options`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                digit: opt.digit,
+                destinationType: opt.destinationType,
+                destinationId: opt.destinationId || null,
+              }),
+            });
+            const optData = await optRes.json();
+            if (!optRes.ok || !optData.result?.success) {
+              throw new Error(optData.message || `Failed to save Press ${opt.digit}`);
+            }
+          })
+        );
       }
 
       // Assign phone number if selected
@@ -496,7 +485,7 @@ export function IvrSettings() {
 
       setSuccessMessage(editingMenuId ? 'Call Menu updated successfully.' : 'Call Menu created successfully.');
       setIsModalOpen(false);
-      await fetchData();
+      await fetchData(false);
     } catch (err: any) {
       console.error('[handleSaveIvr] Error:', err);
       setErrorMessage(err.message || 'Error saving Call Menu configuration.');
@@ -515,7 +504,7 @@ export function IvrSettings() {
       });
       if (res.ok) {
         setSuccessMessage(`Call Menu "${menu.name}" ${nextState ? 'enabled' : 'disabled'} successfully.`);
-        await fetchData();
+        await fetchData(false);
       }
     } catch (err) {
       console.error('Error toggling Call Menu status:', err);
