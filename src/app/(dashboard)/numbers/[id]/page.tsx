@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { PhoneNumberItem } from '../page';
 import { useAuth } from '@/components/providers/AuthProvider';
+import { GreetingsAudioSettings } from '@/components/numbers/GreetingsAudioSettings';
 
 export interface AssignmentMember {
   id: string;
@@ -1155,7 +1156,10 @@ export default function NumberDetailPage({ params }: { params: Promise<{ id: str
         </div>
       </Card>
 
-      {/* CARD 5 — ADDITIONAL NUMBER SETTINGS & LIFECYCLE */}
+      {/* CARD 5 — GREETINGS & AUDIO (PHASE 19F.1) */}
+      <GreetingsAudioSettings phoneNumberId={numberId} />
+
+      {/* CARD 6 — ADDITIONAL NUMBER SETTINGS & LIFECYCLE */}
       <Card>
         <CardHeader>
           <CardTitle className="text-sm font-bold text-slate-900 dark:text-slate-100">

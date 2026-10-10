@@ -21,6 +21,8 @@ export interface UseTwilioDeviceReturn {
   callState: CallState;
   callDuration: number;
   isMuted: boolean;
+  isHeld: boolean;
+  isTransferModalOpen: boolean;
   errorMessage: string | null;
   identity: string | null;
   autoRecordingEnabled: boolean;
@@ -37,6 +39,8 @@ export interface UseTwilioDeviceReturn {
   rejectIncomingCall: () => void;
   endCall: () => void;
   toggleMute: () => void;
+  toggleHold: () => Promise<void>;
+  setIsTransferModalOpen: (val: boolean) => void;
   clearError: () => void;
 }
 
@@ -51,6 +55,8 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
   const [callState, setCallState] = useState<CallState>('idle');
   const [callDuration, setCallDuration] = useState<number>(0);
   const [isMuted, setIsMuted] = useState<boolean>(false);
+  const [isHeld, setIsHeld] = useState<boolean>(false);
+  const [isTransferModalOpen, setIsTransferModalOpen] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [identity, setIdentity] = useState<string | null>(null);
   const [autoRecordingEnabled, setAutoRecordingEnabled] = useState<boolean>(true);
@@ -562,6 +568,31 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
     }
   }, [isMuted]);
 
+  // Toggle Hold / Resume
+  const toggleHold = useCallback(async () => {
+    const nextHold = !isHeld;
+    try {
+      const callSid = activeCallRef.current?.parameters?.CallSid || activeCallRef.current?.customParameters?.get?.('CallSid') || '';
+      const dbCallId = activeCallRef.current?.customParameters?.get?.('dbCallId') || activeCallRef.current?.parameters?.dbCallId || '';
+
+      const res = await fetch('/api/twilio/calls/hold', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          callSid,
+          dbCallId,
+          hold: nextHold,
+        }),
+      });
+
+      if (res.ok) {
+        setIsHeld(nextHold);
+      }
+    } catch (err) {
+      console.error('Error toggling call hold state:', err);
+    }
+  }, [isHeld]);
+
   const clearError = useCallback(() => {
     setErrorMessage(null);
   }, []);
@@ -585,6 +616,8 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
     callState,
     callDuration,
     isMuted,
+    isHeld,
+    isTransferModalOpen,
     errorMessage,
     identity,
     autoRecordingEnabled,
@@ -601,6 +634,8 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
     rejectIncomingCall,
     endCall,
     toggleMute,
+    toggleHold,
+    setIsTransferModalOpen,
     clearError,
   };
 }

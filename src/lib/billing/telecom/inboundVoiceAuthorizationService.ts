@@ -87,11 +87,14 @@ export class InboundVoiceAuthorizationService {
 
     // Offboarding Telecom Eligibility Interlock
     const { TelecomEligibilityService } = await import('@/lib/telephony/lifecycle/telecomEligibilityService');
-    const eligibility = await TelecomEligibilityService.canUseTelecom({
-      organizationId: phoneRecord.organization_id,
-      phoneNumberId: phoneRecord.id,
-      phoneNumberE164: cleanCalled,
-    });
+    const eligibility = await TelecomEligibilityService.canUseTelecom(
+      {
+        organizationId: phoneRecord.organization_id,
+        phoneNumberId: phoneRecord.id,
+        phoneNumberE164: cleanCalled,
+      },
+      client
+    );
 
     if (!eligibility.allowed) {
       throw new InboundVoiceAuthorizationError(eligibility.reason, 403, 'SERVICE_SUSPENDED');

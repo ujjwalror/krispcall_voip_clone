@@ -9,11 +9,14 @@ export class TelecomEligibilityService {
    * Consumed by inbound/outbound call and message routing.
    * STRICT FAIL-CLOSED GUARANTEE.
    */
-  static async canUseTelecom(params: {
-    organizationId: string;
-    phoneNumberId?: string;
-    phoneNumberE164?: string;
-  }): Promise<TelecomEligibilityResult> {
+  static async canUseTelecom(
+    params: {
+      organizationId: string;
+      phoneNumberId?: string;
+      phoneNumberE164?: string;
+    },
+    clientOverride?: any
+  ): Promise<TelecomEligibilityResult> {
     const blockers: string[] = [];
     const orgId = params.organizationId;
 
@@ -28,7 +31,7 @@ export class TelecomEligibilityService {
     }
 
     try {
-      const supabase = createAdminClient();
+      const supabase = clientOverride || createAdminClient();
 
       // 1. Resolve Organization SaaS entitlement status
       const { data: orgData, error: orgErr } = await (supabase as any)

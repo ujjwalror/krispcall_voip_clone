@@ -62,10 +62,13 @@ export class VoiceAuthorizationService {
 
     // Offboarding Telecom Eligibility Interlock
     const { TelecomEligibilityService } = await import('@/lib/telephony/lifecycle/telecomEligibilityService');
-    const eligibility = await TelecomEligibilityService.canUseTelecom({
-      organizationId,
-      phoneNumberE164: fromNumber,
-    });
+    const eligibility = await TelecomEligibilityService.canUseTelecom(
+      {
+        organizationId,
+        phoneNumberE164: fromNumber,
+      },
+      client
+    );
 
     if (!eligibility.allowed) {
       return {

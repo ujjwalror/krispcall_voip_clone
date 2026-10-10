@@ -1,22 +1,27 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Button } from '@/components/ui/Button';
-import { Phone, PhoneOff, Mic, MicOff, Loader2, CheckCircle2, User, AlertTriangle } from 'lucide-react';
+import { Phone, PhoneOff, Mic, MicOff, Loader2, CheckCircle2, User, AlertTriangle, Pause, Play, PhoneForwarded } from 'lucide-react';
 import { useTwilioDeviceContext } from '@/components/providers/TwilioDeviceProvider';
 import { formatDuration } from '@/lib/utils';
+import { TransferCallModal } from '@/components/call/TransferCallModal';
 
 export function GlobalActiveCall() {
   const {
     callState,
     callDuration,
     isMuted,
+    isHeld,
+    isTransferModalOpen,
     incomingCaller,
     activeDestination,
     activeCallContactName,
     displacedNotice,
     endCall,
     toggleMute,
+    toggleHold,
+    setIsTransferModalOpen,
   } = useTwilioDeviceContext();
 
   // If there's an incoming call ringing, GlobalIncomingCall takes priority
@@ -40,101 +45,137 @@ export function GlobalActiveCall() {
   const showSubNumber = activeCallContactName && activeDestination;
 
   return (
-    <div className="fixed top-3 left-3 right-3 sm:left-auto sm:right-5 sm:top-5 z-[9999] w-auto sm:w-96 max-w-full sm:max-w-sm rounded-2xl bg-slate-900 border-2 border-emerald-500/80 shadow-2xl p-4 flex flex-col gap-3 backdrop-blur-md animate-in fade-in slide-in-from-top-4">
-      {/* Header & Status Indicator */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="relative flex h-3 w-3">
-            {callState === 'connected' ? (
-              <>
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
-              </>
-            ) : (
-              <>
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500"></span>
-              </>
-            )}
-          </span>
-          <span className="text-xs font-bold text-slate-100 uppercase tracking-wider font-mono flex items-center gap-1.5">
-            {callState === 'connected' ? (
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-            ) : callState === 'connecting' ? (
-              <Loader2 className="w-3.5 h-3.5 text-amber-400 animate-spin" />
-            ) : (
-              <Phone className="w-3.5 h-3.5 text-amber-400 animate-bounce" />
-            )}
-            <span>Outbound Call</span>
+    <>
+      <div className="fixed top-3 left-3 right-3 sm:left-auto sm:right-5 sm:top-5 z-[9999] w-auto sm:w-96 max-w-full sm:max-w-sm rounded-2xl bg-slate-900 border-2 border-emerald-500/80 shadow-2xl p-4 flex flex-col gap-3 backdrop-blur-md animate-in fade-in slide-in-from-top-4">
+        {/* Header & Status Indicator */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="relative flex h-3 w-3">
+              {callState === 'connected' ? (
+                <>
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                </>
+              ) : (
+                <>
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500"></span>
+                </>
+              )}
+            </span>
+            <span className="text-xs font-bold text-slate-100 uppercase tracking-wider font-mono flex items-center gap-1.5">
+              {callState === 'connected' ? (
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              ) : callState === 'connecting' ? (
+                <Loader2 className="w-3.5 h-3.5 text-amber-400 animate-spin" />
+              ) : (
+                <Phone className="w-3.5 h-3.5 text-amber-400 animate-bounce" />
+              )}
+              <span>{isHeld ? 'Call On Hold' : 'Active Call'}</span>
+            </span>
+          </div>
+
+          <span
+            className={`text-[10px] font-mono font-semibold px-2.5 py-0.5 rounded-full border ${
+              isHeld
+                ? 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/90 dark:border-amber-700 dark:text-amber-300'
+                : callState === 'connected'
+                ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/90 dark:border-emerald-700 dark:text-emerald-300'
+                : callState === 'connecting' || callState === 'ringing'
+                ? 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/90 dark:border-amber-700 dark:text-amber-300'
+                : 'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950/90 dark:border-rose-700 dark:text-rose-300'
+            }`}
+          >
+            {callState === 'connected'
+              ? formatDuration(callDuration)
+              : callState === 'connecting'
+              ? 'Connecting...'
+              : callState === 'ringing'
+              ? 'Ringing...'
+              : callState === 'ended'
+              ? 'Call Ended'
+              : 'Call Failed'}
           </span>
         </div>
 
-        <span
-          className={`text-[10px] font-mono font-semibold px-2.5 py-0.5 rounded-full border ${
-            callState === 'connected'
-              ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/90 dark:border-emerald-700 dark:text-emerald-300'
-              : callState === 'connecting' || callState === 'ringing'
-              ? 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/90 dark:border-amber-700 dark:text-amber-300'
-              : 'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950/90 dark:border-rose-700 dark:text-rose-300'
-          }`}
-        >
-          {callState === 'connected'
-            ? formatDuration(callDuration)
-            : callState === 'connecting'
-            ? 'Connecting...'
-            : callState === 'ringing'
-            ? 'Ringing...'
-            : callState === 'ended'
-            ? 'Call Ended'
-            : 'Call Failed'}
-        </span>
-      </div>
+        {displacedNotice && (
+          <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <span className="leading-snug">{displacedNotice}</span>
+          </div>
+        )}
 
-      {displacedNotice && (
-        <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2">
-          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-          <span className="leading-snug">{displacedNotice}</span>
+        {/* Contact Name & Number Info */}
+        <div className="py-1">
+          <h4 className="text-base font-extrabold text-slate-100 font-mono tracking-wide flex items-center gap-2 truncate">
+            <User className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="truncate">{displayName}</span>
+          </h4>
+          {showSubNumber && (
+            <p className="text-xs text-slate-400 font-mono mt-0.5 pl-6">{activeDestination}</p>
+          )}
         </div>
-      )}
 
-      {/* Contact Name & Number Info */}
-      <div className="py-1">
-        <h4 className="text-base font-extrabold text-slate-100 font-mono tracking-wide flex items-center gap-2 truncate">
-          <User className="w-4 h-4 text-emerald-400 shrink-0" />
-          <span className="truncate">{displayName}</span>
-        </h4>
-        {showSubNumber && (
-          <p className="text-xs text-slate-400 font-mono mt-0.5 pl-6">{activeDestination}</p>
+        {/* Call Controls: Mute, Hold / Resume, Transfer, End Call */}
+        {(callState === 'connecting' || callState === 'ringing' || callState === 'connected') && (
+          <div className="grid grid-cols-4 gap-1.5 pt-1">
+            {callState === 'connected' && (
+              <>
+                <Button
+                  variant={isMuted ? 'danger' : 'secondary'}
+                  size="sm"
+                  className="font-semibold text-[11px] py-2 flex flex-col items-center justify-center gap-0.5 px-1"
+                  onClick={toggleMute}
+                  title={isMuted ? 'Unmute Microphone' : 'Mute Microphone'}
+                >
+                  {isMuted ? <MicOff className="w-3.5 h-3.5 text-rose-400" /> : <Mic className="w-3.5 h-3.5" />}
+                  <span>{isMuted ? 'Unmute' : 'Mute'}</span>
+                </Button>
+
+                <Button
+                  variant={isHeld ? 'amber' as any : 'secondary'}
+                  size="sm"
+                  className="font-semibold text-[11px] py-2 flex flex-col items-center justify-center gap-0.5 px-1"
+                  onClick={toggleHold}
+                  title={isHeld ? 'Resume Call' : 'Hold Call'}
+                >
+                  {isHeld ? <Play className="w-3.5 h-3.5 text-amber-400" /> : <Pause className="w-3.5 h-3.5" />}
+                  <span>{isHeld ? 'Resume' : 'Hold'}</span>
+                </Button>
+
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="font-semibold text-[11px] py-2 flex flex-col items-center justify-center gap-0.5 px-1"
+                  onClick={() => setIsTransferModalOpen(true)}
+                  title="Transfer Call"
+                >
+                  <PhoneForwarded className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Transfer</span>
+                </Button>
+              </>
+            )}
+
+            <Button
+              variant="danger"
+              size="sm"
+              className={`font-bold py-2 shadow-lg shadow-rose-600/30 active:scale-95 transition-all text-[11px] flex flex-col items-center justify-center gap-0.5 px-1 ${
+                callState !== 'connected' ? 'col-span-4' : ''
+              }`}
+              onClick={endCall}
+            >
+              <PhoneOff className="w-3.5 h-3.5" />
+              <span>End Call</span>
+            </Button>
+          </div>
         )}
       </div>
 
-      {/* Call Controls: Mute & Hang Up */}
-      {(callState === 'connecting' || callState === 'ringing' || callState === 'connected') && (
-        <div className="flex items-center gap-2.5 pt-1">
-          {callState === 'connected' && (
-            <Button
-              variant={isMuted ? 'danger' : 'secondary'}
-              size="md"
-              className="flex-1 font-semibold text-xs py-2"
-              onClick={toggleMute}
-              title={isMuted ? 'Unmute Microphone' : 'Mute Microphone'}
-            >
-              {isMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-              <span>{isMuted ? 'Unmute' : 'Mute'}</span>
-            </Button>
-          )}
-
-          <Button
-            variant="danger"
-            size="md"
-            className="flex-1 font-bold py-2 shadow-lg shadow-rose-600/30 active:scale-95 transition-all text-xs"
-            onClick={endCall}
-          >
-            <PhoneOff className="w-3.5 h-3.5" />
-            <span>Hang Up</span>
-          </Button>
-        </div>
-      )}
-    </div>
+      {/* Transfer Call Modal */}
+      <TransferCallModal
+        isOpen={isTransferModalOpen}
+        onClose={() => setIsTransferModalOpen(false)}
+      />
+    </>
   );
 }
