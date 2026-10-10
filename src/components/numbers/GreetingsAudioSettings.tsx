@@ -1,9 +1,8 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { Input } from '@/components/ui/Input';
 import {
   Volume2,
   Mic,
@@ -14,11 +13,8 @@ import {
   CheckCircle2,
   AlertCircle,
   Upload,
-  Play,
   Trash2,
   Info,
-  Layers,
-  Sparkles,
   PhoneCall,
   PhoneForwarded,
 } from 'lucide-react';
@@ -43,7 +39,7 @@ export const VOICE_OPTIONS = [
   { value: 'Polly.Joanna', label: 'Joanna (US Female - Soft & Clear)' },
   { value: 'Polly.Matthew', label: 'Matthew (US Male - Professional)' },
   { value: 'Polly.Amy', label: 'Amy (UK Female - Professional)' },
-  { value: 'Polly.Brian', label: 'Brian (UK Male - Authoritative)' },
+  { value: 'Polly.Brian', label: 'Brian (UK Male - Clear & Direct)' },
 ];
 
 export function GreetingsAudioSettings({ phoneNumberId }: { phoneNumberId: string }) {
@@ -240,7 +236,7 @@ export function GreetingsAudioSettings({ phoneNumberId }: { phoneNumberId: strin
             <span>Greetings & Audio</span>
           </h3>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Configure spoken greetings, voicemail prompts, hold music, and transfer audio for this phone number.
+            Configure spoken greetings, voicemail prompts, hold audio, and transfer audio for this phone number.
           </p>
         </div>
 
@@ -328,14 +324,14 @@ export function GreetingsAudioSettings({ phoneNumberId }: { phoneNumberId: strin
         </button>
       </div>
 
-      {/* Precedence Notice */}
+      {/* Call Menu Precedence Banner for Welcome Tab */}
       {activeTab === 'welcome' && (
         <div className="p-3.5 rounded-xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800/60 text-xs text-blue-900 dark:text-blue-200 flex items-start gap-2.5">
           <Info className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
           <div>
-            <span className="font-bold block">Routing Precedence Note</span>
+            <span className="font-bold block">Using a Call Menu?</span>
             <span>
-              If this number is routed to a Call Menu (IVR), the Call Menu&apos;s greeting is authoritative and will play first. Welcome Greeting configured here applies to Web &amp; Phone and Forward Calls routing modes.
+              If this number uses a Call Menu, the greeting from your Call Menu will be used instead of this Welcome Greeting.
             </span>
           </div>
         </div>
@@ -402,8 +398,16 @@ export function GreetingsAudioSettings({ phoneNumberId }: { phoneNumberId: strin
                 <Volume2 className="w-4 h-4" />
               </div>
               <div>
-                <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">None / Default</h4>
-                <p className="text-[11px] text-slate-500 mt-0.5">Standard system behavior</p>
+                <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">None</h4>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  {activeTab === 'welcome'
+                    ? "Don't play a welcome greeting"
+                    : activeTab === 'voicemail'
+                    ? 'Play default voicemail tone'
+                    : activeTab === 'hold'
+                    ? 'Use standard hold audio'
+                    : 'Use standard transfer audio'}
+                </p>
               </div>
             </div>
           </div>
@@ -503,8 +507,14 @@ export function GreetingsAudioSettings({ phoneNumberId }: { phoneNumberId: strin
       )}
 
       {categoryConfig.mode === 'none' && (
-        <div className="p-4 rounded-xl bg-slate-100 dark:bg-slate-900 text-xs text-slate-500 dark:text-slate-400 text-center font-medium">
-          Default system behavior active. No custom audio or greeting will be played for {activeTab}.
+        <div className="p-4 rounded-xl bg-slate-100 dark:bg-slate-900 text-xs text-slate-600 dark:text-slate-400 text-center font-medium">
+          {activeTab === 'welcome'
+            ? 'No welcome greeting will play. Calls will continue to your selected incoming call strategy.'
+            : activeTab === 'voicemail'
+            ? 'No custom voicemail greeting will play. The caller will continue directly to the voicemail tone.'
+            : activeTab === 'hold'
+            ? 'No custom hold message will play. Callers will hear the standard call-on-hold audio.'
+            : 'No custom transfer audio will play. Callers will hear standard call progress audio while being connected.'}
         </div>
       )}
     </Card>
