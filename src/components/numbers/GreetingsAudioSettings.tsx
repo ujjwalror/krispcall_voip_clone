@@ -17,6 +17,8 @@ import {
   Info,
   PhoneCall,
   PhoneForwarded,
+  Play,
+  Square,
 } from 'lucide-react';
 
 export interface CategoryAudioConfig {
@@ -35,11 +37,21 @@ export interface NumberAudioSettingsData {
   transfer: CategoryAudioConfig;
 }
 
-export const VOICE_OPTIONS = [
-  { value: 'Polly.Joanna', label: 'Joanna (US Female - Soft & Clear)' },
-  { value: 'Polly.Matthew', label: 'Matthew (US Male - Professional)' },
-  { value: 'Polly.Amy', label: 'Amy (UK Female - Professional)' },
-  { value: 'Polly.Brian', label: 'Brian (UK Male - Clear & Direct)' },
+export interface TtsVoiceOption {
+  id: string;
+  name: string;
+  gender: string;
+  accent: string;
+  label: string;
+}
+
+export const VERIFIED_TTS_VOICES: TtsVoiceOption[] = [
+  { id: 'Polly.Joanna', name: 'Joanna', gender: 'Female', accent: 'US English', label: 'Joanna — Female · US English' },
+  { id: 'Polly.Matthew', name: 'Matthew', gender: 'Male', accent: 'US English', label: 'Matthew — Male · US English' },
+  { id: 'Polly.Amy', name: 'Amy', gender: 'Female', accent: 'UK English', label: 'Amy — Female · UK English' },
+  { id: 'Polly.Brian', name: 'Brian', gender: 'Male', accent: 'UK English', label: 'Brian — Male · UK English' },
+  { id: 'Polly.Salli', name: 'Salli', gender: 'Female', accent: 'US English', label: 'Salli — Female · US English' },
+  { id: 'Polly.Joey', name: 'Joey', gender: 'Male', accent: 'US English', label: 'Joey — Male · US English' },
 ];
 
 export function GreetingsAudioSettings({ phoneNumberId }: { phoneNumberId: string }) {
@@ -50,6 +62,12 @@ export function GreetingsAudioSettings({ phoneNumberId }: { phoneNumberId: strin
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<'welcome' | 'voicemail' | 'hold' | 'transfer'>('welcome');
+
+  const [previewState, setPreviewState] = useState<{ category: string | null; isPlaying: boolean; isLoading: boolean }>({
+    category: null,
+    isPlaying: false,
+    isLoading: false,
+  });
 
   const [audioSettings, setAudioSettings] = useState<NumberAudioSettingsData>({
     welcome: { mode: 'none', ttsMessage: 'Thank you for calling. Please stay on the line.', ttsVoice: 'Polly.Joanna', assetId: null },
@@ -205,6 +223,74 @@ export function GreetingsAudioSettings({ phoneNumberId }: { phoneNumberId: strin
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handlePreviewTts = async (category: keyof NumberAudioSettingsData) => {
+    const config = audioSettings[category];
+    if (!config.ttsMessage || !config.ttsMessage.trim()) {
+      setErrorMessage('Please enter a spoken message before playing preview.');
+      return;
+    }
+
+    setPreviewState({ category, isPlaying: false, isLoading: true });
+    setErrorMessage(null);
+
+    try {
+      const res = await fetch(`/api/phone-numbers/${phoneNumberId}/audio/preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: config.ttsMessage,
+          voice: config.ttsVoice,
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.message || 'Failed to generate audio preview.');
+      }
+
+      // Play preview using Web Speech API in browser
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+
+        const utterance = new SpeechSynthesisUtterance(json.text);
+        
+        if (json.voice.includes('Amy') || json.voice.includes('Brian')) {
+          utterance.lang = 'en-GB';
+        } else {
+          utterance.lang = 'en-US';
+        }
+
+        utterance.onstart = () => {
+          setPreviewState({ category, isPlaying: true, isLoading: false });
+        };
+
+        utterance.onend = () => {
+          setPreviewState({ category: null, isPlaying: false, isLoading: false });
+        };
+
+        utterance.onerror = () => {
+          setPreviewState({ category: null, isPlaying: false, isLoading: false });
+        };
+
+        window.speechSynthesis.speak(utterance);
+      } else {
+        setPreviewState({ category: null, isPlaying: false, isLoading: false });
+        setSuccessMessage('Preview validated successfully.');
+      }
+    } catch (err: any) {
+      console.error('[PreviewTts Error]', err);
+      setErrorMessage(err.message || 'Error generating preview.');
+      setPreviewState({ category: null, isPlaying: false, isLoading: false });
+    }
+  };
+
+  const handleStopPreview = () => {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    setPreviewState({ category: null, isPlaying: false, isLoading: false });
   };
 
   if (isLoading) {
@@ -414,7 +500,7 @@ export function GreetingsAudioSettings({ phoneNumberId }: { phoneNumberId: strin
         </div>
       </div>
 
-      {/* Mode Details Section */}
+      {/* Mode Details Section: Text to Speech with Voice Selector & Preview */}
       {categoryConfig.mode === 'tts' && (
         <div className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-4">
           <div className="space-y-1.5">
@@ -430,21 +516,51 @@ export function GreetingsAudioSettings({ phoneNumberId }: { phoneNumberId: strin
             />
           </div>
 
-          <div className="space-y-1.5 max-w-sm">
-            <label className="text-xs font-bold text-slate-900 dark:text-slate-100">
-              Spoken Voice
-            </label>
-            <select
-              value={categoryConfig.ttsVoice}
-              onChange={(e) => handleVoiceChange(currentCategoryKey, e.target.value)}
-              className="w-full p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs text-slate-900 dark:text-slate-100 font-semibold"
-            >
-              {VOICE_OPTIONS.map((v) => (
-                <option key={v.value} value={v.value}>
-                  {v.label}
-                </option>
-              ))}
-            </select>
+          <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+            <div className="space-y-1.5 max-w-sm flex-1">
+              <label className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                Voice Selection
+              </label>
+              <select
+                value={categoryConfig.ttsVoice}
+                onChange={(e) => handleVoiceChange(currentCategoryKey, e.target.value)}
+                className="w-full p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs text-slate-900 dark:text-slate-100 font-semibold"
+              >
+                {VERIFIED_TTS_VOICES.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Preview Button */}
+            {previewState.category === currentCategoryKey && previewState.isPlaying ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleStopPreview}
+                className="text-xs border-amber-300 bg-amber-50 dark:bg-amber-950/80 text-amber-800 dark:text-amber-200 font-bold shrink-0 flex items-center gap-1.5"
+              >
+                <Square className="w-3.5 h-3.5 text-amber-600 fill-current" />
+                <span>Stop Preview</span>
+              </Button>
+            ) : (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => handlePreviewTts(currentCategoryKey)}
+                disabled={previewState.isLoading || !categoryConfig.ttsMessage.trim()}
+                className="text-xs font-bold shrink-0 flex items-center gap-1.5"
+              >
+                {previewState.category === currentCategoryKey && previewState.isLoading ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />
+                ) : (
+                  <Play className="w-3.5 h-3.5 text-blue-600 fill-current" />
+                )}
+                <span>Preview</span>
+              </Button>
+            )}
           </div>
         </div>
       )}
