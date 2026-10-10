@@ -259,28 +259,23 @@ export function SharedAccessSettings({
   return (
     <>
       <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center justify-between">
-            <span className="flex items-center gap-2">
-              <Users className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-              <span>Shared Access</span>
-            </span>
-            {canManageNumbers && (
-              <Button
-                size="sm"
-                variant="primary"
-                disabled={!isOperational || isLoading}
-                onClick={handleOpenPicker}
-                className="text-xs px-3 h-8 gap-1.5 font-semibold"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Add User
-              </Button>
-            )}
+        <CardHeader className="flex flex-row items-center justify-between gap-4">
+          <CardTitle className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+            <Users className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+            <span>Shared Access</span>
           </CardTitle>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Share this number with other members
-          </p>
+          {canManageNumbers && (
+            <Button
+              size="sm"
+              variant="primary"
+              disabled={!isOperational || isLoading}
+              onClick={handleOpenPicker}
+              className="text-xs px-3 h-8 gap-1.5 font-semibold shrink-0"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add User
+            </Button>
+          )}
         </CardHeader>
 
         <div className="p-4 space-y-4">
