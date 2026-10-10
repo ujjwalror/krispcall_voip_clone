@@ -17,6 +17,9 @@ import {
   ChevronRight,
   Copy,
   Check,
+  XCircle,
+  Info,
+  FileText,
 } from 'lucide-react';
 import { useAuth } from '@/components/providers/AuthProvider';
 
@@ -46,6 +49,9 @@ export default function MyNumbersPage() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // Port In Explanatory Modal State
+  const [isPortInModalOpen, setIsPortInModalOpen] = useState<boolean>(false);
 
   const fetchNumbers = useCallback(async () => {
     setIsLoading(true);
@@ -106,18 +112,14 @@ export default function MyNumbersPage() {
           </p>
         </div>
 
-        {/* HEADER ACTIONS: Port Existing Number & Add New Number (Upcoming) */}
+        {/* HEADER ACTIONS: Port In Existing Number & Buy New Number */}
         <div className="flex items-center gap-2 shrink-0">
           <button
-            disabled
-            title="Number porting workflow will be enabled in an upcoming release."
-            className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed flex items-center gap-1.5 border border-slate-200 dark:border-slate-700/60 opacity-80"
+            onClick={() => setIsPortInModalOpen(true)}
+            className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-1.5 border border-slate-200 dark:border-slate-800 shadow-sm transition-all"
           >
-            <ArrowUpRight className="w-3.5 h-3.5" />
-            <span>Port Existing Number</span>
-            <span className="px-1.5 py-0.2 rounded-md bg-slate-200 dark:bg-slate-700 text-[10px] font-bold text-slate-600 dark:text-slate-300">
-              Upcoming
-            </span>
+            <ArrowUpRight className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+            <span>Port In Existing Number</span>
           </button>
 
           <Link
@@ -125,10 +127,68 @@ export default function MyNumbersPage() {
             className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-1.5 shadow-sm transition-all"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>Add New Number</span>
+            <span>Buy New Number</span>
           </Link>
         </div>
       </div>
+
+      {/* PORT IN EXPLANATORY MODAL */}
+      {isPortInModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-xl animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-2">
+                <ArrowUpRight className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                  Port In Existing Number
+                </h3>
+              </div>
+              <button
+                onClick={() => setIsPortInModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              Transfer your existing business telephone numbers from your current carrier into VoIP Hub without losing customer calls.
+            </p>
+
+            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-2 text-xs">
+              <span className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                <FileText className="w-4 h-4 text-blue-500" />
+                <span>Porting Process Requirements</span>
+              </span>
+              <ul className="list-disc list-inside space-y-1 text-slate-600 dark:text-slate-300 font-mono text-[11px]">
+                <li>Letter of Authorization (LOA) signed by authorized account owner</li>
+                <li>Recent copy of carrier billing statement (within 30 days)</li>
+                <li>Account Number and Porting PIN/Passcode from existing provider</li>
+                <li>Estimated transfer time: 5–10 business days</li>
+              </ul>
+            </div>
+
+            <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 text-amber-800 dark:text-amber-300 text-xs flex items-start gap-2">
+              <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold block">Foundation Readiness Notice</span>
+                <span>
+                  Port-In submission foundation is configured. Backend carrier provider submission is currently <strong>NOT_READY</strong> in this phase. Submitting an inquiry creates 0 provider mutations.
+                </span>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <Button
+                onClick={() => setIsPortInModalOpen(false)}
+                className="text-xs bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4"
+              >
+                Got It
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Content Area */}
       {isLoading ? (
@@ -175,21 +235,18 @@ export default function MyNumbersPage() {
             </div>
             <div className="flex items-center justify-center gap-3 pt-2">
               <button
-                disabled
-                className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed flex items-center gap-1.5 border border-slate-200 dark:border-slate-700/60"
+                onClick={() => setIsPortInModalOpen(true)}
+                className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-1.5 border border-slate-200 dark:border-slate-800 shadow-sm transition-all"
               >
-                <ArrowUpRight className="w-3.5 h-3.5" />
-                <span>Port Existing Number</span>
-                <span className="px-1.5 py-0.2 rounded-md bg-slate-200 dark:bg-slate-700 text-[10px] font-bold text-slate-600 dark:text-slate-300">
-                  Upcoming
-                </span>
+                <ArrowUpRight className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                <span>Port In Existing Number</span>
               </button>
               <Link
                 href="/numbers/marketplace"
                 className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-1.5 shadow-sm transition-all"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>Add New Number</span>
+                <span>Buy New Number</span>
               </Link>
             </div>
           </div>
@@ -292,7 +349,6 @@ function NumberRow({ item, onClick }: { item: PhoneNumberItem; onClick: () => vo
             <Phone className="w-5 h-5" />
           </div>
           <div>
-            {/* Friendly Name as Prominent Header */}
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-bold text-base text-slate-900 dark:text-slate-100">
                 {item.friendly_name || 'Business Number'}
@@ -313,7 +369,6 @@ function NumberRow({ item, onClick }: { item: PhoneNumberItem; onClick: () => vo
               </span>
             </div>
 
-            {/* E.164 Telephone Number + Copy Action */}
             <div className="flex items-center gap-2 mt-0.5">
               <span className="font-mono text-xs font-semibold text-slate-600 dark:text-slate-300">
                 {item.phone_number}
@@ -336,7 +391,6 @@ function NumberRow({ item, onClick }: { item: PhoneNumberItem; onClick: () => vo
           </div>
         </div>
 
-        {/* Dynamic Capabilities & Detail Route Indicator */}
         <div className="flex items-center gap-4 justify-between sm:justify-end">
           <div className="flex items-center gap-1.5">
             {!hasAnyCapability ? (
@@ -372,4 +426,3 @@ function NumberRow({ item, onClick }: { item: PhoneNumberItem; onClick: () => vo
     </Card>
   );
 }
-

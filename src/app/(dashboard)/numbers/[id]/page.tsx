@@ -7,8 +7,6 @@ import { Button } from '@/components/ui/Button';
 import {
   ArrowLeft,
   Phone,
-  PhoneCall,
-  Sliders,
   AlertTriangle,
   Loader2,
   RefreshCw,
@@ -23,10 +21,13 @@ import {
   Plus,
   XCircle,
   ExternalLink,
+  ShieldCheck,
 } from 'lucide-react';
 import { PhoneNumberItem } from '../page';
 import { useAuth } from '@/components/providers/AuthProvider';
+import { NumberNotificationsSettings } from '@/components/numbers/NumberNotificationsSettings';
 import { GreetingsAudioSettings } from '@/components/numbers/GreetingsAudioSettings';
+import { NumberLifecycleSettings } from '@/components/numbers/NumberLifecycleSettings';
 
 export interface AssignmentMember {
   id: string;
@@ -472,7 +473,6 @@ export default function NumberDetailPage({ params }: { params: Promise<{ id: str
   const hasSms = phoneNumber.capabilities_sms === true;
   const hasMms = phoneNumber.capabilities_mms === true;
   const hasAnyCapability = hasVoice || hasSms || hasMms;
-  const isNumberOperational = phoneNumber.active === true && phoneNumber.status === 'active';
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-16">
@@ -517,7 +517,7 @@ export default function NumberDetailPage({ params }: { params: Promise<{ id: str
         </div>
       )}
 
-      {/* CARD 1 — NUMBER IDENTITY / HEADER */}
+      {/* 1. NUMBER CARD / NUMBER DETAILS */}
       <Card className="border-slate-200 dark:border-slate-800 bg-gradient-to-br from-white via-slate-50/50 to-blue-50/20 dark:from-slate-900 dark:via-slate-900/95 dark:to-blue-950/20">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 p-6">
           <div className="flex items-start gap-4">
@@ -651,7 +651,10 @@ export default function NumberDetailPage({ params }: { params: Promise<{ id: str
         </div>
       </Card>
 
-      {/* CARD 2 — CALLER ID (PHASE 19D.1A REDESIGN) */}
+      {/* 2. NOTIFICATIONS (NEW - ABOVE CALLER ID) */}
+      <NumberNotificationsSettings phoneNumberId={numberId} />
+
+      {/* 3. CALLER ID */}
       <Card>
         <CardHeader>
           <CardTitle className="text-sm font-bold text-slate-900 dark:text-slate-100">
@@ -714,7 +717,6 @@ export default function NumberDetailPage({ params }: { params: Promise<{ id: str
       {isExternalModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-xl animate-in fade-in zoom-in-95 duration-150">
-            {/* Modal Header */}
             <div className="flex items-start justify-between">
               <div>
                 <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">
@@ -779,7 +781,6 @@ export default function NumberDetailPage({ params }: { params: Promise<{ id: str
               </div>
             ) : (
               <div className="space-y-4 text-xs pt-1">
-                {/* Country Code Select */}
                 <div className="space-y-1">
                   <label className="font-bold text-slate-900 dark:text-slate-100 block">
                     Country Code
@@ -796,7 +797,6 @@ export default function NumberDetailPage({ params }: { params: Promise<{ id: str
                   </select>
                 </div>
 
-                {/* Phone Number Input */}
                 <div className="space-y-1">
                   <label className="font-bold text-slate-900 dark:text-slate-100 block">
                     Phone Number
@@ -810,7 +810,6 @@ export default function NumberDetailPage({ params }: { params: Promise<{ id: str
                   />
                 </div>
 
-                {/* Modal Actions */}
                 <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
                   <Button
                     variant="outline"
@@ -836,13 +835,13 @@ export default function NumberDetailPage({ params }: { params: Promise<{ id: str
         </div>
       )}
 
-      {/* CARD 3 — SHARED ACCESS & TEAM MEMBER ASSIGNMENTS */}
+      {/* 4. SHARED ACCESS & 5. TEAM MEMBER ASSIGNMENT */}
       <Card>
         <CardHeader>
           <CardTitle className="text-sm flex items-center justify-between">
             <span className="flex items-center gap-2">
               <Users className="w-4 h-4 text-blue-500" />
-              <span>Shared Access & Team Member Assignments</span>
+              <span>Shared Access & Team Member Assignment</span>
             </span>
             <span className="text-[10px] font-semibold text-slate-400">
               {canManageNumbers ? 'Owner / Admin Control' : 'Read-Only Access'}
@@ -851,7 +850,7 @@ export default function NumberDetailPage({ params }: { params: Promise<{ id: str
         </CardHeader>
         <div className="p-4 space-y-4">
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Choose which active team members in your organization can use this business number for outbound caller ID and receive inbound calls.
+            Choose which active eligible team members in your workspace can use this business number for outbound caller ID and receive inbound calls.
           </p>
 
           {isLoadingAssignments ? (
@@ -945,7 +944,7 @@ export default function NumberDetailPage({ params }: { params: Promise<{ id: str
         </div>
       </Card>
 
-      {/* CARD 4 — INCOMING CALL STRATEGY (SIMPLIFIED PHASE 19D.1A UX) */}
+      {/* 6. INCOMING CALL STRATEGY */}
       <Card>
         <CardHeader>
           <CardTitle className="text-sm font-bold text-slate-900 dark:text-slate-100">
@@ -1156,60 +1155,15 @@ export default function NumberDetailPage({ params }: { params: Promise<{ id: str
         </div>
       </Card>
 
-      {/* CARD 5 — GREETINGS & AUDIO (PHASE 19F.1) */}
+      {/* 7. GREETINGS & AUDIO (SINGLE AUTHORITATIVE SECTION) */}
       <GreetingsAudioSettings phoneNumberId={numberId} />
 
-      {/* CARD 6 — ADDITIONAL NUMBER SETTINGS & LIFECYCLE */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-bold text-slate-900 dark:text-slate-100">
-            Additional Settings & Lifecycle
-          </CardTitle>
-        </CardHeader>
-        <div className="p-4 space-y-3 text-xs">
-          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200/60 dark:border-slate-800/60 flex items-center justify-between">
-            <div>
-              <span className="font-semibold text-slate-800 dark:text-slate-200 block">Greetings & Audio</span>
-              <span className="text-[11px] text-slate-500">Welcome greeting and hold audio selection</span>
-            </div>
-            <span className="font-semibold text-slate-500">Default</span>
-          </div>
-
-          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200/60 dark:border-slate-800/60 flex items-center justify-between">
-            <div>
-              <span className="font-semibold text-slate-800 dark:text-slate-200 block">Notifications</span>
-              <span className="text-[11px] text-slate-500">Missed call and event alert notifications</span>
-            </div>
-            <span className="font-semibold text-slate-500">Workspace Admins</span>
-          </div>
-
-          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200/60 dark:border-slate-800/60 flex items-center justify-between">
-            <div>
-              <span className="font-semibold text-slate-800 dark:text-slate-200 block">Port Out Number</span>
-              <span className="text-[11px] text-slate-500">Request carrier porting instructions for this line</span>
-            </div>
-            <Link
-              href={`/api/phone-numbers/${numberId}/port-out`}
-              className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline"
-            >
-              Request Instructions &rarr;
-            </Link>
-          </div>
-
-          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200/60 dark:border-slate-800/60 flex items-center justify-between">
-            <div>
-              <span className="font-semibold text-slate-800 dark:text-slate-200 block">Voluntary Release</span>
-              <span className="text-[11px] text-slate-500">Voluntarily relinquish ownership of this phone line</span>
-            </div>
-            <Link
-              href={`/billing/numbers`}
-              className="text-xs font-semibold text-rose-600 dark:text-rose-400 hover:underline"
-            >
-              Voluntary Release &rarr;
-            </Link>
-          </div>
-        </div>
-      </Card>
+      {/* 8. NUMBER LIFECYCLE (PORT OUT & RELEASE NUMBER) */}
+      <NumberLifecycleSettings
+        phoneNumberId={numberId}
+        phoneNumberE164={phoneNumber.phone_number}
+        friendlyName={phoneNumber.friendly_name}
+      />
     </div>
   );
 }
