@@ -28,6 +28,7 @@ import { useAuth } from '@/components/providers/AuthProvider';
 import { NumberNotificationsSettings } from '@/components/numbers/NumberNotificationsSettings';
 import { GreetingsAudioSettings } from '@/components/numbers/GreetingsAudioSettings';
 import { NumberLifecycleSettings } from '@/components/numbers/NumberLifecycleSettings';
+import { SharedAccessSettings } from '@/components/numbers/SharedAccessSettings';
 
 export interface AssignmentMember {
   id: string;
@@ -163,26 +164,6 @@ export default function NumberDetailPage({ params }: { params: Promise<{ id: str
     }
   }, []);
 
-  // Fetch Team Assignments
-  const fetchAssignments = useCallback(async () => {
-    setIsLoadingAssignments(true);
-    try {
-      const res = await fetch(`/api/phone-numbers/${numberId}/assignments`);
-      if (res.ok) {
-        const json = await res.json();
-        if (json.canManage) {
-          setAssignmentMembers(json.members || []);
-        } else {
-          setIsAssignedToSelf(Boolean(json.isAssigned));
-        }
-      }
-    } catch (err) {
-      console.error('[NumberDetailPage] Error fetching assignments:', err);
-    } finally {
-      setIsLoadingAssignments(false);
-    }
-  }, [numberId]);
-
   // Fetch IVR Menus & Entitlements
   const fetchIvrMenus = useCallback(async () => {
     setIsLoadingIvrMenus(true);
@@ -216,14 +197,6 @@ export default function NumberDetailPage({ params }: { params: Promise<{ id: str
     }
   }, []);
 
-  useEffect(() => {
-    fetchNumberDetail();
-    fetchAllOrgNumbers();
-    fetchAssignments();
-    fetchIvrMenus();
-    fetchVoicemailEntitlement();
-  }, [fetchNumberDetail, fetchAllOrgNumbers, fetchAssignments, fetchIvrMenus, fetchVoicemailEntitlement]);
-
   // Copy E.164 Action
   const handleCopyNumber = () => {
     if (phoneNumber?.phone_number) {
@@ -233,34 +206,12 @@ export default function NumberDetailPage({ params }: { params: Promise<{ id: str
     }
   };
 
-  // Toggle Assignment
-  const handleToggleAssignment = async (targetUserId: string, currentAssigned: boolean) => {
-    setTogglingUserIds((prev) => ({ ...prev, [targetUserId]: true }));
-    setMutationError(null);
-    try {
-      const method = currentAssigned ? 'DELETE' : 'POST';
-      const res = await fetch(`/api/phone-numbers/${numberId}/assignments`, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: targetUserId }),
-      });
-
-      const json = await res.json();
-      if (res.ok && json.success) {
-        setAssignmentMembers((prev) =>
-          prev.map((m) => (m.id === targetUserId ? { ...m, is_assigned: !currentAssigned } : m))
-        );
-      } else {
-        setMutationError(json.message || 'Failed to update team member assignment.');
-      }
-    } catch (err: any) {
-      console.error('[NumberDetailPage] Toggle assignment error:', err);
-      setMutationError('Network error updating assignment.');
-    } finally {
-      setIsLoadingAssignments(false);
-      setTogglingUserIds((prev) => ({ ...prev, [targetUserId]: false }));
-    }
-  };
+  useEffect(() => {
+    fetchNumberDetail();
+    fetchAllOrgNumbers();
+    fetchIvrMenus();
+    fetchVoicemailEntitlement();
+  }, [fetchNumberDetail, fetchAllOrgNumbers, fetchIvrMenus, fetchVoicemailEntitlement]);
 
   // Save Friendly Name
   const handleSaveFriendlyName = async () => {
@@ -835,114 +786,12 @@ export default function NumberDetailPage({ params }: { params: Promise<{ id: str
         </div>
       )}
 
-      {/* 4. SHARED ACCESS & 5. TEAM MEMBER ASSIGNMENT */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm flex items-center justify-between">
-            <span className="flex items-center gap-2">
-              <Users className="w-4 h-4 text-blue-500" />
-              <span>Shared Access & Team Member Assignment</span>
-            </span>
-            <span className="text-[10px] font-semibold text-slate-400">
-              {canManageNumbers ? 'Owner / Admin Control' : 'Read-Only Access'}
-            </span>
-          </CardTitle>
-        </CardHeader>
-        <div className="p-4 space-y-4">
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            Choose which active eligible team members in your workspace can use this business number for outbound caller ID and receive inbound calls.
-          </p>
-
-          {isLoadingAssignments ? (
-            <div className="flex items-center justify-center py-6 space-y-2">
-              <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
-              <span className="text-xs text-slate-400 ml-2">Loading member access...</span>
-            </div>
-          ) : canManageNumbers ? (
-            assignmentMembers.length === 0 ? (
-              <p className="text-xs text-slate-400 italic">No active workspace members found.</p>
-            ) : (
-              <div className="divide-y divide-slate-100 dark:divide-slate-800 border border-slate-200/60 dark:border-slate-800/60 rounded-xl overflow-hidden">
-                {assignmentMembers.map((member) => {
-                  const isToggling = Boolean(togglingUserIds[member.id]);
-                  const isOperational = phoneNumber.active === true && phoneNumber.status === 'active';
-
-                  return (
-                    <div
-                      key={member.id}
-                      className="p-3.5 bg-slate-50/50 dark:bg-slate-900/30 flex items-center justify-between gap-4"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 flex items-center justify-center text-blue-700 dark:text-blue-300 font-bold text-xs shrink-0">
-                          {member.full_name?.charAt(0).toUpperCase() || 'U'}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate">
-                              {member.full_name}
-                            </span>
-                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 capitalize">
-                              {member.role}
-                            </span>
-                          </div>
-                          <span className="text-[11px] text-slate-500 dark:text-slate-400 truncate block">
-                            {member.email}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-3 shrink-0">
-                        {member.is_assigned ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-1 rounded-full border border-emerald-200 dark:border-emerald-800/60">
-                            <UserCheck className="w-3.5 h-3.5" />
-                            Assigned
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-400 bg-slate-100 dark:bg-slate-800/40 px-2.5 py-1 rounded-full border border-slate-200 dark:border-slate-800/60">
-                            <UserX className="w-3.5 h-3.5" />
-                            Unassigned
-                          </span>
-                        )}
-
-                        <Button
-                          size="sm"
-                          variant={member.is_assigned ? 'outline' : 'primary'}
-                          disabled={isToggling || !isOperational}
-                          onClick={() => handleToggleAssignment(member.id, member.is_assigned)}
-                          className="text-xs px-3 h-8"
-                        >
-                          {isToggling ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : member.is_assigned ? (
-                            'Remove'
-                          ) : (
-                            'Assign'
-                          )}
-                        </Button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )
-          ) : (
-            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200/60 dark:border-slate-800/60 flex items-center justify-between">
-              <span className="text-xs text-slate-600 dark:text-slate-400">Your Account Access</span>
-              {isAssignedToSelf ? (
-                <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-3 py-1 rounded-full border border-emerald-200 dark:border-emerald-800">
-                  <UserCheck className="w-3.5 h-3.5" />
-                  Assigned to your user account
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-500 bg-slate-100 dark:bg-slate-800 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-700">
-                  <UserX className="w-3.5 h-3.5" />
-                  Not assigned to your user account
-                </span>
-              )}
-            </div>
-          )}
-        </div>
-      </Card>
+      {/* 4. SHARED ACCESS */}
+      <SharedAccessSettings
+        numberId={numberId}
+        isOperational={phoneNumber ? phoneNumber.active === true && phoneNumber.status === 'active' : false}
+        canManageNumbers={canManageNumbers}
+      />
 
       {/* 6. INCOMING CALL STRATEGY */}
       <Card>

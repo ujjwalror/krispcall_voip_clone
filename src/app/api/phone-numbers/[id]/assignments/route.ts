@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { SeatBillingService } from '@/lib/billing/seatBillingService';
 
 /**
  * GET /api/phone-numbers/[id]/assignments
  * Retrieves workspace member assignments for a given phone number.
- * - Owner/Admin: Returns list of active org members with their assignment status.
+ * - Owner/Admin: Returns assigned members, unassigned active members (for picker), and seat metrics.
  * - Manager/Agent: Returns assignment status for the authenticated user only.
  */
 export async function GET(
@@ -46,7 +47,7 @@ export async function GET(
     // Verify phone number ownership & active status
     const { data: phoneNumber, error: phoneErr } = await (adminSupabase as any)
       .from('phone_numbers')
-      .select('id, organization_id, active, status')
+      .select('id, organization_id, active, status, phone_number, friendly_name')
       .eq('id', phoneNumberId)
       .eq('organization_id', profile.organization_id)
       .maybeSingle();
@@ -61,6 +62,9 @@ export async function GET(
     const isOwnerOrAdmin = ['owner', 'admin'].includes(profile.role);
 
     if (isOwnerOrAdmin) {
+      // Fetch seat metrics for the workspace
+      const seatMetrics = await SeatBillingService.calculateSeats(profile.organization_id, adminSupabase);
+
       // Fetch all ACTIVE workspace members for the organization
       const { data: members, error: membersErr } = await (adminSupabase as any)
         .from('profiles')
@@ -104,11 +108,23 @@ export async function GET(
         is_assigned: assignedUserIds.has(member.id),
       }));
 
+      const assignedMembers = memberAssignments.filter((m: any) => m.is_assigned);
+      const unassignedMembers = memberAssignments.filter((m: any) => !m.is_assigned);
+
       return NextResponse.json({
         success: true,
         canManage: true,
         isNumberOperational: phoneNumber.active === true && phoneNumber.status === 'active',
         members: memberAssignments,
+        assignedMembers,
+        unassignedMembers,
+        seatMetrics: {
+          usedOrReservedSeats: seatMetrics.usedOrReservedSeats,
+          activeMembers: seatMetrics.activeMembers,
+          pendingInvitations: seatMetrics.pendingInvitations,
+          maxActiveUsersLimit: seatMetrics.maxActiveUsersLimit,
+          canAddMoreSeats: seatMetrics.canAddMoreSeats,
+        },
       });
     } else {
       // Manager/Agent read-only check for own assignment
@@ -138,8 +154,10 @@ export async function GET(
 
 /**
  * POST /api/phone-numbers/[id]/assignments
- * Creates a new assignment for an active team member.
+ * Assigns one or multiple active workspace members to a phone number.
+ * Supports single (`userId: string`) or multi-select (`userIds: string[]`).
  * Access: Owners and Admins only.
+ * Note: Assigning existing workspace members does NOT consume extra workspace seats.
  */
 export async function POST(
   request: Request,
@@ -182,11 +200,18 @@ export async function POST(
     }
 
     const body = await request.json().catch(() => ({}));
-    const targetUserId = (body.userId || body.user_id || '').trim();
+    let targetUserIds: string[] = [];
 
-    if (!targetUserId) {
+    if (Array.isArray(body.userIds) && body.userIds.length > 0) {
+      targetUserIds = body.userIds.map((u: any) => String(u).trim()).filter(Boolean);
+    } else if (body.userId || body.user_id) {
+      const u = String(body.userId || body.user_id).trim();
+      if (u) targetUserIds = [u];
+    }
+
+    if (targetUserIds.length === 0) {
       return NextResponse.json(
-        { error: 'invalid_input', message: 'Target userId is required.' },
+        { error: 'invalid_input', message: 'At least one target userId or userIds array is required.' },
         { status: 400 }
       );
     }
@@ -219,44 +244,40 @@ export async function POST(
       );
     }
 
-    // 2. Verify target user eligibility (same org + active member)
-    const { data: targetProfile, error: targetErr } = await (adminSupabase as any)
+    // 2. Verify target users eligibility (same org + active members)
+    const { data: targetProfiles, error: targetErr } = await (adminSupabase as any)
       .from('profiles')
       .select('id, organization_id, active')
-      .eq('id', targetUserId)
-      .maybeSingle();
+      .in('id', targetUserIds)
+      .eq('organization_id', profile.organization_id)
+      .eq('active', true);
 
-    if (
-      targetErr ||
-      !targetProfile ||
-      targetProfile.organization_id !== profile.organization_id ||
-      targetProfile.active === false
-    ) {
+    if (targetErr || !targetProfiles || targetProfiles.length === 0) {
       return NextResponse.json(
         {
           error: 'invalid_target_user',
-          message: 'Target user is not an active member of your organization.',
+          message: 'None of the specified users are active members of your organization.',
         },
         { status: 400 }
       );
     }
 
-    // 3. Upsert assignment safely (idempotent)
-    const { data: assignment, error: insertErr } = await (adminSupabase as any)
+    const validUserIds = targetProfiles.map((p: any) => p.id);
+
+    // 3. Upsert assignments safely (idempotent, no seat limit consumed)
+    const upsertRows = validUserIds.map((uId: string) => ({
+      organization_id: profile.organization_id,
+      user_id: uId,
+      phone_number_id: phoneNumberId,
+    }));
+
+    const { data: assignments, error: insertErr } = await (adminSupabase as any)
       .from('user_phone_assignments')
-      .upsert(
-        {
-          organization_id: profile.organization_id,
-          user_id: targetUserId,
-          phone_number_id: phoneNumberId,
-        },
-        { onConflict: 'user_id, phone_number_id' }
-      )
-      .select()
-      .single();
+      .upsert(upsertRows, { onConflict: 'user_id, phone_number_id' })
+      .select();
 
     if (insertErr) {
-      console.error('[POST assignments] Error inserting assignment:', insertErr);
+      console.error('[POST assignments] Error inserting assignments:', insertErr);
       return NextResponse.json(
         { error: 'internal_error', message: 'Failed to create user phone assignment.' },
         { status: 500 }
@@ -265,7 +286,8 @@ export async function POST(
 
     return NextResponse.json({
       success: true,
-      assignment,
+      assignedUserIds: validUserIds,
+      assignments,
     });
   } catch (error: any) {
     console.error('[POST assignments] Exception:', error.message || error);
@@ -278,7 +300,8 @@ export async function POST(
 
 /**
  * DELETE /api/phone-numbers/[id]/assignments
- * Removes a team member's assignment from a phone number.
+ * Removes one or multiple team members' assignment from a phone number.
+ * Supports single (`userId: string`) or batch (`userIds: string[]`).
  * Access: Owners and Admins only.
  */
 export async function DELETE(
@@ -322,11 +345,18 @@ export async function DELETE(
     }
 
     const body = await request.json().catch(() => ({}));
-    const targetUserId = (body.userId || body.user_id || '').trim();
+    let targetUserIds: string[] = [];
 
-    if (!targetUserId) {
+    if (Array.isArray(body.userIds) && body.userIds.length > 0) {
+      targetUserIds = body.userIds.map((u: any) => String(u).trim()).filter(Boolean);
+    } else if (body.userId || body.user_id) {
+      const u = String(body.userId || body.user_id).trim();
+      if (u) targetUserIds = [u];
+    }
+
+    if (targetUserIds.length === 0) {
       return NextResponse.json(
-        { error: 'invalid_input', message: 'Target userId is required.' },
+        { error: 'invalid_input', message: 'Target userId or userIds array is required.' },
         { status: 400 }
       );
     }
@@ -348,13 +378,13 @@ export async function DELETE(
       );
     }
 
-    // Delete assignment safely
+    // Delete assignments safely
     const { error: deleteErr } = await (adminSupabase as any)
       .from('user_phone_assignments')
       .delete()
       .eq('phone_number_id', phoneNumberId)
-      .eq('user_id', targetUserId)
-      .eq('organization_id', profile.organization_id);
+      .eq('organization_id', profile.organization_id)
+      .in('user_id', targetUserIds);
 
     if (deleteErr) {
       console.error('[DELETE assignments] Error deleting assignment:', deleteErr);
@@ -366,7 +396,8 @@ export async function DELETE(
 
     return NextResponse.json({
       success: true,
-      message: 'Assignment removed successfully.',
+      removedUserIds: targetUserIds,
+      message: 'Assignment(s) removed successfully.',
     });
   } catch (error: any) {
     console.error('[DELETE assignments] Exception:', error.message || error);

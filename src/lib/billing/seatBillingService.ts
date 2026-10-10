@@ -17,6 +17,8 @@ export interface SeatCalculationResult {
   totalMembers: number;
   activeMembers: number;
   invitedMembers: number;
+  pendingInvitations: number;
+  usedOrReservedSeats: number;
   includedSeats: number;
   billableSeats: number;
   maxActiveUsersLimit: number | null;
@@ -24,12 +26,12 @@ export interface SeatCalculationResult {
 }
 
 /**
- * Centralized Seat Policy Foundation Service (Phase 18C).
+ * Centralized Seat Policy Foundation Service (Phase 18C & 19F.2A.1).
  * Encapsulates calculation of workspace member seat count under approved commercial policy.
  *
  * Rules:
  * - Billable seats = active Owner, Admin, Member.
- * - NOT billable = pending invitations, suspended/deactivated users.
+ * - Used/Reserved seats = active accepted users + valid pending invitations (reserve seat capacity).
  * - Enforces plan active-user limit server-side (Starter: 5, Pro: 20, Business: 50).
  */
 export class SeatBillingService {
@@ -65,6 +67,8 @@ export class SeatBillingService {
         totalMembers: 0,
         activeMembers: 0,
         invitedMembers: 0,
+        pendingInvitations: 0,
+        usedOrReservedSeats: 0,
         includedSeats: 0,
         billableSeats: 0,
         maxActiveUsersLimit: null,
@@ -75,6 +79,17 @@ export class SeatBillingService {
     const totalMembers = members.length;
     const activeMembers = members.filter((m: any) => m.active !== false).length;
     const invitedMembers = members.filter((m: any) => m.active === false).length;
+
+    // 1b. Fetch valid pending invitations to reserve seat capacity
+    const { data: pendingInvites } = await (supabase as any)
+      .from('organization_invitations')
+      .select('id')
+      .eq('organization_id', organizationId)
+      .eq('status', 'pending')
+      .gt('expires_at', new Date().toISOString());
+
+    const pendingInvitations = pendingInvites ? pendingInvites.length : 0;
+    const usedOrReservedSeats = activeMembers + pendingInvitations;
 
     // 2. Fetch organization subscription and plan to check max user limit
     const { data: sub } = await (supabase as any)
@@ -97,7 +112,7 @@ export class SeatBillingService {
       : 0;
 
     const billableSeats = Math.max(0, activeMembers - includedSeats);
-    const canAddMoreSeats = maxActiveUsersLimit === null || activeMembers < maxActiveUsersLimit;
+    const canAddMoreSeats = maxActiveUsersLimit === null || usedOrReservedSeats < maxActiveUsersLimit;
 
     return {
       policy: CURRENT_LEGACY_SEAT_POLICY,
@@ -105,6 +120,8 @@ export class SeatBillingService {
       totalMembers,
       activeMembers,
       invitedMembers,
+      pendingInvitations,
+      usedOrReservedSeats,
       includedSeats,
       billableSeats,
       maxActiveUsersLimit,
@@ -118,21 +135,23 @@ export class SeatBillingService {
   static async canAddActiveUser(
     organizationId: string,
     clientOverride?: SupabaseClient
-  ): Promise<{ allowed: boolean; activeMembers: number; limit: number | null; reason?: string }> {
+  ): Promise<{ allowed: boolean; activeMembers: number; usedOrReservedSeats: number; limit: number | null; reason?: string }> {
     const seatMetrics = await this.calculateSeats(organizationId, clientOverride);
 
     if (!seatMetrics.canAddMoreSeats && seatMetrics.maxActiveUsersLimit !== null) {
       return {
         allowed: false,
         activeMembers: seatMetrics.activeMembers,
+        usedOrReservedSeats: seatMetrics.usedOrReservedSeats,
         limit: seatMetrics.maxActiveUsersLimit,
-        reason: `Organization has reached the maximum allowable active users (${seatMetrics.activeMembers}/${seatMetrics.maxActiveUsersLimit}) for its plan tier. Upgrade required.`,
+        reason: `Your workspace has reached its member limit. You’re using ${seatMetrics.usedOrReservedSeats} of ${seatMetrics.maxActiveUsersLimit} member seats on your current plan. Remove an unused member or upgrade your plan to invite another person.`,
       };
     }
 
     return {
       allowed: true,
       activeMembers: seatMetrics.activeMembers,
+      usedOrReservedSeats: seatMetrics.usedOrReservedSeats,
       limit: seatMetrics.maxActiveUsersLimit,
     };
   }

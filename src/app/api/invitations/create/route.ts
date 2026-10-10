@@ -6,6 +6,8 @@ import { requireActiveSession } from '@/lib/auth/requireActiveSession';
 /**
  * POST /api/invitations/create
  * Authenticated API route for Owners and Admins to invite team members.
+ * Enforces atomic database-level serialization against organization_subscriptions row lock
+ * to guarantee that concurrent invitation creations & acceptances never exceed seat capacity.
  */
 export async function POST(request: Request) {
   try {
@@ -54,7 +56,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json().catch(() => ({}));
-    const { email: rawEmail, role: requestedRole } = body;
+    const { email: rawEmail, role: requestedRole, intended_phone_number_id, intendedPhoneNumberId } = body;
 
     if (!rawEmail || typeof rawEmail !== 'string') {
       return NextResponse.json({ error: 'Email address is required.' }, { status: 400 });
@@ -94,46 +96,87 @@ export async function POST(request: Request) {
 
     const adminSupabase = createAdminClient();
 
-    // 6. Reject if email is already an active member of this organization
-    const { data: existingMember } = await (adminSupabase as any)
-      .from('profiles')
-      .select('id')
-      .eq('organization_id', requester.organization_id)
-      .eq('email', email)
-      .maybeSingle();
+    // Validate optional intended_phone_number_id
+    const targetNumberId = intended_phone_number_id || intendedPhoneNumberId;
+    let validatedIntendedNumberId: string | null = null;
+    if (targetNumberId && typeof targetNumberId === 'string') {
+      const { data: phoneNum } = await (adminSupabase as any)
+        .from('phone_numbers')
+        .select('id, organization_id, active, status')
+        .eq('id', targetNumberId)
+        .eq('organization_id', requester.organization_id)
+        .maybeSingle();
 
-    if (existingMember) {
-      return NextResponse.json(
-        { error: `User "${email}" is already a member of this workspace.` },
-        { status: 400 }
-      );
+      if (phoneNum && phoneNum.active !== false && phoneNum.status === 'active') {
+        validatedIntendedNumberId = phoneNum.id;
+      }
     }
 
-    // 7. Reject if duplicate pending invitation exists for this organization
-    const { data: existingPendingInvite } = await (adminSupabase as any)
-      .from('organization_invitations')
-      .select('id')
-      .eq('organization_id', requester.organization_id)
-      .eq('email', email)
-      .eq('status', 'pending')
-      .maybeSingle();
-
-    if (existingPendingInvite) {
-      return NextResponse.json(
-        { error: `A pending invitation has already been sent to "${email}".` },
-        { status: 400 }
-      );
-    }
-
-    // 8. Generate cryptographically secure raw token server-side and hash with SHA-256
+    // 6. Generate cryptographically secure raw token server-side and hash with SHA-256
     const rawToken = crypto.randomBytes(32).toString('hex');
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
-    // 9. Store invitation in database
-    const { data: newInvite, error: insertErr } = await (adminSupabase as any)
-      .from('organization_invitations')
-      .insert({
+    // 7. Atomic Creation via Database RPC (with subscription row lock for concurrency protection)
+    const { data: rpcInvite, error: rpcErr } = await (adminSupabase as any).rpc('create_organization_invitation', {
+      p_organization_id: requester.organization_id,
+      p_email: email,
+      p_role: targetRole,
+      p_invited_by_user_id: currentUser.id,
+      p_token_hash: tokenHash,
+      p_expires_at: expiresAt,
+      p_intended_phone_number_id: validatedIntendedNumberId,
+    });
+
+    let newInvite = rpcInvite ? (Array.isArray(rpcInvite) ? rpcInvite[0] : rpcInvite) : null;
+
+    if (rpcErr) {
+      const errMsg = rpcErr.message || '';
+      if (errMsg.includes('seat_limit_reached')) {
+        const { SeatBillingService } = await import('@/lib/billing/seatBillingService');
+        const metrics = await SeatBillingService.calculateSeats(requester.organization_id, adminSupabase);
+        return NextResponse.json(
+          {
+            error: errMsg.replace(/^seat_limit_reached:\s*/, ''),
+            code: 'seat_limit_exceeded',
+            usedOrReservedSeats: metrics.usedOrReservedSeats,
+            limit: metrics.maxActiveUsersLimit,
+          },
+          { status: 403 }
+        );
+      }
+      if (errMsg.includes('already_member')) {
+        return NextResponse.json(
+          { error: `User "${email}" is already a member of this workspace.`, code: 'already_member' },
+          { status: 400 }
+        );
+      }
+      if (errMsg.includes('duplicate_invitation')) {
+        return NextResponse.json(
+          { error: `A pending invitation has already been sent to "${email}".`, code: 'duplicate_invitation' },
+          { status: 400 }
+        );
+      }
+
+      // Fallback for pre-migration environment compatibility
+      console.warn('[Invitations API] RPC create_organization_invitation not available, falling back to app-level check:', rpcErr.message);
+
+      const { SeatBillingService } = await import('@/lib/billing/seatBillingService');
+      const seatCheck = await SeatBillingService.canAddActiveUser(requester.organization_id, supabase);
+      if (!seatCheck.allowed) {
+        return NextResponse.json(
+          {
+            error: seatCheck.reason || 'Workspace active user limit exceeded.',
+            code: 'seat_limit_exceeded',
+            activeMembers: seatCheck.activeMembers,
+            usedOrReservedSeats: seatCheck.usedOrReservedSeats,
+            limit: seatCheck.limit,
+          },
+          { status: 403 }
+        );
+      }
+
+      const insertPayload: Record<string, any> = {
         organization_id: requester.organization_id,
         email,
         role: targetRole,
@@ -141,13 +184,22 @@ export async function POST(request: Request) {
         token_hash: tokenHash,
         status: 'pending',
         expires_at: expiresAt,
-      })
-      .select('id, organization_id, email, role, status, expires_at, created_at')
-      .single();
+      };
+      if (validatedIntendedNumberId) {
+        insertPayload.intended_phone_number_id = validatedIntendedNumberId;
+      }
 
-    if (insertErr || !newInvite) {
-      console.error('[Invitations API] Insert error:', insertErr);
-      return NextResponse.json({ error: 'Failed to create invitation record.' }, { status: 500 });
+      const { data: fallbackInvite, error: insertErr } = await (adminSupabase as any)
+        .from('organization_invitations')
+        .insert(insertPayload)
+        .select('id, organization_id, email, role, status, expires_at, created_at, intended_phone_number_id')
+        .single();
+
+      if (insertErr || !fallbackInvite) {
+        console.error('[Invitations API] Insert error:', insertErr);
+        return NextResponse.json({ error: 'Failed to create invitation record.' }, { status: 500 });
+      }
+      newInvite = fallbackInvite;
     }
 
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';

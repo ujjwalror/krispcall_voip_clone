@@ -1,11 +1,13 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 /**
  * POST /api/invitations/accept
  * Invokes atomic database function public.accept_organization_invitation
  * to accept a pending invitation and join the organization.
+ * Also performs idempotent post-acceptance number assignment if intended_phone_number_id was stored.
  */
 export async function POST(request: Request) {
   try {
@@ -33,10 +35,11 @@ export async function POST(request: Request) {
     // Compute SHA-256 token hash server-side
     const tokenHash = crypto.createHash('sha256').update(token.trim()).digest('hex');
 
-    // Look up invitation to verify organization and seat limits
-    const { data: inviteData } = await (supabase as any)
+    // Look up invitation to verify organization, intended phone number, and seat limits
+    const adminSupabase = createAdminClient();
+    const { data: inviteData } = await (adminSupabase as any)
       .from('organization_invitations')
-      .select('organization_id')
+      .select('id, organization_id, intended_phone_number_id')
       .eq('token_hash', tokenHash)
       .eq('status', 'pending')
       .maybeSingle();
@@ -80,6 +83,24 @@ export async function POST(request: Request) {
     }
 
     const result = Array.isArray(rpcResult) ? rpcResult[0] : rpcResult;
+
+    // Idempotent post-acceptance assignment to intended phone number if specified
+    if (inviteData?.intended_phone_number_id && inviteData?.organization_id) {
+      try {
+        await (adminSupabase as any)
+          .from('user_phone_assignments')
+          .upsert(
+            {
+              organization_id: inviteData.organization_id,
+              user_id: currentUser.id,
+              phone_number_id: inviteData.intended_phone_number_id,
+            },
+            { onConflict: 'user_id, phone_number_id' }
+          );
+      } catch (assignErr) {
+        console.error('[Invitations Accept API] Idempotent post-assignment warning:', assignErr);
+      }
+    }
 
     return NextResponse.json({
       success: true,
