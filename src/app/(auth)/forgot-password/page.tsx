@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -32,6 +32,18 @@ export default function ForgotPasswordPage() {
   // Invariant SEC6-003 / SEC6-004: Ephemeral challenge token in browser memory only
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const challengeRef = useRef<AuthChallengeWidgetRef | null>(null);
+
+  const handleCaptchaVerify = useCallback((token: string) => {
+    setCaptchaToken(token);
+  }, []);
+
+  const handleCaptchaExpire = useCallback(() => {
+    setCaptchaToken(null);
+  }, []);
+
+  const handleCaptchaError = useCallback(() => {
+    setCaptchaToken(null);
+  }, []);
 
   const supabase = createClient();
 
@@ -184,9 +196,9 @@ export default function ForgotPasswordPage() {
                 {/* Security Challenge (Turnstile) */}
                 <AuthChallengeWidget
                   ref={challengeRef}
-                  onVerify={(tok) => setCaptchaToken(tok)}
-                  onExpire={() => setCaptchaToken(null)}
-                  onError={() => setCaptchaToken(null)}
+                  onVerify={handleCaptchaVerify}
+                  onExpire={handleCaptchaExpire}
+                  onError={handleCaptchaError}
                   action="recovery"
                   disabled={isLoading}
                 />
@@ -247,9 +259,9 @@ export default function ForgotPasswordPage() {
               <div className="space-y-2 pt-1 border-t border-slate-800">
                 <AuthChallengeWidget
                   ref={challengeRef}
-                  onVerify={(tok) => setCaptchaToken(tok)}
-                  onExpire={() => setCaptchaToken(null)}
-                  onError={() => setCaptchaToken(null)}
+                  onVerify={handleCaptchaVerify}
+                  onExpire={handleCaptchaExpire}
+                  onError={handleCaptchaError}
                   action="recovery_resend"
                   disabled={cooldownSeconds > 0 || isResending}
                 />

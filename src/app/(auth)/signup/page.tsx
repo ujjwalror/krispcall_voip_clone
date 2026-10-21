@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, Suspense } from 'react';
+import React, { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/Button';
@@ -66,6 +66,18 @@ function SignupContent() {
   // Invariant SEC6-003 / SEC6-004: Ephemeral CAPTCHA challenge token in browser memory only
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const challengeRef = useRef<AuthChallengeWidgetRef | null>(null);
+
+  const handleCaptchaVerify = useCallback((token: string) => {
+    setCaptchaToken(token);
+  }, []);
+
+  const handleCaptchaExpire = useCallback(() => {
+    setCaptchaToken(null);
+  }, []);
+
+  const handleCaptchaError = useCallback(() => {
+    setCaptchaToken(null);
+  }, []);
 
   // Invitation State
   const [invitationInfo, setInvitationInfo] = useState<InvitationInfo | null>(null);
@@ -390,9 +402,9 @@ function SignupContent() {
             {/* Security Challenge (Turnstile) */}
             <AuthChallengeWidget
               ref={challengeRef}
-              onVerify={(tok) => setCaptchaToken(tok)}
-              onExpire={() => setCaptchaToken(null)}
-              onError={() => setCaptchaToken(null)}
+              onVerify={handleCaptchaVerify}
+              onExpire={handleCaptchaExpire}
+              onError={handleCaptchaError}
               action="signup"
               disabled={isLoading}
             />

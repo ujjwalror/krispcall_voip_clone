@@ -35,6 +35,8 @@ declare global {
           callback?: (token: string) => void;
           'error-callback'?: (errorCode: string) => void;
           'expired-callback'?: () => void;
+          'timeout-callback'?: () => void;
+          'before-interactive-callback'?: () => void;
         }
       ) => string;
       reset: (widgetId?: string) => void;
@@ -75,31 +77,52 @@ export const AuthChallengeWidget = forwardRef<
     assertClientEnvironmentSecurity();
   }, []);
 
+  // Stabilize callback prop identities to prevent effect teardown loops
+  const onVerifyRef = useRef(onVerify);
+  const onExpireRef = useRef(onExpire);
+  const onErrorRef = useRef(onError);
+
+  useEffect(() => {
+    onVerifyRef.current = onVerify;
+    onExpireRef.current = onExpire;
+    onErrorRef.current = onError;
+  });
+
   const handleVerify = useCallback(
     (token: string) => {
+      console.log('[Turnstile] success');
+      console.log('token received: true');
       tokenHeldRef.current = true;
       setState('VERIFIED');
       setErrorMessage(null);
-      onVerify(token);
+      if (onVerifyRef.current) {
+        onVerifyRef.current(token);
+      }
     },
-    [onVerify]
+    []
   );
 
   const handleExpire = useCallback(() => {
+    console.log('[Turnstile] expired');
     tokenHeldRef.current = false;
     setState('EXPIRED');
     setErrorMessage('Verification expired. Please verify again.');
-    if (onExpire) onExpire();
-  }, [onExpire]);
+    if (onExpireRef.current) {
+      onExpireRef.current();
+    }
+  }, []);
 
   const handleError = useCallback(
     (err: string) => {
+      console.warn('[Turnstile] error:', err);
       tokenHeldRef.current = false;
       setState('ERROR');
       setErrorMessage(SAFE_CAPTCHA_UNAVAILABLE_MESSAGE);
-      if (onError) onError(err);
+      if (onErrorRef.current) {
+        onErrorRef.current(err);
+      }
     },
-    [onError]
+    []
   );
 
   const resetWidget = useCallback(() => {
@@ -150,7 +173,7 @@ export const AuthChallengeWidget = forwardRef<
       if (process.env.NODE_ENV === 'production') {
         setState('ERROR');
         setErrorMessage(SAFE_CAPTCHA_UNAVAILABLE_MESSAGE);
-        if (onError) onError('missing_turnstile_site_key');
+        if (onErrorRef.current) onErrorRef.current('missing_turnstile_site_key');
         return;
       } else {
         // In local dev without site key: run mock pass mode
@@ -197,9 +220,17 @@ export const AuthChallengeWidget = forwardRef<
           'expired-callback': () => {
             if (isMounted) handleExpire();
           },
+          'timeout-callback': () => {
+            console.log('[Turnstile] timeout');
+            if (isMounted) handleExpire();
+          },
+          'before-interactive-callback': () => {
+            console.log('[Turnstile] interactive');
+          },
         });
 
         widgetIdRef.current = id;
+        console.log('[Turnstile] rendered');
         setState('READY');
       } catch (err: any) {
         if (isMounted) {
@@ -256,7 +287,7 @@ export const AuthChallengeWidget = forwardRef<
         widgetIdRef.current = null;
       }
     };
-  }, [action, handleError, handleExpire, handleVerify, onError, theme]);
+  }, [action, handleError, handleExpire, handleVerify, theme]);
 
   // Test mode indicator (does not render external iframe)
   if (isTurnstileTestMode()) {
