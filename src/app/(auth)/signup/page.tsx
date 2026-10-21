@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/Button';
@@ -9,6 +9,14 @@ import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Lock, Mail, User, AlertCircle, Eye, EyeOff, Radio, ArrowRight, CheckCircle2, Users } from 'lucide-react';
 import Link from 'next/link';
+import {
+  AuthChallengeWidget,
+  AuthChallengeWidgetRef,
+  isTurnstileConfigured,
+  canProceedWithPasswordAuth,
+  SAFE_CAPTCHA_UNAVAILABLE_MESSAGE,
+} from '@/lib/auth/captcha';
+import { normalizeAuthError } from '@/lib/auth/errors';
 
 const GoogleIcon = () => (
   <svg className="w-4 h-4 mr-2" viewBox="0 0 24 24">
@@ -54,6 +62,10 @@ function SignupContent() {
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  // Invariant SEC6-003 / SEC6-004: Ephemeral CAPTCHA challenge token in browser memory only
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const challengeRef = useRef<AuthChallengeWidgetRef | null>(null);
 
   // Invitation State
   const [invitationInfo, setInvitationInfo] = useState<InvitationInfo | null>(null);
@@ -137,10 +149,18 @@ function SignupContent() {
       return;
     }
 
+    // Invariant SEC6-001 / SEC6-026 / AUTH-CAPTCHA-FAILURE-001: Enforce fail-closed CAPTCHA check
+    if (!canProceedWithPasswordAuth(captchaToken)) {
+      setErrorMessage(SAFE_CAPTCHA_UNAVAILABLE_MESSAGE);
+      setIsLoading(false);
+      return;
+    }
+
     try {
       const targetEmail = isInviteMode && invitationInfo ? invitationInfo.email : email;
 
-      // 1. Invoke Supabase Auth signUp
+      // Invariant SEC6-002: Passwords transit directly from Browser to GoTrue over TLS.
+      // Invariant SEC6-027: Single signUp call; avoid duplicate signInWithPassword token burn.
       const { data, error } = await supabase.auth.signUp({
         email: targetEmail,
         password,
@@ -149,40 +169,33 @@ function SignupContent() {
             full_name: fullName,
           },
           emailRedirectTo: `${window.location.origin}/auth/callback`,
+          captchaToken: captchaToken || undefined,
         },
       });
 
+      // Invariant SEC6-005 / SEC6-006: Challenge token is single-use and immediately invalidated
+      setCaptchaToken(null);
+      challengeRef.current?.reset();
+
       if (error) {
-        setErrorMessage(error.message);
+        const normalized = normalizeAuthError(error, 'signup');
+        setErrorMessage(normalized.safeUserMessage);
         setIsLoading(false);
         return;
       }
 
-      if (data.user) {
-        // Automatically attempt sign in if email confirmation is disabled/auto-confirmed
-        const { error: signInError } = await supabase.auth.signInWithPassword({
-          email: targetEmail,
-          password,
-        });
-
-        if (signInError) {
-          setSuccessMessage('Account created! Please check your email to confirm your account before signing in.');
-          setIsLoading(false);
-          return;
-        }
-
-        // If in invitation mode, redirect to invitation acceptance screen
+      if (data.session) {
+        // Confirmations off or auto-confirmed: user has active session
         if (isInviteMode && tokenParam) {
           router.push(`/invite/accept?token=${encodeURIComponent(tokenParam)}`);
           router.refresh();
           return;
         }
 
-        // Check if user already has a profile
         const { data: profile } = await supabase
           .from('profiles')
           .select('id')
-          .eq('id', data.user.id)
+          .eq('id', data.user!.id)
           .maybeSingle();
 
         if (profile) {
@@ -191,9 +204,16 @@ function SignupContent() {
           router.push('/onboarding');
         }
         router.refresh();
+        return;
       }
+
+      // Email confirmation pending
+      setSuccessMessage('Account created! Please check your email to confirm your account before signing in.');
     } catch (err: any) {
-      setErrorMessage('An unexpected error occurred during registration. Please try again.');
+      setCaptchaToken(null);
+      challengeRef.current?.reset();
+      const normalized = normalizeAuthError(err, 'signup');
+      setErrorMessage(normalized.safeUserMessage);
     } finally {
       setIsLoading(false);
     }
@@ -366,6 +386,16 @@ function SignupContent() {
                 icon={<Lock className="w-4 h-4" />}
               />
             </div>
+
+            {/* Security Challenge (Turnstile) */}
+            <AuthChallengeWidget
+              ref={challengeRef}
+              onVerify={(tok) => setCaptchaToken(tok)}
+              onExpire={() => setCaptchaToken(null)}
+              onError={() => setCaptchaToken(null)}
+              action="signup"
+              disabled={isLoading}
+            />
 
             <Button
               type="submit"

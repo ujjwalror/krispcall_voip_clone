@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/Button';
@@ -9,6 +9,14 @@ import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Radio, Lock, Mail, AlertCircle, ShieldCheck, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
 import Link from 'next/link';
+import {
+  AuthChallengeWidget,
+  AuthChallengeWidgetRef,
+  isTurnstileConfigured,
+  canProceedWithPasswordAuth,
+  SAFE_CAPTCHA_UNAVAILABLE_MESSAGE,
+} from '@/lib/auth/captcha';
+import { normalizeAuthError } from '@/lib/auth/errors';
 
 const GoogleIcon = () => (
   <svg className="w-4 h-4 mr-2" viewBox="0 0 24 24">
@@ -40,6 +48,10 @@ function LoginForm() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  // Invariant SEC6-003 / SEC6-004: Ephemeral CAPTCHA challenge token in browser memory only
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const challengeRef = useRef<AuthChallengeWidgetRef | null>(null);
+
   const router = useRouter();
   const searchParams = useSearchParams();
   const supabase = createClient();
@@ -60,6 +72,8 @@ function LoginForm() {
 
     if (messageType === 'check-email') {
       setSuccessMessage('Please check your email address for a secure sign-in or confirmation link.');
+    } else if (messageType === 'password_updated') {
+      setSuccessMessage('Password reset successfully. Please sign in with your new credentials.');
     }
   }, [searchParams]);
 
@@ -92,18 +106,29 @@ function LoginForm() {
     setErrorMessage(null);
     setSuccessMessage(null);
 
+    // Invariant SEC6-001 / AUTH-CAPTCHA-FAILURE-001: Enforce fail-closed CAPTCHA challenge
+    if (!canProceedWithPasswordAuth(captchaToken)) {
+      setErrorMessage(SAFE_CAPTCHA_UNAVAILABLE_MESSAGE);
+      setIsPasswordLoading(false);
+      return;
+    }
+
     try {
+      // Invariant SEC6-002: Passwords transit directly from Browser to GoTrue over TLS.
+      // NEVER proxy plaintext passwords through VoIP Hub application API routes.
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
+        options: captchaToken ? { captchaToken } : undefined,
       });
 
+      // Invariant SEC6-005 / SEC6-006: Challenge token is single-use and immediately invalidated after attempt
+      setCaptchaToken(null);
+      challengeRef.current?.reset();
+
       if (error) {
-        if (error.message.includes('Invalid login credentials')) {
-          setErrorMessage('Invalid email address or password. Please verify your credentials.');
-        } else {
-          setErrorMessage(error.message);
-        }
+        const normalized = normalizeAuthError(error, 'login');
+        setErrorMessage(normalized.safeUserMessage);
         setIsPasswordLoading(false);
         return;
       }
@@ -127,7 +152,7 @@ function LoginForm() {
 
         if (!profile.active) {
           setErrorMessage('Your account is currently inactive. Please contact your administrator.');
-          await supabase.auth.signOut();
+          await supabase.auth.signOut({ scope: 'local' });
           setIsPasswordLoading(false);
           return;
         }
@@ -137,7 +162,10 @@ function LoginForm() {
         router.refresh();
       }
     } catch (err: any) {
-      setErrorMessage('An unexpected error occurred during sign in. Please try again.');
+      setCaptchaToken(null);
+      challengeRef.current?.reset();
+      const normalized = normalizeAuthError(err, 'login');
+      setErrorMessage(normalized.safeUserMessage);
     } finally {
       setIsPasswordLoading(false);
     }
@@ -233,7 +261,17 @@ function LoginForm() {
           />
         </div>
 
-        {/* 5. Sign In to Workspace */}
+        {/* 5. Security Bot Verification Challenge (Turnstile) */}
+        <AuthChallengeWidget
+          ref={challengeRef}
+          onVerify={(tok) => setCaptchaToken(tok)}
+          onExpire={() => setCaptchaToken(null)}
+          onError={() => setCaptchaToken(null)}
+          action="login"
+          disabled={isPasswordLoading}
+        />
+
+        {/* 6. Sign In to Workspace */}
         <Button
           type="submit"
           variant="primary"
