@@ -4,11 +4,13 @@ import { getOrganizationEntitlements } from '@/lib/entitlements/server';
 import { TwilioInventoryProvider, NumberCategory, InvalidContinuationTokenError } from '@/lib/telephony/marketplace/inventoryProvider';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { MarketplaceSuppressionService } from '@/lib/telephony/marketplace/marketplaceSuppressionService';
+import { MarketplaceSearchDefenseService } from '@/lib/telephony/marketplace/marketplaceSearchDefenseService';
 
 /**
  * GET /api/number-marketplace/search
  * Live inventory discovery and filter capability API for Number Marketplace.
  * Tenant-authenticated, entitlement-aware, server-only provider calls.
+ * Protected by distributed rate limiting (SEC7B-01) and safe identical-query cache.
  */
 export async function GET(request: Request) {
   try {
@@ -58,30 +60,58 @@ export async function GET(request: Request) {
     const limit = Math.min(Math.max(isNaN(limitParam) ? 50 : limitParam, 1), 100);
     const pageToken = searchParams.get('pageToken') || undefined;
 
+    // SEC7B-01 DEFENSE: DISTRIBUTED RATE LIMITER
+    // Check authoritative PostgreSQL rate limiter for (user, organization) sliding window.
+    // 15 req/60s per user, 60 req/60s per organization ceiling. Fails closed.
+    const rateLimitRes = await MarketplaceSearchDefenseService.checkAndConsumeRateLimit({
+      organizationId: profile.organization_id,
+      userId: user.id,
+    });
+
+    if (!rateLimitRes.allowed) {
+      return NextResponse.json(
+        {
+          error: 'Too Many Requests',
+          message: rateLimitRes.reason || 'Marketplace search rate limit exceeded. Please wait before retrying.',
+          retryAfter: rateLimitRes.retryAfterSeconds,
+        },
+        {
+          status: 429,
+          headers: {
+            'Retry-After': String(rateLimitRes.retryAfterSeconds),
+          },
+        }
+      );
+    }
+
     const provider = new TwilioInventoryProvider();
 
     // Evaluate dynamic filter capabilities for selected country + numberType
     const filterCapabilities = provider.getFilterCapabilities(countryCode, numberType);
 
-    // Execute live provider inventory search using applicable search parameters & pageToken
-    const searchResult = await provider.searchAvailableNumbers({
-      countryCode,
-      numberType,
-      contains,
-      areaCode,
-      locality,
-      region,
-      postalCode,
-      voiceEnabled,
-      smsEnabled,
-      mmsEnabled,
-      limit,
-      pageToken,
+    // SEC7B-01 DEFENSE: SAFE CACHED INVENTORY SEARCH WITH SINGLE-FLIGHT STAMPEDE PROTECTION
+    // Looks up L1 memory cache -> L2 distributed PostgreSQL cache -> upstream Twilio call.
+    const searchData = await MarketplaceSearchDefenseService.executeSearchWithCache({
+      query: {
+        countryCode,
+        numberType,
+        contains,
+        areaCode,
+        locality,
+        region,
+        postalCode,
+        voiceEnabled,
+        smsEnabled,
+        mmsEnabled,
+        limit,
+        pageToken,
+      },
+      provider,
     });
 
-    const rawNumbers = searchResult.numbers || [];
+    const rawNumbers = searchData.numbers || [];
 
-    // PLATFORM-GLOBAL MARKETPLACE SUPPRESSION
+    // PLATFORM-GLOBAL MARKETPLACE SUPPRESSION (ALWAYS EVALUATED REAL-TIME PER REQUEST)
     // Extract returned candidate E.164 strings for suppression evaluation
     const candidateE164s = rawNumbers.map((item) => item.phoneNumber).filter(Boolean);
 
@@ -110,7 +140,7 @@ export async function GET(request: Request) {
       return true;
     });
 
-    // Entitlement resolution for UI awareness
+    // Entitlement resolution for UI awareness (ALWAYS EVALUATED REAL-TIME PER ORGANIZATION)
     const adminSupabase = createAdminClient();
     const { count: currentActiveNumbers } = await (adminSupabase as any)
       .from('phone_numbers')
@@ -118,15 +148,14 @@ export async function GET(request: Request) {
       .eq('organization_id', profile.organization_id)
       .eq('active', true);
 
+    // PHASE 23E.1: SaaS plans do NOT limit number quantity.
+    // maxActive is unconstrained (null), canPurchaseMore is always true unless under explicit administrative/risk ceiling.
     const entitlementsRes = await getOrganizationEntitlements(supabase);
     let maxActiveNumbers: number | null = null;
 
-    if (entitlementsRes.success && entitlementsRes.entitlements['number.max_active']) {
-      maxActiveNumbers = entitlementsRes.entitlements['number.max_active'].numericValue;
+    if (entitlementsRes.success && entitlementsRes.entitlements['number.risk_limit']?.numericValue) {
+      maxActiveNumbers = entitlementsRes.entitlements['number.risk_limit'].numericValue;
     }
-
-    // Optional provider pricing audit info (read-only for Phase 8.1 report)
-    const pricingAudit = await provider.auditProviderPricing(countryCode);
 
     return NextResponse.json({
       success: true,
@@ -138,17 +167,17 @@ export async function GET(request: Request) {
       filterCapabilities,
       numbers: cleanNumbers,
       count: cleanNumbers.length,
-      hasMore: searchResult.hasMore,
-      continuationToken: searchResult.continuationToken,
+      hasMore: searchData.hasMore,
+      continuationToken: searchData.continuationToken,
       entitlements: {
         currentActive: currentActiveNumbers || 0,
         maxActive: maxActiveNumbers,
         canPurchaseMore: maxActiveNumbers === null || (currentActiveNumbers || 0) < maxActiveNumbers,
       },
       pricingAudit: {
-        currency: pricingAudit.currency,
-        phoneNumberPrices: pricingAudit.phoneNumberPrices,
-        note: pricingAudit.note,
+        currency: searchData.pricingAudit.currency,
+        phoneNumberPrices: searchData.pricingAudit.phoneNumberPrices,
+        note: searchData.pricingAudit.note,
       },
     });
   } catch (error: any) {
