@@ -180,7 +180,7 @@ export class MarketplaceSearchDefenseService {
     const dbClient = client || createAdminClient();
 
     try {
-      const { data, error } = await dbClient.rpc(
+      const { data, error } = await (dbClient as any).rpc(
         'check_and_consume_marketplace_search_velocity',
         {
           p_organization_id: organizationId,
@@ -282,7 +282,7 @@ export class MarketplaceSearchDefenseService {
     // 2. Check L2 PostgreSQL Cache
     if (!bypassCache && dbClient?.from) {
       try {
-        const { data: l2Row, error: l2Err } = await dbClient
+        const { data: l2Row, error: l2Err } = await (dbClient as any)
           .from('marketplace_inventory_search_cache')
           .select('numbers, has_more, continuation_token, pricing_audit, expires_at')
           .eq('cache_key', cacheKey)
@@ -348,7 +348,7 @@ export class MarketplaceSearchDefenseService {
         // Populate L2 distributed PostgreSQL cache
         if (dbClient?.from) {
           try {
-            await dbClient
+            await (dbClient as any)
               .from('marketplace_inventory_search_cache')
               .upsert(
                 {

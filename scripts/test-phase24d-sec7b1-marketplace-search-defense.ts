@@ -34,7 +34,12 @@ import './mock-server-only.js';
 import assert from 'assert';
 import fs from 'fs';
 import path from 'path';
-import { Pool, PoolClient } from 'pg';
+
+// CI/Vercel compile safety: avoid top-level dependency on dev-only pg package
+// @ts-ignore
+type Pool = any;
+// @ts-ignore
+type PoolClient = any;
 import {
   MarketplaceSearchDefenseService,
   buildMarketplaceSearchCacheKey,
@@ -244,6 +249,9 @@ async function main() {
   await pgServer.initialise();
   await pgServer.start();
   console.log('[INIT] Real local PostgreSQL engine started successfully.\n');
+
+  // @ts-ignore
+  const { Pool } = await import('pg');
 
   const pool = new Pool({
     host: '127.0.0.1',
