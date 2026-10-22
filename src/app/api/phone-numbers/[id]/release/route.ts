@@ -107,27 +107,21 @@ export async function POST(
       );
     }
 
-    const service = new VoluntaryReleaseService({ dbClient: supabase });
-    const dto = await service.requestVoluntaryRelease({
-      organizationId: profile.organization_id,
-      userId: user.id,
-      userRole: profile.role || 'member',
-      phoneNumberId,
-      confirmPhoneNumber: confirm_phone_number,
-      idempotencyKey: idempotency_key,
-    });
+    const { NumberReleaseSagaCoordinator } = await import('@/lib/telecom/saga');
+    const dto = await NumberReleaseSagaCoordinator.requestNumberRelease(
+      {
+        organizationId: profile.organization_id,
+        actorId: user.id,
+        phoneNumberId,
+        confirmPhoneNumber: confirm_phone_number,
+        idempotencyKey: idempotency_key,
+      },
+      supabase
+    );
 
     return NextResponse.json(dto, { status: 200 });
   } catch (err: any) {
-    const errorMessage = err?.message || 'Voluntary release failed';
-    const statusCode = errorMessage.includes('ROLE_NOT_AUTHORIZED')
-      ? 403
-      : errorMessage.includes('TYPED_CONFIRMATION_MISMATCH')
-      ? 400
-      : errorMessage.includes('RELEASE_ELIGIBILITY_FAILED')
-      ? 409
-      : 500;
-
-    return NextResponse.json({ error: errorMessage }, { status: statusCode });
+    const { canonicalErrorResponse } = await import('@/lib/telecom/errors/canonicalErrorContract');
+    return canonicalErrorResponse(err);
   }
 }

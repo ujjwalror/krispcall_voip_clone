@@ -235,7 +235,16 @@ export async function POST(request: Request) {
         }
       }
 
-      if (typeof active === 'boolean') updates.active = active;
+      if (typeof active === 'boolean') {
+        updates.active = active;
+        if (active === false) {
+          // Invariant AUTH-STATE-001: Immediately purge active session row upon administrative deactivation
+          await (adminSupabase as any)
+            .from('user_active_sessions')
+            .delete()
+            .eq('user_id', userId);
+        }
+      }
 
       if (extension !== undefined) {
         const trimmedExt = String(extension).trim();

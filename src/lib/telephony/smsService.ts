@@ -3,6 +3,11 @@ import twilio from 'twilio';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { MessageStatus } from '@/lib/types/database.types';
 import { SmsAuthorizationService, SmsAuthorizationError } from '@/lib/billing/telecom/smsAuthorizationService';
+import {
+  ProviderAccountResolver,
+  ProviderClientFactory,
+  ProviderResourceManager,
+} from '@/lib/telecom/provider';
 
 export interface SendOutboundSmsParams {
   userId: string;
@@ -132,19 +137,82 @@ export async function sendOutboundSms(
     contactId = matchedContact.id;
   }
 
-  // 3. Resolve Telephony Provider Credentials & Callback URL
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  // 3. Resolve Telephony Provider Context Server-Side
+  const isMms = Boolean(cleanMediaUrls && cleanMediaUrls.length > 0);
+  const providerResolution = await ProviderAccountResolver.resolveProviderAccount({
+    organizationId: params.organizationId,
+    service: isMms ? 'MMS' : 'SMS',
+    operation: isMms ? 'OUTBOUND_MMS' : 'OUTBOUND_SMS',
+  }, adminSupabase);
 
-  if (!accountSid || !authToken) {
-    throw new SmsServiceError('Server telephony provider credentials are unconfigured.', 500);
+  if (!providerResolution.success || !providerResolution.context) {
+    throw new SmsServiceError(providerResolution.errorMessage || 'Failed to resolve telecom provider account context.', 500);
   }
 
-  const twilioClient = twilio(accountSid, authToken);
+  const twilioClient = await ProviderClientFactory.getTwilioClientAsync(providerResolution.context);
   const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://krispcall-voip-clone-udlg.vercel.app').replace(/\/$/, '');
   const statusCallback = `${baseUrl}/api/twilio/messaging/status?organizationId=${encodeURIComponent(params.organizationId)}&clientSendId=${encodeURIComponent(effectiveSendId)}`;
 
-  // 4. Execute Twilio REST API SMS/MMS Send
+  // 4. Pre-dispatch TOCTOU check: re-verify control plane immediately before wire transmission
+  const { TelecomControlPlaneService } = await import('@/lib/telecom/controlPlane');
+  const preDispatchCheck = await TelecomControlPlaneService.evaluate(
+    {
+      organizationId: params.organizationId,
+      operation: 'OUTBOUND_MESSAGING',
+      userId: params.userId,
+      phoneNumber: normalizedFrom,
+      destination: normalizedTo,
+      context: { stage: 'PRE_DISPATCH', clientSendId: effectiveSendId },
+    },
+    adminSupabase
+  );
+
+  if (!preDispatchCheck.allowed) {
+    if (authResult.reservationId) {
+      await SmsAuthorizationService.compensatePreDispatchFailure(
+        adminSupabase,
+        params.organizationId,
+        authResult.internalUsageId,
+        effectiveSendId
+      );
+    }
+    throw new SmsServiceError(preDispatchCheck.reason, 403);
+  }
+
+  // 4b. Provider Dispatch Deduplication (Phase 24C.1):
+  // Check if this exact component was already dispatched to provider to prevent duplicate transmissions
+  try {
+    const { data: existingComponent } = await (adminSupabase as any)
+      .from('telecom_usage_components')
+      .select('child_provider_resource_id')
+      .eq('organization_id', params.organizationId)
+      .eq('component_id', componentId)
+      .not('child_provider_resource_id', 'is', null)
+      .maybeSingle();
+
+    if (existingComponent && existingComponent.child_provider_resource_id) {
+      const { data: existingMsg } = await (adminSupabase as any)
+        .from('messages')
+        .select('*')
+        .eq('organization_id', params.organizationId)
+        .eq('twilio_message_sid', existingComponent.child_provider_resource_id)
+        .maybeSingle();
+
+      if (existingMsg) {
+        return {
+          success: true,
+          messageId: existingMsg.id,
+          twilioMessageSid: existingComponent.child_provider_resource_id,
+          status: existingMsg.status,
+          message: existingMsg,
+        };
+      }
+    }
+  } catch {
+    // Non-fatal inspection failure, proceed to authoritative dispatch path
+  }
+
+  // 5. Execute Twilio REST API SMS/MMS Send
   let twilioRes: any = null;
   try {
     const sendPayload: any = {
@@ -161,6 +229,15 @@ export async function sendOutboundSms(
     twilioRes = await twilioClient.messages.create(sendPayload);
   } catch (providerError: any) {
     console.error('[SMS Service Provider Definite Rejection Error]:', providerError.message || providerError);
+    // Definite pre-dispatch provider failure (HTTP 4xx): safely release reservation hold
+    if (providerError.status && providerError.status >= 400 && providerError.status < 500 && authResult.reservationId) {
+      await SmsAuthorizationService.compensatePreDispatchFailure(
+        adminSupabase,
+        params.organizationId,
+        authResult.internalUsageId,
+        effectiveSendId
+      );
+    }
     throw new SmsServiceError(providerError.message || 'Twilio provider failed to transmit message.', 400);
   }
 
@@ -203,6 +280,36 @@ export async function sendOutboundSms(
     if (insertError || !messageRecord) {
       console.error('[SMS Service Persistence Failure] Twilio SID transmitted:', twilioMessageSid, 'Insert Error:', insertError);
       throw new SmsServiceError('Message was transmitted via provider, but recording message log failed.', 500);
+    }
+
+    // 5b. Record provider resource mapping for tenant isolation & audit
+    try {
+      await ProviderResourceManager.recordResource({
+        organizationId: params.organizationId,
+        providerAccountId: providerResolution.context.providerAccountId,
+        resourceType: 'MESSAGE',
+        localResourceId: messageRecord.id,
+        remoteResourceId: twilioMessageSid,
+        provider: providerResolution.context.provider,
+      }, adminSupabase);
+    } catch {
+      // Non-fatal
+    }
+
+    // Record messaging velocity attempt in tracking state (Phase 24C data minimization)
+    try {
+      const { TelecomVelocityService, TelecomDistributedVelocityService } = await import('@/lib/telecom/fraud');
+      const contentHash = cleanBody ? TelecomDistributedVelocityService.computeContentHash(cleanBody) : '';
+      TelecomVelocityService.recordMessagingAttempt({
+        organizationId: params.organizationId,
+        userId: params.userId,
+        serviceType,
+        destination: normalizedTo,
+        contentHash,
+        idempotencyKey: params.clientSendId || messageRecord.id,
+      });
+    } catch {
+      // Non-fatal
     }
 
     return {

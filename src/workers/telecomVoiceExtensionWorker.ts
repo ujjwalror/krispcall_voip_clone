@@ -29,6 +29,7 @@ export interface TelecomVoiceExtensionWorkerConfig {
   pollingIntervalMs?: number;
   leaseDurationSeconds?: number;
   extensionBlockSeconds?: number;
+  safetyMarginSeconds?: number;
   systemOrgId?: string;
   providerAdapter?: TwilioCallControlAdapter;
   supabaseClient?: SupabaseClient;
@@ -39,6 +40,7 @@ export class TelecomVoiceExtensionWorker {
   private pollingIntervalMs: number;
   private leaseDurationSeconds: number;
   private extensionBlockSeconds: number;
+  private safetyMarginSeconds: number;
   private systemOrgId: string;
   private isRunning: boolean = false;
   private supabase: SupabaseClient;
@@ -50,6 +52,7 @@ export class TelecomVoiceExtensionWorker {
     this.pollingIntervalMs = config.pollingIntervalMs || parseInt(process.env.TELECOM_VOICE_EXTENSION_WORKER_POLL_INTERVAL_MS || '3000', 10);
     this.leaseDurationSeconds = config.leaseDurationSeconds || 30;
     this.extensionBlockSeconds = config.extensionBlockSeconds || 60; // EXPERIMENT_PROVISIONAL
+    this.safetyMarginSeconds = config.safetyMarginSeconds || parseInt(process.env.TELECOM_VOICE_EXTENSION_SAFETY_MARGIN_SECONDS || '30', 10);
     this.systemOrgId = config.systemOrgId || '00000000-0000-0000-0000-000000000001';
 
     // Provider adapter MUST default to MockTwilioCallControlAdapter for safety
@@ -106,8 +109,10 @@ export class TelecomVoiceExtensionWorker {
    * Executes one single pass of due voice extension processing.
    */
   public async processSinglePass(): Promise<any> {
+    const dueBeforeTimestamp = new Date(Date.now() + (this.safetyMarginSeconds * 1000)).toISOString();
     return await ActiveCallExtensionService.processNextDueVoiceExtension(this.supabase, {
       workerId: this.workerId,
+      dueBeforeTimestamp,
       leaseDurationSeconds: this.leaseDurationSeconds,
       extensionBlockSeconds: this.extensionBlockSeconds,
       providerAdapter: this.providerAdapter,

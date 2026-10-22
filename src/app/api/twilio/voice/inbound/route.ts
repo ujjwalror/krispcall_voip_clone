@@ -3,7 +3,7 @@ import twilio from 'twilio';
 import { validateTwilioRequest } from '@/lib/twilio/signature';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { normalizeE164PhoneNumber } from '@/lib/utils';
-import { InboundVoiceAuthorizationService } from '@/lib/billing/telecom/inboundVoiceAuthorizationService';
+import { InboundVoiceAuthorizationService, InboundVoiceAuthorizationResult } from '@/lib/billing/telecom/inboundVoiceAuthorizationService';
 
 /**
  * Inbound Voice TwiML Webhook Endpoint for Twilio Programmable Voice.
@@ -163,8 +163,9 @@ export async function POST(request: Request) {
     }
 
     // 1.5 Perform server-authoritative inbound prepaid authorization
+    let inboundAuth: InboundVoiceAuthorizationResult;
     try {
-      await InboundVoiceAuthorizationService.authorizeInboundCall(adminSupabase, {
+      inboundAuth = await InboundVoiceAuthorizationService.authorizeInboundCall(adminSupabase, {
         callSid,
         calledNumber: companyTo,
         callerNumber: customerFrom,
@@ -239,8 +240,64 @@ export async function POST(request: Request) {
       direction: 'inbound',
     });
 
+    // 3.4 Canonical Inbound Routing Resolution (Phase 23D.5)
+    const { RoutingResolutionService } = await import('@/lib/telecom/assignment');
+    const canonicalRoute = await RoutingResolutionService.resolveInboundRoute(
+      {
+        organizationId,
+        phoneNumberId: phoneRecord.id,
+        channel: 'VOICE',
+      },
+      adminSupabase
+    );
+
+    if (!canonicalRoute.resolved) {
+      console.warn(`[TWILIO INBOUND ROUTE UNRESOLVED] ${companyTo}: ${canonicalRoute.code} (${canonicalRoute.reason})`);
+      const unavailTwiml = new twilio.twiml.VoiceResponse();
+      if (canonicalRoute.code === 'NUMBER_SUSPENDED') {
+        unavailTwiml.say('This number is temporarily suspended.');
+      } else if (canonicalRoute.code === 'UNASSIGNED_ROUTE') {
+        unavailTwiml.say('The number you have dialed is currently unassigned.');
+      } else {
+        unavailTwiml.say('The person or extension you are trying to reach is currently unavailable.');
+      }
+      unavailTwiml.hangup();
+      return new NextResponse(unavailTwiml.toString(), {
+        status: 200,
+        headers: { 'Content-Type': 'text/xml' },
+      });
+    }
+
+    // 3.4b Phase 24B: External Call Forwarding Circuit Breaker Gate
+    const isForwardingAttempt = (phoneRecord.inbound_routing_type as string) === 'forward' || (canonicalRoute as any).targetType === 'FORWARD';
+    if (isForwardingAttempt) {
+      const { TelecomControlPlaneService } = await import('@/lib/telecom/controlPlane');
+      const forwardCheck = await TelecomControlPlaneService.evaluate(
+        {
+          organizationId,
+          operation: 'EXTERNAL_CALL_FORWARDING',
+          phoneNumber: companyTo,
+          destination: phoneRecord.inbound_routing_destination_id || 'external_pstn',
+          context: { callSid, dbCallId },
+        },
+        adminSupabase
+      );
+
+      if (!forwardCheck.allowed) {
+        console.warn(`[TWILIO INBOUND FORWARDING RESTRICTED] Call ${callSid} cannot forward externally: ${forwardCheck.reason}`);
+        const unavailTwiml = new twilio.twiml.VoiceResponse();
+        unavailTwiml.say('External call forwarding is currently unavailable. Please try again later.');
+        unavailTwiml.hangup();
+        return new NextResponse(unavailTwiml.toString(), {
+          status: 200,
+          headers: { 'Content-Type': 'text/xml' },
+        });
+      }
+    }
+
     // 3.5 Check for Inbound IVR Routing Strategy
-    if (phoneRecord.inbound_routing_type === 'ivr' && phoneRecord.inbound_routing_destination_id) {
+    const effectiveIvrMenuId = canonicalRoute.targetType === 'IVR' ? canonicalRoute.targetId : (phoneRecord.inbound_routing_type === 'ivr' ? phoneRecord.inbound_routing_destination_id : null);
+    if (effectiveIvrMenuId) {
       const ivrEntitled = await hasEntitlement('ivr', adminSupabase);
       if (ivrEntitled) {
         const { data: targetMenu } = await (adminSupabase as any)
@@ -253,8 +310,9 @@ export async function POST(request: Request) {
         if (targetMenu && targetMenu.enabled !== false) {
           console.log('[TWILIO INBOUND IVR ROUTE] Routing call to IVR Menu:', targetMenu.id);
           const ivrTwiml = new twilio.twiml.VoiceResponse();
+          const fundedDurParam = inboundAuth?.providerTimeLimit ? `&fundedDuration=${encodeURIComponent(String(inboundAuth.providerTimeLimit))}` : '';
           const gather = ivrTwiml.gather({
-            action: `/api/twilio/voice/ivr/dtmf?menuId=${targetMenu.id}&callId=${dbCallId}&depth=1&retry=0`,
+            action: `/api/twilio/voice/ivr/dtmf?menuId=${targetMenu.id}&callId=${dbCallId}&depth=1&retry=0${fundedDurParam}`,
             numDigits: 1,
             timeout: targetMenu.timeout_seconds || 5,
             method: 'POST',
@@ -275,13 +333,14 @@ export async function POST(request: Request) {
     }
 
     // 3.6 Check for Inbound Direct-to-Queue Routing Strategy
-    if (phoneRecord.inbound_routing_type === 'call_queue' && phoneRecord.inbound_routing_destination_id) {
+    const effectiveQueueId = canonicalRoute.targetType === 'QUEUE' ? canonicalRoute.targetId : (phoneRecord.inbound_routing_type === 'call_queue' ? phoneRecord.inbound_routing_destination_id : null);
+    if (effectiveQueueId) {
       const queueEntitled = await hasEntitlement('call_queue', adminSupabase);
       if (queueEntitled) {
         const { QueueService } = await import('@/lib/telephony/queueService');
         const enqueueRes = await QueueService.enqueueCaller(
           organizationId,
-          phoneRecord.inbound_routing_destination_id,
+          effectiveQueueId,
           callSid,
           customerFrom,
           dbCallId,
@@ -294,7 +353,7 @@ export async function POST(request: Request) {
           queueTwiml.say('Thank you for calling. Please hold while we connect you to an available agent.');
           queueTwiml.enqueue({
             action: `/api/twilio/voice/queue/status`,
-          }, phoneRecord.inbound_routing_destination_id);
+          }, effectiveQueueId);
 
           return new NextResponse(queueTwiml.toString(), {
             status: 200,
@@ -307,7 +366,8 @@ export async function POST(request: Request) {
     }
 
     // 3.7 Check for Inbound Direct-to-Voicemail Routing Strategy
-    if (phoneRecord.inbound_routing_type === 'voicemail') {
+    const effectiveVoicemail = canonicalRoute.targetType === 'VOICEMAIL' || phoneRecord.inbound_routing_type === 'voicemail';
+    if (effectiveVoicemail) {
       const vmEntitled = await hasEntitlement('voicemail', adminSupabase);
       if (vmEntitled) {
         console.log('[TWILIO INBOUND VOICEMAIL ROUTE] Direct voicemail routing active.');
@@ -339,6 +399,12 @@ export async function POST(request: Request) {
     let reservedAgents: { id: string; full_name: string; twilio_identity: string }[] = [];
     let isPreferredAttempt = false;
     let preferredUserId: string | null = null;
+
+    // 4.0 Check Canonical USER Assignment FIRST
+    if (canonicalRoute.targetType === 'USER' && canonicalRoute.targetId) {
+      preferredUserId = canonicalRoute.targetId;
+      console.log('[Twilio Inbound Webhook] Canonical USER assignment identified:', preferredUserId);
+    }
 
     // A. Check Preferred Agent Routing Layer FIRST if enabled
     if (preferAssignedAgentEnabled && customerFrom && customerFrom !== 'Unknown Caller') {
@@ -562,7 +628,7 @@ export async function POST(request: Request) {
       });
     }
 
-    let targetIdentities: string[] = reservedAgents
+    const targetIdentities: string[] = reservedAgents
       .map((a) => a.twilio_identity || `agent_${a.id.replace(/-/g, '')}`)
       .filter((id) => Boolean(id && id.trim()));
 
@@ -576,9 +642,24 @@ export async function POST(request: Request) {
     const isValidE164 = (num: string) => /^\+[1-9]\d{1,14}$/.test(num);
     const dialCallerId = isValidE164(customerFrom) ? customerFrom : companyTo;
 
+    const fundedDuration = inboundAuth?.providerTimeLimit;
+    if (
+      typeof fundedDuration !== 'number' ||
+      !Number.isFinite(fundedDuration) ||
+      fundedDuration <= 0
+    ) {
+      console.warn('[TWILIO INBOUND PREPAID BOUND] Missing or invalid funded duration. Refusing Dial.');
+      const rejectTwiml = new twilio.twiml.VoiceResponse();
+      rejectTwiml.reject();
+      return new NextResponse(rejectTwiml.toString(), {
+        status: 200,
+        headers: { 'Content-Type': 'text/xml' },
+      });
+    }
+
     // If preferred attempt, set action to preferred fallback route with 40s timeout; else status route with 30s timeout
     const dialStatusActionUrl = isPreferredAttempt
-      ? `${baseUrl}/api/twilio/voice/fallback?dbCallId=${encodeURIComponent(dbCallId)}&attempt=preferred${preferredUserId ? `&preferredUserId=${encodeURIComponent(preferredUserId)}` : ''}`
+      ? `${baseUrl}/api/twilio/voice/fallback?dbCallId=${encodeURIComponent(dbCallId)}&attempt=preferred&fundedDuration=${encodeURIComponent(String(fundedDuration))}${preferredUserId ? `&preferredUserId=${encodeURIComponent(preferredUserId)}` : ''}`
       : (dbCallId
           ? `${baseUrl}/api/twilio/status?source=dial-action&dbCallId=${encodeURIComponent(dbCallId)}`
           : `${baseUrl}/api/twilio/status?source=dial-action`);
@@ -586,6 +667,7 @@ export async function POST(request: Request) {
     const dialOptions: Record<string, any> = {
       callerId: dialCallerId,
       timeout: isPreferredAttempt ? 40 : 30,
+      timeLimit: Math.floor(fundedDuration),
       action: dialStatusActionUrl,
       method: 'POST',
     };

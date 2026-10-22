@@ -11,6 +11,7 @@ export interface ExposurePolicyConfig {
 
 export interface CalculatedExposure {
   initialDurationSeconds: number;
+  maxProviderExposureSeconds: number;
   billingIncrementSeconds: number;
   minChargeableUnits: number;
   billableIncrementsCount: number;
@@ -39,8 +40,17 @@ export class ExposurePolicy {
     const rawMax = overrides?.maxInitialExposureSeconds ?? 
       (process.env.TELECOM_VOICE_MAX_INITIAL_EXPOSURE_SECONDS ? parseInt(process.env.TELECOM_VOICE_MAX_INITIAL_EXPOSURE_SECONDS, 10) : 3600);
 
-    const rawMode = overrides?.enforcementMode ?? 
-      ((process.env.TELECOM_PREPAID_ENFORCEMENT_MODE as TelecomPrepaidEnforcementMode) || 'shadow_log');
+    // Fail-closed prepaid invariant:
+    // If TELECOM_PREPAID_ENFORCEMENT_MODE is missing, empty, or unconfigured, DEFAULT TO 'enforce'.
+    // Never silently default to 'shadow_log'.
+    let rawMode: TelecomPrepaidEnforcementMode;
+    if (overrides?.enforcementMode) {
+      rawMode = overrides.enforcementMode;
+    } else if (process.env.TELECOM_PREPAID_ENFORCEMENT_MODE && process.env.TELECOM_PREPAID_ENFORCEMENT_MODE.trim() !== '') {
+      rawMode = process.env.TELECOM_PREPAID_ENFORCEMENT_MODE.trim().toLowerCase() as TelecomPrepaidEnforcementMode;
+    } else {
+      rawMode = 'enforce'; // Strict fail-closed default
+    }
 
     return {
       initialExposureSeconds: rawInitial,
@@ -51,7 +61,7 @@ export class ExposurePolicy {
 
   /**
    * Validates policy configuration invariants.
-   * Throws ExposurePolicyError if invalid in enforce mode.
+   * Throws ExposurePolicyError if configuration is invalid or unsafe.
    */
   public static validateConfig(config: ExposurePolicyConfig): void {
     const { initialExposureSeconds, maxInitialExposureSeconds, enforcementMode } = config;
@@ -63,27 +73,31 @@ export class ExposurePolicy {
       );
     }
 
+    // Fail-Closed Production Invariant: Production cannot run in shadow or disabled mode
+    if (process.env.NODE_ENV === 'production' && enforcementMode !== 'enforce') {
+      throw new ExposurePolicyError(
+        `Production telecom operations cannot run in "${enforcementMode}" mode. Enforcement mode must be 'enforce'.`,
+        'PRODUCTION_SHADOW_MODE_PROHIBITED'
+      );
+    }
+
     if (
       !Number.isInteger(initialExposureSeconds) ||
       initialExposureSeconds <= 0 ||
       !Number.isInteger(maxInitialExposureSeconds) ||
       maxInitialExposureSeconds <= 0
     ) {
-      if (enforcementMode === 'enforce') {
-        throw new ExposurePolicyError(
-          `Invalid exposure policy config: duration seconds must be positive integers (initial: ${initialExposureSeconds}, max: ${maxInitialExposureSeconds}).`,
-          'INVALID_EXPOSURE_POLICY_CONFIG'
-        );
-      }
+      throw new ExposurePolicyError(
+        `Invalid exposure policy config: duration seconds must be positive integers (initial: ${initialExposureSeconds}, max: ${maxInitialExposureSeconds}).`,
+        'INVALID_EXPOSURE_POLICY_CONFIG'
+      );
     }
 
     if (initialExposureSeconds > maxInitialExposureSeconds) {
-      if (enforcementMode === 'enforce') {
-        throw new ExposurePolicyError(
-          `Invalid exposure policy config: initial exposure (${initialExposureSeconds}s) exceeds max exposure (${maxInitialExposureSeconds}s).`,
-          'INVALID_EXPOSURE_POLICY_CONFIG'
-        );
-      }
+      throw new ExposurePolicyError(
+        `Invalid exposure policy config: initial exposure (${initialExposureSeconds}s) exceeds max exposure (${maxInitialExposureSeconds}s).`,
+        'INVALID_EXPOSURE_POLICY_CONFIG'
+      );
     }
   }
 
@@ -112,12 +126,10 @@ export class ExposurePolicy {
 
     // STRICT INVARIANT CHECK: Increment-aligned duration MUST NOT exceed maxInitialExposureSeconds
     if (initialDurationSeconds > config.maxInitialExposureSeconds) {
-      if (config.enforcementMode === 'enforce') {
-        throw new ExposurePolicyError(
-          `Calculated initial exposure duration (${initialDurationSeconds}s) exceeds configured maximum initial exposure (${config.maxInitialExposureSeconds}s).`,
-          'INVALID_EXPOSURE_POLICY_CONFIG'
-        );
-      }
+      throw new ExposurePolicyError(
+        `Calculated initial exposure duration (${initialDurationSeconds}s) exceeds configured maximum initial exposure (${config.maxInitialExposureSeconds}s).`,
+        'INVALID_EXPOSURE_POLICY_CONFIG'
+      );
     }
 
     // Integer-safe required funded minor units (cents)
@@ -128,6 +140,7 @@ export class ExposurePolicy {
 
     return {
       initialDurationSeconds,
+      maxProviderExposureSeconds: config.maxInitialExposureSeconds,
       billingIncrementSeconds: increment,
       minChargeableUnits: minUnits,
       billableIncrementsCount,

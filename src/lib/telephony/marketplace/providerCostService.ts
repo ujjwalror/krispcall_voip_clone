@@ -1,5 +1,5 @@
 import 'server-only';
-import { createTwilioServerClient } from '@/lib/twilio/client';
+import { ProviderClientFactory } from '@/lib/telecom/provider/providerClientFactory';
 import { withTimeout } from './utils';
 
 export interface NormalizedProviderNumberCost {
@@ -33,7 +33,7 @@ export class ProviderCostService {
     const fetchedAt = new Date().toISOString();
 
     try {
-      const client = createTwilioServerClient();
+      const client = ProviderClientFactory.getParentAdministrativeClient();
       const pricingApi = (client as any).pricing;
 
       let pricingObj: any = null;

@@ -1,5 +1,5 @@
 import 'server-only';
-import { createTwilioServerClient } from '@/lib/twilio/client';
+import { ProviderClientFactory } from '@/lib/telecom/provider/providerClientFactory';
 import { withTimeout } from './utils';
 import {
   EndUserFieldRequirement,
@@ -210,7 +210,7 @@ export class RegulatoryPreCheckService {
     }
 
     try {
-      const client = createTwilioServerClient();
+      const client = ProviderClientFactory.getParentAdministrativeClient();
 
       // Query Twilio Regulations API with 3500ms bounded timeout (fails closed on timeout)
       let timer: NodeJS.Timeout;

@@ -1,5 +1,6 @@
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { sanitizeInternalRedirect } from '@/lib/auth/redirect';
 
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
@@ -20,9 +21,12 @@ export async function GET(request: Request) {
 
       const profile = profileData as { id: string; active?: boolean } | null;
 
+      // Strictly sanitize and validate the redirect target path to prevent open redirects (Invariant AUTH-REDIRECT-001)
+      const targetPath = sanitizeInternalRedirect(next, '/dashboard');
+
       // 1. If next parameter is an invitation acceptance route (/invite/accept?token=...), redirect there directly
-      if (next && next.startsWith('/invite/accept')) {
-        return NextResponse.redirect(new URL(next, requestUrl.origin));
+      if (targetPath.startsWith('/invite/accept')) {
+        return NextResponse.redirect(new URL(targetPath, requestUrl.origin));
       }
 
       if (profile) {
@@ -30,11 +34,7 @@ export async function GET(request: Request) {
           return NextResponse.redirect(new URL('/login?error=inactive', requestUrl.origin));
         }
 
-        // Existing customer profile exists -> enter dashboard
-        const targetPath =
-          next && next.startsWith('/') && !next.startsWith('/login') && !next.startsWith('/signup')
-            ? next
-            : '/dashboard';
+        // Existing customer profile exists -> redirect to authorized internal route
         return NextResponse.redirect(new URL(targetPath, requestUrl.origin));
       } else {
         // Authenticated user has NO profile -> redirect to onboarding to create organization

@@ -27,7 +27,7 @@ export interface PlanSelectionPreviewResult {
   activeUsers: number;
   targetMaxUsers: number;
   activeNumbers: number;
-  targetMaxNumbers: number;
+  targetMaxNumbers: number | null;
   provisionalPricePerUserMinor: number;
   totalProvisionalSaaSMinor: number;
   totalProvisionalSaaSFormatted: string;

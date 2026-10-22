@@ -7,6 +7,54 @@ import { VoiceAuthorizationService } from '@/lib/billing/telecom/voiceAuthorizat
 import { ExposurePolicyConfig } from '@/lib/billing/telecom/exposurePolicy';
 
 /**
+ * Renders authoritative <Dial> TwiML bounded strictly by reservation-derived providerTimeLimit.
+ * Validates providerTimeLimit and throws if invalid (fail closed).
+ */
+export function generateOutboundDialTwiml(params: {
+  callerId: string;
+  destination: string;
+  providerTimeLimit: number;
+  dbCallId: string;
+  shouldRecord?: boolean;
+  baseUrl?: string;
+}): string {
+  if (!VoiceAuthorizationService.isValidProviderTimeLimit(params.providerTimeLimit)) {
+    throw new Error(
+      `[generateOutboundDialTwiml] Invalid providerTimeLimit (${params.providerTimeLimit}): must be positive integer seconds backed by reservation`
+    );
+  }
+
+  const baseUrl = params.baseUrl || process.env.NEXT_PUBLIC_APP_URL || 'https://krispcall-voip-clone-udlg.vercel.app';
+  const voiceResponse = new twilio.twiml.VoiceResponse();
+
+  const dialOptions: Record<string, any> = {
+    callerId: params.callerId,
+    timeLimit: params.providerTimeLimit,
+  };
+
+  if (params.shouldRecord) {
+    const recordingStatusCallbackUrl = `${baseUrl}/api/twilio/recording?dbCallId=${encodeURIComponent(params.dbCallId)}`;
+    dialOptions.record = 'record-from-answer';
+    dialOptions.recordingStatusCallback = recordingStatusCallbackUrl;
+    dialOptions.recordingStatusCallbackEvent = 'completed';
+    dialOptions.recordingStatusCallbackMethod = 'POST';
+  }
+
+  const dial = voiceResponse.dial(dialOptions);
+
+  const statusCallbackUrl = `${baseUrl}/api/twilio/status?dbCallId=${encodeURIComponent(params.dbCallId)}`;
+  const numberOptions: Record<string, any> = {
+    statusCallback: statusCallbackUrl,
+    statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
+    statusCallbackMethod: 'POST',
+  };
+
+  dial.number(numberOptions, params.destination);
+
+  return voiceResponse.toString();
+}
+
+/**
  * Outbound Voice TwiML Webhook Endpoint for Twilio Programmable Voice.
  * Performs authoritative pre-exposure financial authorization before issuing TwiML <Dial>.
  */
@@ -274,18 +322,24 @@ export async function POST(request: Request) {
         .eq('id', dbCallId);
     }
 
-    // Invariant: Enforce mode MUST provide a valid positive integer timeLimitSeconds.
-    // Zero / missing / non-integer timeLimitSeconds in enforce mode MUST fail closed with ZERO <Dial>.
-    const isEnforceMode = Boolean(authResult.reservationId);
-    const isValidTimeLimit =
-      typeof authResult.timeLimitSeconds === 'number' &&
-      Number.isInteger(authResult.timeLimitSeconds) &&
-      authResult.timeLimitSeconds > 0;
+    // Invariant: providerTimeLimit MUST be valid according to duration constraints:
+    // present, numeric, finite, positive integer seconds backed by committed reservation.
+    // In enforce mode, a committed reservationId is strictly mandatory.
+    // If providerTimeLimit is missing, null, zero, negative, NaN, Infinity, or malformed: FAIL CLOSED.
+    const isEnforceMode = !authResult.isShadowMode;
+    const isValidProviderLimit = VoiceAuthorizationService.isValidProviderTimeLimit(authResult.providerTimeLimit);
+    const isReservationValid = !isEnforceMode || Boolean(authResult.reservationId);
 
-    if (isEnforceMode && !isValidTimeLimit) {
+    if (!isValidProviderLimit || !isReservationValid) {
       console.error(
-        '[Twilio Outbound Webhook] Enforce mode authorization succeeded but timeLimitSeconds is missing or invalid:',
-        authResult.timeLimitSeconds
+        '[Twilio Outbound Webhook] Outbound voice authorization failed boundary validation (missing/invalid providerTimeLimit or missing reservation):',
+        {
+          reservationId: authResult.reservationId,
+          providerTimeLimit: authResult.providerTimeLimit,
+          isEnforceMode,
+          isValidProviderLimit,
+          isReservationValid,
+        }
       );
 
       if (createdReservationId && targetOrgId && targetInternalUsageId) {
@@ -309,7 +363,7 @@ export async function POST(request: Request) {
       const failResp = new twilio.twiml.VoiceResponse();
       failResp.say(
         { voice: 'alice' },
-        'We are unable to connect your call due to a system authorization configuration error. Please contact support.'
+        'We are unable to connect your call due to an authorization or credit reservation error. Please contact support.'
       );
       failResp.hangup();
 
@@ -319,39 +373,50 @@ export async function POST(request: Request) {
       });
     }
 
-    // Determine final bounded time limit
-    const finalTimeLimitSeconds = isValidTimeLimit
-      ? (authResult.timeLimitSeconds as number)
-      : (authResult.timeLimitSeconds || 3600);
+    // Locked Invariant: <Dial timeLimit> must consume ONLY the authoritative bounded providerTimeLimit
+    // derived strictly from the funds atomically secured in the reservation.
+    // Unsafe fallbacks (timeLimitSeconds, 300, 3600, total affordability) are strictly prohibited.
+    const finalTimeLimitSeconds = authResult.providerTimeLimit as number;
 
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://krispcall-voip-clone-udlg.vercel.app';
-    const voiceResponse = new twilio.twiml.VoiceResponse();
-
-    const dialOptions: Record<string, any> = {
+    const twimlOutput = generateOutboundDialTwiml({
       callerId,
-      timeLimit: finalTimeLimitSeconds,
-    };
+      destination: validation.normalized,
+      providerTimeLimit: finalTimeLimitSeconds,
+      dbCallId,
+      shouldRecord,
+      baseUrl,
+    });
 
-    if (shouldRecord) {
-      const recordingStatusCallbackUrl = `${baseUrl}/api/twilio/recording?dbCallId=${encodeURIComponent(dbCallId)}`;
-      dialOptions.record = 'record-from-answer';
-      dialOptions.recordingStatusCallback = recordingStatusCallbackUrl;
-      dialOptions.recordingStatusCallbackEvent = 'completed';
-      dialOptions.recordingStatusCallbackMethod = 'POST';
+    // Record provider resource mapping for CALL
+    if (callSid && targetOrgId) {
+      try {
+        const { ProviderResourceManager } = await import('@/lib/telecom/provider/providerResourceManager');
+        const { ProviderAccountResolver } = await import('@/lib/telecom/provider/providerAccountResolver');
+        const providerRes = await ProviderAccountResolver.resolveAccount({
+          organizationId: targetOrgId,
+          service: 'VOICE',
+        }, adminSupabase);
+
+        const providerAccountId = providerRes.context?.providerAccountId || 'default';
+        await ProviderResourceManager.recordResource(
+          {
+            organizationId: targetOrgId,
+            providerAccountId,
+            resourceType: 'CALL',
+            localResourceId: dbCallId,
+            remoteResourceId: callSid,
+            provider: 'TWILIO',
+            status: 'initiated',
+          },
+          adminSupabase
+        );
+      } catch (mappingErr) {
+        console.warn('[Twilio Outbound Webhook] Non-fatal provider resource mapping error:', mappingErr);
+      }
     }
 
-    const dial = voiceResponse.dial(dialOptions);
-
-    const statusCallbackUrl = `${baseUrl}/api/twilio/status?dbCallId=${encodeURIComponent(dbCallId)}`;
-    const numberOptions: Record<string, any> = {
-      statusCallback: statusCallbackUrl,
-      statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
-      statusCallbackMethod: 'POST',
-    };
-
-    dial.number(numberOptions, validation.normalized);
-
-    return new NextResponse(voiceResponse.toString(), {
+    return new NextResponse(twimlOutput, {
       status: 200,
       headers: {
         'Content-Type': 'text/xml',

@@ -3,6 +3,7 @@ import { TelecomRatingService } from './telecomRatingService';
 import { TelecomWalletService } from '../telecomWalletService';
 import { TelecomWholesaleService } from './telecomWholesaleService';
 import { SmsSegmentService } from './smsSegmentService';
+import { ExposurePolicy } from './exposurePolicy';
 import { normalizeE164PhoneNumber } from '@/lib/utils';
 
 export interface AuthorizeSmsParams {
@@ -96,10 +97,13 @@ export class SmsAuthorizationService {
 
     // Offboarding Telecom Eligibility Interlock
     const { TelecomEligibilityService } = await import('@/lib/telephony/lifecycle/telecomEligibilityService');
-    const eligibility = await TelecomEligibilityService.canUseTelecom({
-      organizationId,
-      phoneNumberE164: fromNumber,
-    });
+    const eligibility = await TelecomEligibilityService.canUseTelecom(
+      {
+        organizationId,
+        phoneNumberE164: fromNumber,
+      },
+      client
+    );
 
     if (!eligibility.allowed) {
       throw new SmsAuthorizationError(eligibility.reason, 403);
@@ -147,39 +151,58 @@ export class SmsAuthorizationService {
     }
     const normalizedTo = destValidation.normalized;
 
+    // 2b. Centralized Destination Risk Policy Gateway
+    const { DestinationRiskService } = await import('@/lib/telecom/fraud/destinationRiskService');
+    const { TelecomSecurityAuditService } = await import('@/lib/telecom/fraud/telecomSecurityAuditService');
+
+    const orgPolicy = await DestinationRiskService.getOrgGeographicPolicy(client, organizationId);
+    const riskEval = DestinationRiskService.evaluateDestination(normalizedTo, orgPolicy);
+    if (riskEval.classification === 'BLOCKED' || riskEval.isEmergency) {
+      await TelecomSecurityAuditService.logSecurityEvent(client, {
+        organizationId,
+        userId,
+        phoneNumber: fromNumber || null,
+        destination: normalizedTo,
+        riskRule: riskEval.riskRule || (riskEval.isEmergency ? 'EMERGENCY_DESTINATION_GATE' : 'DESTINATION_RISK_BLOCKED'),
+        operation: isMms ? 'mms_send' : 'sms_send',
+        decision: 'blocked',
+        reason: riskEval.reason,
+        metadata: {
+          countryCode: riskEval.countryCode,
+        },
+      });
+      throw new SmsAuthorizationError(riskEval.reason, 403);
+    }
+
+    // 2c. Recipient Opt-Out Suppression (Messaging Consent Foundation)
+    const { MessagingConsentService } = await import('@/lib/telecom/fraud/messagingConsentService');
+    const isOptedOut = await MessagingConsentService.isRecipientOptedOut(client, organizationId, normalizedTo);
+    if (isOptedOut) {
+      throw new SmsAuthorizationError('Recipient has opted out of receiving messages from this organization (STOP requested).', 403);
+    }
+
+    // 2d. Outbound Messaging Velocity Controls (Non-bypassable by Owner/Admin - Phase 24C Distributed Atomic)
+    const { TelecomVelocityService } = await import('@/lib/telecom/fraud/telecomVelocityService');
+    const velocityCheck = await TelecomVelocityService.checkAndConsumeMessaging(client, {
+      organizationId,
+      userId,
+      serviceType,
+      destination: normalizedTo,
+      body: cleanBody,
+      idempotencyKey: (params as any).clientSendId || (params as any).idempotencyKey || undefined,
+    });
+    if (!velocityCheck.allowed) {
+      throw new SmsAuthorizationError(velocityCheck.reason || 'Outbound messaging velocity limit exceeded.', 429);
+    }
+
     // 3. Verify sender business phone number active, owned by org, and has capabilities
     const fromValidation = normalizeE164PhoneNumber(fromNumber || '', defaultCountry);
     const normalizedFrom = fromValidation.normalized || (fromNumber || '').trim();
 
-    const { data: phoneRow, error: phoneErr } = await client
-      .from('phone_numbers')
-      .select('id, phone_number, active, organization_id, capabilities_sms, capabilities_mms, status')
-      .eq('organization_id', organizationId)
-      .eq('phone_number', normalizedFrom)
-      .eq('active', true)
-      .maybeSingle();
-
-    const isOperational = phoneRow && phoneRow.active === true && phoneRow.status === 'active';
-    if (phoneErr || !phoneRow || !isOperational) {
-      throw new SmsAuthorizationError('The selected business phone number is not active or unconfigured for your organization.', 400);
-    }
-
-    // Capability check
-    if (isMms) {
-      const hasMmsCap = phoneRow.capabilities_mms !== false; // If field unconfigured, allow MMS if active
-      if (!hasMmsCap) {
-        throw new SmsAuthorizationError('The selected business phone number does not have MMS messaging capability enabled.', 400);
-      }
-    } else {
-      if (phoneRow.capabilities_sms === false) {
-        throw new SmsAuthorizationError('The selected business phone number does not have SMS messaging capability enabled.', 400);
-      }
-    }
-
-    // Role-based assignment check for manager/agent
+    // 3. Verify user profile active & role
     const { data: userProfile } = await client
       .from('profiles')
-      .select('role, active')
+      .select('role, active, telecom_suspended')
       .eq('id', userId)
       .maybeSingle();
 
@@ -188,18 +211,54 @@ export class SmsAuthorizationService {
     }
 
     const isOwnerOrAdmin = ['owner', 'admin'].includes(userProfile.role || '');
-    if (!isOwnerOrAdmin) {
-      const { data: assignment } = await client
-        .from('user_phone_assignments')
-        .select('id')
-        .eq('phone_number_id', phoneRow.id)
-        .eq('user_id', userId)
-        .eq('organization_id', organizationId)
-        .maybeSingle();
 
-      if (!assignment) {
-        throw new SmsAuthorizationError('No business number assigned to your user account.', 403);
-      }
+    // 4. Canonical Permission & Capability Authorization (Phase 23D.4 / 23D.5)
+    // Composes CapabilityAuthorizationService.canUseCapability via NumberPermissionService.canActorUseNumber
+    const { NumberPermissionService } = await import('@/lib/telecom/assignment');
+    const requiredCap = isMms ? 'MMS_OUTBOUND' : 'SMS_OUTBOUND';
+    const perm = await NumberPermissionService.canActorUseNumber(
+      {
+        organizationId,
+        actorId: userId,
+        phoneNumberE164: normalizedFrom,
+        operation: requiredCap,
+      },
+      client
+    );
+
+    if (!perm.allowed) {
+      throw new SmsAuthorizationError(
+        perm.reason || `The selected business phone number is not authorized for ${isMms ? 'MMS' : 'SMS'} messaging (${perm.code}).`,
+        perm.code === 'INSUFFICIENT_PERMISSIONS' || perm.code === 'NOT_ASSIGNED_TO_NUMBER' ? 403 : 400
+      );
+    }
+
+    // Phase 24B: Authoritative Local Control Plane & Circuit Breaker Check
+    const { TelecomControlPlaneService } = await import('@/lib/telecom/controlPlane');
+    const controlEval = await TelecomControlPlaneService.evaluate(
+      {
+        organizationId,
+        operation: 'OUTBOUND_MESSAGING',
+        userId,
+        phoneNumber: normalizedFrom,
+        destination: normalizedTo,
+        context: { isMms, messageLength: body?.length || 0 },
+      },
+      client
+    );
+    if (!controlEval.allowed) {
+      throw new SmsAuthorizationError(controlEval.reason, 403);
+    }
+
+    // Multi-tier Telecom Suspension Kill Switches
+    const { TelecomSuspensionService } = await import('@/lib/telecom/fraud/telecomSuspensionService');
+    const suspension = await TelecomSuspensionService.checkSuspension(client, {
+      organizationId,
+      userId,
+      phoneNumber: normalizedFrom,
+    });
+    if (suspension.isSuspended) {
+      throw new SmsAuthorizationError(suspension.reason || 'Telecom access suspended.', 403);
     }
 
     // 4. Blocked-number checks
@@ -255,7 +314,9 @@ export class SmsAuthorizationService {
       unitType: 'message',
     });
 
-    const enforcementMode = (process.env.TELECOM_PREPAID_ENFORCEMENT_MODE || 'shadow_log').toLowerCase() as any;
+    const policyConfig = ExposurePolicy.getConfig();
+    ExposurePolicy.validateConfig(policyConfig);
+    const enforcementMode = policyConfig.enforcementMode;
     const internalUsageId = `msg:outbound:${cleanSendId}`;
     const sessionId = cleanSendId;
     const componentId = `comp:msg:${cleanSendId}`;
@@ -284,8 +345,11 @@ export class SmsAuthorizationService {
         reservationId = reserveRes.reservationId;
       } catch (reserveErr: any) {
         const msg = reserveErr.message || '';
-        if (msg.includes('INSUFFICIENT_FUNDS')) {
+        if (msg.includes('INSUFFICIENT_FUNDS') || msg.includes('INSUFFICIENT_AVAILABLE_BALANCE')) {
           throw new SmsAuthorizationError('Insufficient Credits available in wallet. Please top up your Credits to send messages.', 402);
+        }
+        if (msg.includes('ORGANIZATION_BILLING_RESTRICTED')) {
+          throw new SmsAuthorizationError('Your organization billing is currently restricted from telecom usage.', 403);
         }
         throw new SmsAuthorizationError(`Prepaid wallet reservation failed: ${msg}`, 400);
       }
@@ -382,6 +446,27 @@ export class SmsAuthorizationService {
       });
     } catch (_) {
       // Ignore duplicate
+    }
+  }
+
+  public static async compensatePreDispatchFailure(
+    client: SupabaseClient,
+    organizationId: string,
+    internalUsageId: string,
+    idempotencyKey: string
+  ): Promise<boolean> {
+    try {
+      console.log(`[SmsAuthorizationService] Executing pre-dispatch failure compensation for ${internalUsageId}`);
+      const releaseRes = await TelecomWalletService.releaseUsage(client, {
+        organizationId,
+        internalUsageId,
+        reason: 'sms_dispatch_failed',
+        idempotencyKey: `release:compensation:${idempotencyKey}`,
+      });
+      return releaseRes.success;
+    } catch (releaseErr: any) {
+      console.error('[SmsAuthorizationService] Compensation release failed:', releaseErr.message);
+      return false;
     }
   }
 }

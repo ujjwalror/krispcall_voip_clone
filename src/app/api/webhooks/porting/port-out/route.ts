@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { validateTwilioRequest } from '@/lib/twilio/signature';
-import { PortOutService } from '@/lib/telephony/lifecycle/portOutService';
+import { PortOutCoordinator } from '@/lib/telecom/porting/portOutCoordinator';
 import { createAdminClient } from '@/lib/supabase/admin';
 
 /**
@@ -16,29 +16,8 @@ import { createAdminClient } from '@/lib/supabase/admin';
 export async function POST(request: NextRequest) {
   try {
     const rawBody = await request.text();
-    const signature = request.headers.get('x-twilio-signature');
-    const authToken = process.env.TWILIO_AUTH_TOKEN;
-    const isProduction = process.env.NODE_ENV === 'production';
 
-    // 1. Fail closed if verification secret is missing in environment
-    if (!authToken) {
-      if (isProduction) {
-        return NextResponse.json(
-          { error: 'WEBHOOK_CONFIGURATION_ERROR: Verification secret unconfigured.' },
-          { status: 500 }
-        );
-      }
-    }
-
-    // 2. Fail closed if signature header is missing
-    if (!signature && isProduction) {
-      return NextResponse.json(
-        { error: 'UNAUTHORIZED_WEBHOOK: Missing signature header.' },
-        { status: 401 }
-      );
-    }
-
-    // 3. Validate signature using trusted provider verification helper
+    // 1. Authoritative Twilio Signature Validation (Strict Fail-Closed)
     let params: Record<string, string> = {};
     try {
       const searchParams = new URLSearchParams(rawBody);
@@ -49,18 +28,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'INVALID_PAYLOAD: Malformed request body.' }, { status: 400 });
     }
 
-    // If signature is present or authToken is present, run strict signature validation
-    if (authToken || signature) {
-      const isValid = await validateTwilioRequest(request, params);
-      if (!isValid) {
-        return NextResponse.json(
-          { error: 'UNAUTHORIZED_WEBHOOK: Invalid signature.' },
-          { status: 401 }
-        );
-      }
-    } else if (isProduction) {
+    const isValid = await validateTwilioRequest(request, params, { rawBody });
+    if (!isValid) {
       return NextResponse.json(
-        { error: 'UNAUTHORIZED_WEBHOOK: Verification required.' },
+        { error: 'UNAUTHORIZED_WEBHOOK: Invalid signature.' },
         { status: 401 }
       );
     }
@@ -117,18 +88,10 @@ export async function POST(request: NextRequest) {
       eventType === 'completed_port_out';
 
     if (isCompletionEvent) {
-      const result = await PortOutService.completePortOut(
-        {
-          operationId: opRow.id,
-          organizationId: opRow.organization_id,
-          evidence: {
-            actorIdentity: 'provider_webhook:twilio',
-            evidenceReference: providerOperationId || 'webhook_event_id',
-            auditReason: `Verified provider port-out completion event ${eventType}`,
-            timestamp: new Date().toISOString(),
-            evidenceType: 'provider_webhook',
-          },
-        },
+      const result = await PortOutCoordinator.completePortOut(
+        opRow.id,
+        opRow.organization_id,
+        `provider_webhook:twilio:${providerOperationId || 'event'}`,
         adminDb
       );
 
@@ -136,7 +99,7 @@ export async function POST(request: NextRequest) {
         success: true,
         processed: true,
         status: 'ported_out',
-        providerReconciliation: result.providerReconciliation,
+        providerReconciliation: result,
       });
     }
 

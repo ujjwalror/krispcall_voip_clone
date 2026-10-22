@@ -17,8 +17,11 @@ import {
   Clock,
   HelpCircle,
 } from 'lucide-react';
+import { useAuth } from '@/components/providers/AuthProvider';
 
 export default function CustomerPortInPage() {
+  const { profile, organization } = useAuth();
+  const orgId = organization?.id || profile?.organization_id || '';
   const [step, setStep] = useState<number>(1);
   const [phoneNumberE164, setPhoneNumberE164] = useState<string>('');
   const [countryCode, setCountryCode] = useState<string>('US');
@@ -80,7 +83,7 @@ export default function CustomerPortInPage() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            organizationId: '00000000-0000-0000-0000-000000000001', // Mock organization for UI preview
+            organizationId: orgId,
             phoneNumberE164: portabilityResult.phoneNumberE164,
             workflowMode: portabilityResult.workflowMode,
           }),
@@ -369,10 +372,13 @@ export default function CustomerPortInPage() {
           <div className="p-3 rounded-lg bg-amber-500/5 border border-amber-500/20 text-xs space-y-1">
             <div className="font-semibold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
               <Clock className="w-4 h-4 text-amber-500" />
-              <span>Next Steps After Confirmation</span>
+              <span>Next Steps &amp; Slot Capacity Notice</span>
             </div>
             <p className="text-slate-600 dark:text-slate-400">
               An electronic Letter of Authorization (LOA) signature link will be emailed to {repEmail}. Your port will process automatically once signed.
+            </p>
+            <p className="text-[11px] text-amber-800 dark:text-amber-300 font-semibold pt-1">
+              Note: A committed in-flight port order reserves 1 number slot from your workspace capacity.
             </p>
           </div>
 

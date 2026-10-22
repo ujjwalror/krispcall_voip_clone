@@ -4,7 +4,6 @@ import {
   getExtensionCorsHeaders,
   handleExtensionCorsOptions,
 } from '@/lib/telephony/extensionAuth';
-import { generateVoiceAccessToken } from '@/lib/twilio/tokens';
 
 export async function OPTIONS(request: Request) {
   return handleExtensionCorsOptions(request);
@@ -27,7 +26,10 @@ export async function GET(request: Request) {
       );
     }
 
-    const result = generateVoiceAccessToken(auth.twilioIdentity);
+    const { generateVoiceAccessTokenAsync } = await import('@/lib/twilio/tokens');
+    const result = await generateVoiceAccessTokenAsync(auth.twilioIdentity, 3600, {
+      organizationId: auth.organizationId,
+    });
 
     return NextResponse.json(
       {
@@ -37,11 +39,17 @@ export async function GET(request: Request) {
       },
       { headers: corsHeaders }
     );
-  } catch (error: any) {
-    console.error('Error generating extension voice token:', error.message || error);
+  } catch (error: unknown) {
+    const err = error as { code?: string; message?: string };
+    console.error('Error generating extension voice token:', err.message || err);
+    const statusCode =
+      err.code === 'CUSTOMER_SUBACCOUNT_WEBRTC_UNSUPPORTED' ||
+      err.code === 'PARENT_ACCOUNT_CUSTOMER_ACCESS_PROHIBITED'
+        ? 403
+        : 500;
     return NextResponse.json(
-      { error: 'Failed to generate voice access token.' },
-      { status: 500, headers: corsHeaders }
+      { error: err.message || 'Failed to generate voice access token.' },
+      { status: statusCode, headers: corsHeaders }
     );
   }
 }

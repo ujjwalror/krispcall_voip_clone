@@ -8,21 +8,18 @@ export async function POST(request: NextRequest) {
     const rawBody = await request.text();
     const signature = request.headers.get('x-twilio-signature');
 
-    const authToken = process.env.TWILIO_AUTH_TOKEN;
-
-    // Validate Twilio Signature if configured
-    if (authToken && signature) {
-      const params: Record<string, string> = {};
+    // 1. Authoritative Twilio Signature Validation (Fail-Closed)
+    const params: Record<string, string> = {};
+    try {
       const searchParams = new URLSearchParams(rawBody);
       searchParams.forEach((val, key) => {
         params[key] = val;
       });
+    } catch {}
 
-      const isValid = await validateTwilioRequest(request, params);
-
-      if (!isValid) {
-        return NextResponse.json({ error: 'UNAUTHORIZED_WEBHOOK: Invalid signature.' }, { status: 401 });
-      }
+    const isValid = await validateTwilioRequest(request, params, { rawBody });
+    if (!isValid) {
+      return NextResponse.json({ error: 'UNAUTHORIZED_WEBHOOK: Invalid signature.' }, { status: 401 });
     }
 
     const payload = JSON.parse(rawBody || '{}');

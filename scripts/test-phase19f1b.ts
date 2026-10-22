@@ -57,6 +57,7 @@ function createMockSupabase() {
     else if (tableName === 'number_audio_settings') store = audioSettingsStore;
     else if (tableName === 'tenant_media_assets') store = mediaAssetsStore;
     else if (tableName === 'calls') store = callsStore;
+    else if (tableName === 'organizations') store = [{ id: 'org-123', name: 'Acme Org', subscription_status: 'active' }];
     else if (tableName === 'organization_wallets') store = walletStore;
     else if (tableName === 'voice_rate_cards' || tableName === 'telecom_retail_rate_cards') {
       store = [{
@@ -159,7 +160,17 @@ function createMockSupabase() {
         const item = store.find((r) => filters.every((f) => r[f.col] === f.val));
         return { data: item || null, error: null };
       },
-      insert: (payload: any) => Promise.resolve({ data: payload, error: null }),
+      insert: (payload: any) => {
+        const res = { data: payload, error: null };
+        return {
+          select: () => ({
+            single: async () => res,
+            maybeSingle: async () => res,
+            then: (resolve: any) => resolve(res),
+          }),
+          then: (resolve: any) => resolve(res),
+        };
+      },
       upsert: (payload: any) => {
         const existingIdx = audioSettingsStore.findIndex(r => r.phone_number_id === payload.phone_number_id);
         if (existingIdx >= 0) {

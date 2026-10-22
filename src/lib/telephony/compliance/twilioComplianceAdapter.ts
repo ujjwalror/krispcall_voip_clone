@@ -1,5 +1,6 @@
 import 'server-only';
-import { createTwilioServerClient } from '@/lib/twilio/client';
+import { ProviderClientFactory } from '@/lib/telecom/provider/providerClientFactory';
+import { ProviderContext } from '@/lib/telecom/provider/types';
 import {
   AssignItemParams,
   CreateAddressParams,
@@ -15,9 +16,19 @@ import { ComplianceResourceType } from './types';
 
 export class TwilioProviderComplianceAdapter implements ProviderComplianceAdapter {
   private clientOverride?: any;
+  private context?: ProviderContext;
 
-  constructor(clientOverride?: any) {
-    this.clientOverride = clientOverride;
+  constructor(options?: any) {
+    if (options && typeof options === 'object') {
+      if (options.clientOverride || options.context) {
+        this.clientOverride = options.clientOverride;
+        this.context = options.context;
+      } else {
+        this.clientOverride = options;
+      }
+    } else {
+      this.clientOverride = options;
+    }
   }
 
   /**
@@ -50,14 +61,22 @@ export class TwilioProviderComplianceAdapter implements ProviderComplianceAdapte
     }
   }
 
-  private getTwilioClient(): any {
+  private async getTwilioClient(): Promise<any> {
     if (this.clientOverride) return this.clientOverride;
-    return createTwilioServerClient();
+    if (this.context) {
+      if (this.context.accountType === 'CUSTOMER_SUBACCOUNT' || this.context.accountType === 'DEDICATED_ACCOUNT') {
+        return await ProviderClientFactory.getTwilioClientAsync(this.context);
+      }
+      return ProviderClientFactory.getParentAdministrativeClient();
+    }
+    // Regulatory compliance bundle operations in Twilio Trust Hub default to the parent platform administrative client
+    // Classification: PARENT_PLATFORM_ADMIN
+    return ProviderClientFactory.getParentAdministrativeClient();
   }
 
   async createAddress(params: CreateAddressParams): Promise<{ addressSid: string }> {
     this.assertMutationsEnabled('create_address', params.authorization);
-    const client = this.getTwilioClient();
+    const client = await this.getTwilioClient();
     const address = await client.addresses.create({
       friendlyName: params.friendlyName,
       customerName: params.customerName,
@@ -72,7 +91,7 @@ export class TwilioProviderComplianceAdapter implements ProviderComplianceAdapte
 
   async createEndUser(params: CreateEndUserParams): Promise<{ endUserSid: string }> {
     this.assertMutationsEnabled('create_end_user', params.authorization);
-    const client = this.getTwilioClient();
+    const client = await this.getTwilioClient();
     const endUser = await client.numbers.v2.regulatoryCompliance.endUsers.create({
       friendlyName: params.friendlyName,
       type: params.type,
@@ -83,7 +102,7 @@ export class TwilioProviderComplianceAdapter implements ProviderComplianceAdapte
 
   async createSupportingDocument(params: CreateSupportingDocumentParams): Promise<{ supportingDocumentSid: string }> {
     this.assertMutationsEnabled('create_supporting_document', params.authorization);
-    const client = this.getTwilioClient();
+    const client = await this.getTwilioClient();
 
     if (params.dispatchMode === 'multipart_with_evidence' && params.fileBuffer) {
       // Direct multipart form evidence dispatch to numbers-upload.twilio.com
@@ -107,7 +126,7 @@ export class TwilioProviderComplianceAdapter implements ProviderComplianceAdapte
 
   async createBundle(params: CreateBundleParams): Promise<{ bundleSid: string; status: string }> {
     this.assertMutationsEnabled('create_bundle', params.authorization);
-    const client = this.getTwilioClient();
+    const client = await this.getTwilioClient();
     const payload: any = {
       friendlyName: params.friendlyName,
       email: params.email,
@@ -125,7 +144,7 @@ export class TwilioProviderComplianceAdapter implements ProviderComplianceAdapte
 
   async assignItemToBundle(params: AssignItemParams): Promise<{ itemAssignmentSid: string }> {
     this.assertMutationsEnabled('assign_item_to_bundle', params.authorization);
-    const client = this.getTwilioClient();
+    const client = await this.getTwilioClient();
     const assignment = await client.numbers.v2.regulatoryCompliance
       .bundles(params.bundleSid)
       .itemAssignments.create({
@@ -136,7 +155,7 @@ export class TwilioProviderComplianceAdapter implements ProviderComplianceAdapte
 
   async requestBundleEvaluation(params: RequestEvaluationParams): Promise<{ evaluationSid: string; status: string }> {
     this.assertMutationsEnabled('request_bundle_evaluation', params.authorization);
-    const client = this.getTwilioClient();
+    const client = await this.getTwilioClient();
     const evaluation = await client.numbers.v2.regulatoryCompliance
       .bundles(params.bundleSid)
       .evaluations.create({});
@@ -145,7 +164,7 @@ export class TwilioProviderComplianceAdapter implements ProviderComplianceAdapte
 
   async submitBundle(params: SubmitBundleParams): Promise<{ bundleSid: string; status: string }> {
     this.assertMutationsEnabled('submit_bundle', params.authorization);
-    const client = this.getTwilioClient();
+    const client = await this.getTwilioClient();
     const updated = await client.numbers.v2.regulatoryCompliance
       .bundles(params.bundleSid)
       .update({
@@ -160,7 +179,7 @@ export class TwilioProviderComplianceAdapter implements ProviderComplianceAdapte
    */
   async deleteEndUser(endUserSid: string): Promise<{ deleted: boolean }> {
     this.assertMutationsEnabled('delete_end_user');
-    const client = this.getTwilioClient();
+    const client = await this.getTwilioClient();
     await client.numbers.v2.regulatoryCompliance.endUsers(endUserSid).remove();
     return { deleted: true };
   }
@@ -170,7 +189,7 @@ export class TwilioProviderComplianceAdapter implements ProviderComplianceAdapte
    */
   async deleteBundle(bundleSid: string): Promise<{ deleted: boolean }> {
     this.assertMutationsEnabled('delete_bundle');
-    const client = this.getTwilioClient();
+    const client = await this.getTwilioClient();
     await client.numbers.v2.regulatoryCompliance.bundles(bundleSid).remove();
     return { deleted: true };
   }
@@ -180,7 +199,7 @@ export class TwilioProviderComplianceAdapter implements ProviderComplianceAdapte
    * Permitted even when mutation switch is disabled.
    */
   async getResourceStatus(resourceType: ComplianceResourceType, resourceSid: string): Promise<{ status: string; details?: any }> {
-    const client = this.getTwilioClient();
+    const client = await this.getTwilioClient();
 
     try {
       if (resourceType === 'address') {

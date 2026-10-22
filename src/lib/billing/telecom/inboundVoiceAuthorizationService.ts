@@ -36,6 +36,8 @@ export interface InboundVoiceAuthorizationResult {
   amountReservedMinor: number;
   rateSnapshot: RateResolutionResult;
   enforcementMode: 'disabled' | 'shadow_log' | 'enforce';
+  initialExposureSeconds: number;
+  providerTimeLimit: number;
 }
 
 export class InboundVoiceAuthorizationService {
@@ -101,16 +103,73 @@ export class InboundVoiceAuthorizationService {
     }
 
     const organizationId = phoneRecord.organization_id;
+
+    // Phase 24B: Inbound Control Plane Check (Safe Inbound Preserved by default)
+    const { TelecomControlPlaneService } = await import('@/lib/telecom/controlPlane');
+    const controlEval = await TelecomControlPlaneService.evaluate(
+      {
+        organizationId,
+        operation: 'INBOUND_VOICE',
+        phoneNumber: cleanCalled,
+        destination: cleanCalled,
+        context: { callSid: cleanCallSid },
+      },
+      client
+    );
+    if (!controlEval.allowed) {
+      throw new InboundVoiceAuthorizationError(controlEval.reason, 403, controlEval.reasonCode);
+    }
+
     const trustedNumberType = phoneRecord.type || null;
     const trustedCountryCode = phoneRecord.country_code || 'US';
     const providerAccountId = phoneRecord.provider_account_id || 'default';
 
-    // Verify voice capability
-    if (phoneRecord.capabilities_voice === false) {
+    // Canonical Capability Authorization (Task 12: Inbound Voice USABLE stage enforcement)
+    const { CapabilityAuthorizationService } = await import('@/lib/telecom/capability');
+    const voiceAuth = await CapabilityAuthorizationService.canUseCapability(
+      phoneRecord.id,
+      'VOICE_INBOUND',
+      organizationId,
+      undefined,
+      client
+    );
+    if (!voiceAuth.allowed) {
       throw new InboundVoiceAuthorizationError(
-        `Destination number "${cleanCalled}" does not have voice capability active.`,
+        voiceAuth.reason || `Destination number "${cleanCalled}" does not have usable inbound voice capability.`,
         400,
-        'VOICE_CAPABILITY_DISABLED'
+        voiceAuth.code || 'VOICE_CAPABILITY_DISABLED'
+      );
+    }
+
+    // Phase 21A.1: Authoritatively resolve Provider Account Context before rating or exposure
+    let resolvedProvider = 'twilio';
+    let resolvedProviderAccountId = providerAccountId;
+    try {
+      const { ProviderAccountResolver } = await import('@/lib/telecom/provider/providerAccountResolver');
+      const providerResolution = await ProviderAccountResolver.resolveAccount({
+        organizationId,
+        service: 'VOICE',
+        countryCode: trustedCountryCode,
+      }, client);
+
+      if (!providerResolution.success || !providerResolution.context) {
+        throw new InboundVoiceAuthorizationError(
+          providerResolution.errorMessage || 'No authorized voice provider account available.',
+          403,
+          providerResolution.errorCode || 'UNKNOWN_OR_INACTIVE_PROVIDER'
+        );
+      }
+
+      resolvedProvider = providerResolution.context.provider.toLowerCase();
+      resolvedProviderAccountId = providerResolution.context.providerAccountId;
+    } catch (provErr: any) {
+      if (provErr instanceof InboundVoiceAuthorizationError) {
+        throw provErr;
+      }
+      throw new InboundVoiceAuthorizationError(
+        'Unable to resolve telecom provider context.',
+        500,
+        'PROVIDER_RESOLUTION_FAILED'
       );
     }
 
@@ -119,8 +178,8 @@ export class InboundVoiceAuthorizationService {
     try {
       rateSnapshot = await TelecomRatingService.resolveRetailRate(client, {
         organizationId,
-        provider: 'twilio',
-        providerAccountId,
+        provider: resolvedProvider,
+        providerAccountId: resolvedProviderAccountId,
         serviceType: 'voice_inbound',
         direction: 'inbound',
         destinationPhoneNumber: cleanCalled,
@@ -141,8 +200,21 @@ export class InboundVoiceAuthorizationService {
     const exposureConfig = ExposurePolicy.getConfig(
       overrideInitialExposureSeconds ? { initialExposureSeconds: overrideInitialExposureSeconds } : undefined
     );
+    ExposurePolicy.validateConfig(exposureConfig);
     const initialExposureSeconds = exposureConfig.initialExposureSeconds;
-    const enforcementMode = (process.env.TELECOM_PREPAID_ENFORCEMENT_MODE || 'shadow_log').toLowerCase() as any;
+    const enforcementMode = exposureConfig.enforcementMode;
+
+    if (enforcementMode === 'enforce') {
+      const { VoiceAuthorizationService } = await import('./voiceAuthorizationService');
+      const concurrencyCheck = await VoiceAuthorizationService.checkConcurrentCallLimit(client, organizationId);
+      if (!concurrencyCheck.allowed) {
+        throw new InboundVoiceAuthorizationError(
+          'Organization active concurrent voice limit reached.',
+          429,
+          'CONCURRENT_CALL_LIMIT_EXCEEDED'
+        );
+      }
+    }
 
     const amountReservedMinor = TelecomWalletService.calculateRetailChargeMinor({
       retailRateMicro: rateSnapshot.retailRateMicro,
@@ -202,7 +274,14 @@ export class InboundVoiceAuthorizationService {
         });
         reservationId = reservationResult.reservationId;
       } catch (resErr: any) {
-        if (resErr.message && resErr.message.includes('INSUFFICIENT_FUNDS')) {
+        if (resErr.message && resErr.message.includes('CONCURRENT_CALL_LIMIT_EXCEEDED')) {
+          throw new InboundVoiceAuthorizationError(
+            'Organization active concurrent voice limit reached.',
+            429,
+            'CONCURRENT_CALL_LIMIT_EXCEEDED'
+          );
+        }
+        if (resErr.message && (resErr.message.includes('INSUFFICIENT_FUNDS') || resErr.message.includes('INSUFFICIENT_AVAILABLE_BALANCE'))) {
           throw new InboundVoiceAuthorizationError(
             'Insufficient Credits available in wallet for inbound call.',
             402,
@@ -254,11 +333,27 @@ export class InboundVoiceAuthorizationService {
         sessionId,
         organizationId,
         internalUsageId,
-        provider: 'twilio',
+        provider: resolvedProvider,
         parentProviderResourceId: cleanCallSid,
         legType: 'pstn_inbound',
         metadata: { callerNumber, calledNumber },
       });
+
+      // Record provider resource mapping for CALL
+      try {
+        const { ProviderResourceManager } = await import('@/lib/telecom/provider/providerResourceManager');
+        await ProviderResourceManager.recordResource({
+          organizationId,
+          providerAccountId: resolvedProviderAccountId,
+          resourceType: 'CALL',
+          localResourceId: sessionId,
+          remoteResourceId: cleanCallSid,
+          provider: (resolvedProvider.toUpperCase() as any) || 'TWILIO',
+          status: 'inbound_authorized',
+        }, client);
+      } catch (mappingErr) {
+        console.warn('[InboundVoiceAuthorizationService] Non-fatal provider resource mapping notice:', mappingErr);
+      }
     } catch (domainErr: any) {
       console.warn('[InboundVoiceAuthorizationService] Non-fatal domain setup notice:', domainErr.message || domainErr);
     }
@@ -273,6 +368,8 @@ export class InboundVoiceAuthorizationService {
       amountReservedMinor,
       rateSnapshot,
       enforcementMode,
+      initialExposureSeconds,
+      providerTimeLimit: initialExposureSeconds,
     };
   }
 }

@@ -8,12 +8,13 @@ export class OffboardingPolicyService {
    * If policy is disabled, unconfigured, or unresolvable, returns null to enforce strict fail-closed behavior.
    */
   static async getPolicyForOrganization(
-    organizationId: string
+    organizationId: string,
+    clientOverride?: any
   ): Promise<OffboardingPolicyRecord | null> {
     if (!organizationId) return null;
 
     try {
-      const supabase = createAdminClient();
+      const supabase = clientOverride || createAdminClient();
 
       // 1. Check organization-specific active policy
       const { data: orgPolicy, error: orgErr } = await (supabase as any)

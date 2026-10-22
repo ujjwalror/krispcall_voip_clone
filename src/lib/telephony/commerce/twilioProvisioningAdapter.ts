@@ -1,5 +1,48 @@
 import 'server-only';
-import { createTwilioServerClient } from '../../twilio/client';
+import { ProviderClientFactory } from '@/lib/telecom/provider/providerClientFactory';
+import { ProviderContext } from '@/lib/telecom/provider/types';
+
+/**
+ * PHASE 23D.2: CUSTOMER NUMBER PROVIDER CONTEXT ENFORCEMENT
+ *
+ * Customer number operations (purchase, lookup, release) require an explicit
+ * ProviderContext with account_type === 'CUSTOMER_SUBACCOUNT' or 'DEDICATED_ACCOUNT'.
+ *
+ * SECURITY INVARIANT: ZERO runtime fallback to SHARED_PARENT for customer number operations.
+ * Missing or malformed context is a compile-time error (non-optional parameter)
+ * AND a runtime fail-closed rejection.
+ */
+
+/**
+ * Validates that a ProviderContext is a legitimate customer number execution context.
+ * Throws fail-closed on any violation.
+ */
+function assertCustomerNumberContext(context: ProviderContext, operation: string): void {
+  if (!context) {
+    throw Object.assign(
+      new Error(`PARENT_ACCOUNT_CUSTOMER_ACCESS_PROHIBITED: Customer number operation '${operation}' requires explicit ProviderContext. No implicit parent fallback.`),
+      { code: 'PARENT_ACCOUNT_CUSTOMER_ACCESS_PROHIBITED' }
+    );
+  }
+  if (context.isSharedParent || context.accountType === 'SHARED_PARENT') {
+    throw Object.assign(
+      new Error(`PARENT_ACCOUNT_CUSTOMER_ACCESS_PROHIBITED: Customer number operation '${operation}' cannot use SHARED_PARENT context. Customer operations require CUSTOMER_SUBACCOUNT.`),
+      { code: 'PARENT_ACCOUNT_CUSTOMER_ACCESS_PROHIBITED' }
+    );
+  }
+  if (context.accountType !== 'CUSTOMER_SUBACCOUNT' && context.accountType !== 'DEDICATED_ACCOUNT') {
+    throw Object.assign(
+      new Error(`PROVIDER_ACCOUNT_MISMATCH: Customer number operation '${operation}' requires account type CUSTOMER_SUBACCOUNT or DEDICATED_ACCOUNT, got '${context.accountType}'.`),
+      { code: 'PROVIDER_ACCOUNT_MISMATCH' }
+    );
+  }
+  if (!context.providerAccountId || !context.organizationId) {
+    throw Object.assign(
+      new Error(`MALFORMED_PROVIDER_CONTEXT: Customer number operation '${operation}' requires providerAccountId and organizationId.`),
+      { code: 'MALFORMED_PROVIDER_CONTEXT' }
+    );
+  }
+}
 
 export interface TwilioPurchasePostParams {
   phoneNumberE164: string;
@@ -37,6 +80,8 @@ export interface AuthoritativeLookupResult {
 export interface PrePurchaseRecheckResult {
   available: boolean;
   exactMatch: boolean;
+  errorCode?: string;
+  errorMessage?: string;
 }
 
 /**
@@ -60,11 +105,12 @@ export class TwilioProvisioningAdapter {
    * Classifies whether a Twilio exception is a deterministic pre-mutation rejection
    * versus an ambiguous network/timeout/server failure.
    */
-  static isDeterministicFailure(error: any): boolean {
+  static isDeterministicFailure(error: unknown): boolean {
     if (!error || typeof error !== 'object') return false;
 
-    const httpStatus = Number(error.status || error.statusCode);
-    const twilioCode = Number(error.code);
+    const err = error as Record<string, unknown>;
+    const httpStatus = Number(err.status || err.statusCode);
+    const twilioCode = Number(err.code);
 
     // Only definitive HTTP 400, 401, 403, 404, 422 with documented rejection codes are deterministic
     if (httpStatus >= 400 && httpStatus < 500) {
@@ -78,14 +124,28 @@ export class TwilioProvisioningAdapter {
 
   /**
    * Re-checks live Twilio availability of an exact E.164 number immediately prior to purchase dispatch.
+   *
+   * SCOPE CLASSIFICATION: PLATFORM_ADMIN_ALLOWED
+   * Twilio AvailablePhoneNumbers search operates at parent account scope for catalog discovery.
+   * A search result does NOT authorize a purchase — purchase always performs its own
+   * validated customer-account authorization independently.
+   *
+   * If a customerContext is provided, the search will be scoped to that subaccount.
+   * Otherwise, parent administrative client is used for platform-level catalog visibility.
    */
   static async recheckNumberAvailability(
     phoneNumberE164: string,
     countryCode: string,
-    numberType: string
+    numberType: string,
+    customerContext?: ProviderContext
   ): Promise<PrePurchaseRecheckResult> {
     try {
-      const client = createTwilioServerClient();
+      // If customer context is provided, scope search to subaccount.
+      // Otherwise, use parent admin for platform-level catalog visibility.
+      // CRITICAL: Search scope does NOT authorize purchase scope.
+      const client = customerContext
+        ? await ProviderClientFactory.getTwilioClientAsync(customerContext)
+        : ProviderClientFactory.getParentAdministrativeClient();
       const countryUpper = countryCode.toUpperCase();
       let results: Array<{ phoneNumber?: string }> = [];
 
@@ -106,26 +166,67 @@ export class TwilioProvisioningAdapter {
         });
       }
 
+      if (!Array.isArray(results)) {
+        console.warn('[TwilioProvisioningAdapter.recheckNumberAvailability] Malformed provider response: expected array, received', typeof results);
+        return {
+          available: false,
+          exactMatch: false,
+          errorCode: 'MALFORMED_PROVIDER_RESPONSE',
+          errorMessage: 'Carrier inventory response is malformed.',
+        };
+      }
+
       const match = results.some((item: { phoneNumber?: string }) => item.phoneNumber === phoneNumberE164);
       return {
         available: match,
         exactMatch: match,
       };
-    } catch (err) {
-      // In unconfigured test context, recheck fails open safely for mock runner
-      return { available: true, exactMatch: true };
+    } catch (err: any) {
+      // Phase 24D.SEC-7F L-02: Fail-Closed on provider error/timeout/5xx/malformed.
+      // Under NO circumstances treat an unknown or failed availability check as available!
+      const rawMsg = err?.message || String(err || 'Unknown provider error');
+      const sanitizedMsg = rawMsg
+        .replace(/SK[a-f0-9]{32}/gi, '[REDACTED_API_KEY]')
+        .replace(/AC[a-f0-9]{32}/gi, '[REDACTED_ACCOUNT_SID]')
+        .replace(/(Bearer|Basic)\s+[A-Za-z0-9+/=]+/gi, '$1 [REDACTED]')
+        .substring(0, 256);
+
+      const errCode = String(err?.code || err?.status || 'PROVIDER_AVAILABILITY_ERROR');
+
+      console.warn('[TwilioProvisioningAdapter.recheckNumberAvailability] Carrier availability check failed (FAIL-CLOSED):', {
+        code: errCode,
+        message: sanitizedMsg,
+      });
+
+      return {
+        available: false,
+        exactMatch: false,
+        errorCode: errCode,
+        errorMessage: sanitizedMsg,
+      };
     }
   }
 
   /**
    * Executes the IncomingPhoneNumbers POST request against Twilio REST API.
    * NEVER called automatically during recovery.
+   *
+   * PHASE 23D.2 SECURITY INVARIANT:
+   * ProviderContext is MANDATORY. Customer number purchase MUST use explicit
+   * CUSTOMER_SUBACCOUNT context. SHARED_PARENT context is rejected fail-closed.
+   * Missing context is a compile-time error and runtime rejection.
    */
-  static async executePurchasePost(params: TwilioPurchasePostParams): Promise<PurchasePostResult> {
+  static async executePurchasePost(
+    params: TwilioPurchasePostParams,
+    context: ProviderContext
+  ): Promise<PurchasePostResult> {
     try {
-      const client = createTwilioServerClient();
+      // PHASE 23D.2: Fail-closed validation — context is mandatory, parent is prohibited
+      assertCustomerNumberContext(context, 'executePurchasePost');
 
-      const postPayload: Record<string, any> = {
+      const client = await ProviderClientFactory.getTwilioClientAsync(context);
+
+      const postPayload: Record<string, string> = {
         phoneNumber: params.phoneNumberE164,
       };
 
@@ -136,17 +237,32 @@ export class TwilioProvisioningAdapter {
       if (params.smsUrl) postPayload.smsUrl = params.smsUrl;
       if (params.statusCallback) postPayload.statusCallback = params.statusCallback;
 
-      const purchasedNumber = await client.incomingPhoneNumbers.create(postPayload);
+      const purchasedNumber = await (client.incomingPhoneNumbers as { create: (p: Record<string, string>) => Promise<{ sid: string; status?: string }> }).create(postPayload);
 
       return {
         success: true,
         sid: purchasedNumber.sid,
         status: purchasedNumber.status || 'active',
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const err = error as Record<string, unknown>;
+      // Propagate security errors as deterministic failures with original error code
+      if (
+        err.code === 'PARENT_ACCOUNT_CUSTOMER_ACCESS_PROHIBITED' ||
+        err.code === 'PROVIDER_ACCOUNT_MISMATCH' ||
+        err.code === 'MALFORMED_PROVIDER_CONTEXT'
+      ) {
+        return {
+          success: false,
+          deterministicFailure: true,
+          errorCode: String(err.code),
+          errorMessage: String(err.message),
+        };
+      }
+
       const deterministic = TwilioProvisioningAdapter.isDeterministicFailure(error);
-      const errorCode = error.code ? `TWILIO_${error.code}` : error.name || 'PROVIDER_DISPATCH_ERROR';
-      const errorMessage = error.message || 'An error occurred during provider purchase dispatch.';
+      const errorCode = err.code ? `TWILIO_${err.code}` : (err.name as string) || 'PROVIDER_DISPATCH_ERROR';
+      const errorMessage = (err.message as string) || 'An error occurred during provider purchase dispatch.';
 
       return {
         success: false,
@@ -159,10 +275,21 @@ export class TwilioProvisioningAdapter {
 
   /**
    * Queries Twilio account inventory to authoritatively verify whether an exact E.164 is owned.
+   *
+   * PHASE 23D.2 SECURITY INVARIANT:
+   * ProviderContext is MANDATORY. Customer-owned number lookup MUST use explicit
+   * CUSTOMER_SUBACCOUNT context. SHARED_PARENT is rejected fail-closed.
    */
-  static async lookupOwnedNumberByE164(phoneNumberE164: string): Promise<AuthoritativeLookupResult> {
+  static async lookupOwnedNumberByE164(
+    phoneNumberE164: string,
+    context: ProviderContext
+  ): Promise<AuthoritativeLookupResult> {
     try {
-      const client = createTwilioServerClient();
+      // PHASE 23D.2: Fail-closed validation — context is mandatory, parent is prohibited
+      assertCustomerNumberContext(context, 'lookupOwnedNumberByE164');
+
+      const client = await ProviderClientFactory.getTwilioClientAsync(context);
+
       const list = await client.incomingPhoneNumbers.list({
         phoneNumber: phoneNumberE164,
         limit: 1,
@@ -177,7 +304,7 @@ export class TwilioProvisioningAdapter {
       }
 
       return { found: false };
-    } catch (err) {
+    } catch {
       // Inconclusive observation due to network/API error
       return { found: false };
     }

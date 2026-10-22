@@ -100,23 +100,25 @@ export class MarketplaceCartService {
         currentActiveCount = count;
       }
 
-      // Check organization plan entitlement limit if stored in organizations table or default allowance
-      const { data: orgData } = await (supabase as any)
-        .from('organizations')
-        .select('max_phone_numbers')
-        .eq('id', organizationId)
+      // PHASE 23E.1: Subscription plans do NOT impose number quantity ceilings.
+      // Check for explicit non-plan administrative/risk override
+      const { data: override } = await (supabase as any)
+        .from('organization_entitlement_overrides')
+        .select('numeric_value')
+        .eq('organization_id', organizationId)
+        .in('feature_code', ['number.risk_limit', 'number.max_active'])
+        .eq('enabled', true)
+        .order('created_at', { ascending: false })
+        .limit(1)
         .maybeSingle();
 
-      if (orgData && typeof orgData.max_phone_numbers === 'number') {
-        maxAllowedCount = orgData.max_phone_numbers;
-      } else {
-        // Default workspace limit safeguard (e.g. 50 active numbers)
-        maxAllowedCount = 50;
+      if (override && override.numeric_value !== null) {
+        maxAllowedCount = Number(override.numeric_value);
       }
 
       if (maxAllowedCount !== null && currentActiveCount >= maxAllowedCount) {
         entitlementAllowed = false;
-        warnings.push(`Workspace phone number capacity reached (${currentActiveCount}/${maxAllowedCount}). Contact administrator to upgrade limit.`);
+        warnings.push(`Workspace phone number capacity limit reached (${currentActiveCount}/${maxAllowedCount}). Contact administrator to review limits.`);
       }
     } catch (err: any) {
       console.warn('[MarketplaceCartService] Entitlement check warning:', err.message || err);

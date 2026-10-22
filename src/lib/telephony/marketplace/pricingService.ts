@@ -125,13 +125,20 @@ export class RetailPricingService {
           }
 
           const providerMinor = matchingPrice.currentPriceMinor;
-          const targetMarginPct = Number(policyData.target_margin_pct ?? 30);
-          const minMarginMinor = Number(policyData.minimum_fixed_margin_minor ?? 200);
+          const { NumberPricingPolicyService } = await import('@/lib/telecom/billing/numberPricingPolicyService');
+          const calcRes = await NumberPricingPolicyService.calculateRetailPrice({
+            providerCostMinor: providerMinor,
+            currency: curr,
+            countryCode: cc,
+            numberType: type,
+            client: supabase,
+          });
 
-          const calculatedByPct = Math.round(providerMinor * (1 + targetMarginPct / 100));
-          const calculatedByMin = providerMinor + minMarginMinor;
-
-          let rawDerivedMinor = Math.max(calculatedByPct, calculatedByMin);
+          let rawDerivedMinor = calcRes.retailPriceMinor;
+          const minMarginMinor = Number(policyData.minimum_fixed_margin_minor ?? 0);
+          if (rawDerivedMinor < providerMinor + minMarginMinor) {
+            rawDerivedMinor = providerMinor + minMarginMinor;
+          }
 
           // Apply rounding rule if configured
           if (policyData.rounding_rule === 'nearest_99') {

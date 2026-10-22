@@ -14,6 +14,11 @@ vi.mock('@/lib/twilio/client', () => ({
 vi.mock('../../../twilio/client', () => ({
   createTwilioServerClient: () => ({}),
 }));
+vi.mock('@/lib/telecom/provider/providerClientFactory', () => ({
+  ProviderClientFactory: {
+    getParentAdministrativeClient: () => ({}),
+  },
+}));
 
 import { TwilioInventoryProvider } from '../inventoryProvider';
 

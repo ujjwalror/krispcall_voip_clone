@@ -1,4 +1,7 @@
 import { NextResponse } from 'next/server';
+import { ProviderAccountResolver } from '@/lib/telecom/provider/providerAccountResolver';
+import { TwilioRecordingAdapter } from '@/lib/telecom/provider/adapters/recordingAdapter';
+import { ProviderResourceManager } from '@/lib/telecom/provider/providerResourceManager';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 
@@ -51,13 +54,14 @@ export async function GET(
       );
     }
 
-    // 3. Query database recording record and verify organization ownership
+    // 3. Query database recording record strictly scoped to authenticated organization
     const adminSupabase = createAdminClient();
     const { data: recordingData, error: recError } = await (adminSupabase as any)
       .from('recordings')
       .select('id, organization_id, recording_url, twilio_recording_sid')
       .eq('id', recordingId)
-      .single();
+      .eq('organization_id', profile.organization_id)
+      .maybeSingle();
 
     const recording = recordingData as {
       id: string;
@@ -70,43 +74,54 @@ export async function GET(
       return NextResponse.json({ error: 'Recording not found' }, { status: 404 });
     }
 
-    if (recording.organization_id !== profile.organization_id) {
+    // 4. Resolve Provider Context via Provider Abstraction
+    const providerResolution = await ProviderAccountResolver.resolveAccount({
+      organizationId: profile.organization_id,
+      service: 'RECORDING',
+    }, adminSupabase);
+
+    if (!providerResolution.success || !providerResolution.context) {
       return NextResponse.json(
-        { error: 'Forbidden. Recording does not belong to your organization.' },
+        { error: providerResolution.errorMessage || 'Unable to resolve provider account context for recording playback.' },
+        { status: 500 }
+      );
+    }
+
+    if (providerResolution.context.isSharedParent || providerResolution.context.accountType === 'SHARED_PARENT') {
+      return NextResponse.json(
+        { error: 'Forbidden. Customer organizations cannot access parent Twilio recording resources.' },
         { status: 403 }
       );
     }
 
-    // 4. Extract Twilio Account credentials server-side
-    const accountSid = process.env.TWILIO_ACCOUNT_SID;
-    const authToken = process.env.TWILIO_AUTH_TOKEN;
-
-    if (!accountSid || !authToken) {
-      console.error('[Recording Playback] Missing TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN credentials.');
-      return NextResponse.json({ error: 'Twilio server credentials unconfigured' }, { status: 500 });
-    }
-
-    // Construct server-side Twilio API URL for MP3 audio stream
-    let twilioMediaUrl = recording.recording_url;
+    // 5. Remote Provider Resource Ownership Check
     if (recording.twilio_recording_sid) {
-      twilioMediaUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Recordings/${recording.twilio_recording_sid}.mp3`;
-    } else if (twilioMediaUrl && !twilioMediaUrl.endsWith('.mp3') && !twilioMediaUrl.endsWith('.wav')) {
-      twilioMediaUrl = `${twilioMediaUrl}.mp3`;
+      const isOwner = await ProviderResourceManager.assertResourceOwnership(
+        profile.organization_id,
+        'RECORDING',
+        recording.twilio_recording_sid,
+        adminSupabase
+      );
+      if (!isOwner) {
+        return NextResponse.json(
+          { error: 'Forbidden. Cross-tenant or unmapped provider resource identifier.' },
+          { status: 403 }
+        );
+      }
     }
 
-    // 5. Fetch media from Twilio using HTTP Basic Auth (Server-to-Server)
-    const authHeader = 'Basic ' + Buffer.from(`${accountSid}:${authToken}`).toString('base64');
-    const twilioRes = await fetch(twilioMediaUrl, {
-      headers: {
-        Authorization: authHeader,
-      },
-    });
+    // 6. Fetch Media from Telephony Provider via Provider Adapter
+    const recordingAdapter = new TwilioRecordingAdapter();
+    const mediaResult = await recordingAdapter.fetchRecordingMedia(
+      recording.twilio_recording_sid || recordingId,
+      providerResolution.context
+    );
 
-    if (!twilioRes.ok) {
-      console.error(`[Recording Playback] Failed to fetch recording from Twilio. HTTP Status: ${twilioRes.status}`);
+    if (!mediaResult.ok || !mediaResult.data) {
+      console.error(`[Recording Playback] Failed to fetch recording from provider: ${mediaResult.errorMessage}`);
       return NextResponse.json(
-        { error: 'Failed to stream recording media from Twilio' },
-        { status: twilioRes.status }
+        { error: mediaResult.errorMessage || 'Failed to stream recording media from provider' },
+        { status: mediaResult.status || 500 }
       );
     }
 
@@ -114,14 +129,12 @@ export async function GET(
 
     // Stream audio/mpeg response back to browser
     const headers = new Headers();
-    headers.set('Content-Type', twilioRes.headers.get('content-type') || 'audio/mpeg');
-    if (twilioRes.headers.get('content-length')) {
-      headers.set('Content-Length', twilioRes.headers.get('content-length')!);
-    }
+    headers.set('Content-Type', mediaResult.contentType || 'audio/mpeg');
+    headers.set('Content-Length', mediaResult.data.byteLength.toString());
     headers.set('Accept-Ranges', 'bytes');
     headers.set('Cache-Control', 'private, max-age=3600');
 
-    return new NextResponse(twilioRes.body as any, {
+    return new NextResponse(mediaResult.data, {
       status: 200,
       headers,
     });

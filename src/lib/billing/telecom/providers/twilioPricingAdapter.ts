@@ -79,8 +79,8 @@ export class TwilioPricingAdapter implements TelecomProviderPricingAdapter {
     freshnessConfig?: Partial<FreshnessPolicyConfig>
   ) {
     this.twilioClientFactory = customClientFactory || (() => {
-      const { createTwilioServerClient } = require('../../twilio/client');
-      return createTwilioServerClient();
+      const { ProviderClientFactory } = require('../../../telecom/provider/providerClientFactory');
+      return ProviderClientFactory.getParentAdministrativeClient();
     });
     this.freshnessConfig = freshnessConfig;
   }

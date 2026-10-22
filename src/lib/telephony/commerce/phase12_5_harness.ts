@@ -1,6 +1,6 @@
 import 'server-only';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { createTwilioServerClient } from '@/lib/twilio/client';
+import { ProviderClientFactory } from '@/lib/telecom/provider/providerClientFactory';
 import { ProvisioningEngine } from './provisioningEngine';
 import { ProviderCostService } from '../marketplace/providerCostService';
 import { RetailPricingService } from '../marketplace/pricingService';
@@ -82,7 +82,7 @@ export class Phase12_5HarnessService {
     // 1. Discover or recheck candidate E.164
     let candidateE164 = params.candidateE164;
     if (!candidateE164) {
-      const client = createTwilioServerClient();
+      const client = ProviderClientFactory.getParentAdministrativeClient();
       const available = await client.availablePhoneNumbers(countryCode).local.list({ limit: 1 });
       if (!available || available.length === 0) {
         return {
@@ -279,7 +279,7 @@ export class Phase12_5HarnessService {
     }
 
     // LIVE MODE: Execute Twilio remove() call with ambiguous reconciliation handling
-    const client = createTwilioServerClient();
+    const client = ProviderClientFactory.getParentAdministrativeClient();
     let releaseConfirmed = false;
     let ambiguous = false;
 

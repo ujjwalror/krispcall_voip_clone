@@ -17,10 +17,16 @@ export const COMMERCIAL_PLAN_USER_LIMITS: Record<string, number> = {
   business: 50,
 };
 
-export const COMMERCIAL_PLAN_NUMBER_LIMITS: Record<string, number> = {
-  starter: 1,
-  pro: 3,
-  business: 10,
+/**
+ * @deprecated SUPERSEDED BY PHASE 23E.1 / 23E.1A: SaaS subscription plans (Starter/Pro/Business)
+ * MUST NOT impose an ordinary plan-based ceiling on phone number ownership.
+ * Telephone numbers are independently recurring billable telecom resources.
+ * Current canonical plan capacity is unconstrained (null: Not Applicable).
+ */
+export const COMMERCIAL_PLAN_NUMBER_LIMITS: Record<string, number | null> = {
+  starter: null,
+  pro: null,
+  business: null,
 };
 
 export interface ProvisionalPlanPrice {
@@ -30,7 +36,7 @@ export interface ProvisionalPlanPrice {
   monthlyUserPriceFormatted: string;
   currency: string;
   maxUsers: number;
-  maxNumbers: number;
+  maxNumbers: number | null;
   isProvisional: boolean;
   annualPricingAvailable: false;
   annualPricingNote: string;
@@ -44,7 +50,7 @@ export const PROVISIONAL_PLAN_PRICES: Record<string, ProvisionalPlanPrice> = {
     monthlyUserPriceFormatted: '$18',
     currency: 'USD',
     maxUsers: 5,
-    maxNumbers: 1,
+    maxNumbers: null,
     isProvisional: true,
     annualPricingAvailable: false,
     annualPricingNote: 'Annual pricing coming soon',
@@ -56,7 +62,7 @@ export const PROVISIONAL_PLAN_PRICES: Record<string, ProvisionalPlanPrice> = {
     monthlyUserPriceFormatted: '$32',
     currency: 'USD',
     maxUsers: 20,
-    maxNumbers: 3,
+    maxNumbers: null,
     isProvisional: true,
     annualPricingAvailable: false,
     annualPricingNote: 'Annual pricing coming soon',
@@ -68,7 +74,7 @@ export const PROVISIONAL_PLAN_PRICES: Record<string, ProvisionalPlanPrice> = {
     monthlyUserPriceFormatted: '$40',
     currency: 'USD',
     maxUsers: 50,
-    maxNumbers: 10,
+    maxNumbers: null,
     isProvisional: true,
     annualPricingAvailable: false,
     annualPricingNote: 'Annual pricing coming soon',
@@ -81,7 +87,7 @@ export interface DowngradeEligibilityResult {
   currentActiveUsers: number;
   targetMaxUsers: number;
   currentActiveNumbers: number;
-  targetMaxNumbers: number;
+  targetMaxNumbers: number | null;
   reason?: string;
   blockerType?: 'USER_COUNT_EXCEEDED' | 'NUMBER_COUNT_EXCEEDED' | 'INVALID_PLAN';
 }
@@ -107,15 +113,15 @@ export class CommercialCatalogService {
 
   /**
    * Resolves maximum active phone numbers for a plan code.
+   * SUPERSEDED BY PHASE 23E.1 / 23E.1A: Returns null (unconstrained / not applicable).
    */
   static getMaxNumbersForPlan(planCode: string): number | null {
-    if (!planCode) return null;
-    const cleanKey = planCode.toLowerCase().trim();
-    return COMMERCIAL_PLAN_NUMBER_LIMITS[cleanKey] ?? null;
+    return null;
   }
 
   /**
-   * Evaluates if an organization can downgrade to a target plan without violating seat or number limits.
+   * Evaluates if an organization can downgrade to a target plan without violating seat limits.
+   * PHASE 23E.1A: Subscription downgrade NEVER blocks on phone number count.
    * STRICT GUARANTEE: Does NOT automatically release phone numbers or deactivate users or destroy historical data.
    */
   static async checkDowngradeEligibility(
@@ -126,16 +132,16 @@ export class CommercialCatalogService {
     const supabase = clientOverride || (await createServerSupabaseClient());
     const cleanTargetKey = (targetPlanCode || '').toLowerCase().trim();
     const targetMaxUsers = COMMERCIAL_PLAN_USER_LIMITS[cleanTargetKey];
-    const targetMaxNumbers = COMMERCIAL_PLAN_NUMBER_LIMITS[cleanTargetKey];
+    const targetMaxNumbers = null;
 
-    if (targetMaxUsers === undefined || targetMaxNumbers === undefined) {
+    if (targetMaxUsers === undefined) {
       return {
         allowed: false,
         targetPlanCode,
         currentActiveUsers: 0,
         targetMaxUsers: 0,
         currentActiveNumbers: 0,
-        targetMaxNumbers: 0,
+        targetMaxNumbers: null,
         reason: `Invalid or unrecognized target plan code '${targetPlanCode}'.`,
         blockerType: 'INVALID_PLAN',
       };
@@ -149,7 +155,7 @@ export class CommercialCatalogService {
 
     const activeMembers = memErr || !members ? 0 : members.filter((m: any) => m.active !== false).length;
 
-    // 2. Fetch current active phone number count (excluding released/ported-out/quarantined)
+    // 2. Fetch current active phone number count (for reporting / accounting)
     const { count: activeNumbersCount, error: numErr } = await (supabase as any)
       .from('phone_numbers')
       .select('id', { count: 'exact', head: true })
@@ -159,7 +165,7 @@ export class CommercialCatalogService {
 
     const currentActiveNumbers = numErr || activeNumbersCount === null ? 0 : activeNumbersCount;
 
-    // Check 1: User count ceiling
+    // Check 1: User count ceiling (SaaS seat limits)
     if (activeMembers > targetMaxUsers) {
       return {
         allowed: false,
@@ -173,19 +179,10 @@ export class CommercialCatalogService {
       };
     }
 
-    // Check 2: Number count ceiling
-    if (currentActiveNumbers > targetMaxNumbers) {
-      return {
-        allowed: false,
-        targetPlanCode,
-        currentActiveUsers: activeMembers,
-        targetMaxUsers,
-        currentActiveNumbers,
-        targetMaxNumbers,
-        reason: `Downgrade blocked: Your workspace currently has ${currentActiveNumbers} active phone numbers. The ${targetPlanCode.toUpperCase()} plan supports a maximum of ${targetMaxNumbers} active number(s). Please release or transfer ${currentActiveNumbers - targetMaxNumbers} phone number(s) before downgrading.`,
-        blockerType: 'NUMBER_COUNT_EXCEEDED',
-      };
-    }
+    // Check 2: Number count ceiling — SUPERSEDED BY PHASE 23E.1 / PHASE 23E.1A
+    // SaaS plans do NOT impose phone number quantity limits.
+    // Numbers are independently recurring billable telecom resources.
+    // Downgrades NEVER block on phone number count, release numbers, or destroy routing.
 
     return {
       allowed: true,

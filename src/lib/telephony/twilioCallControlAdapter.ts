@@ -5,6 +5,8 @@
 // ============================================================================
 
 import twilio from 'twilio';
+import { SupabaseClient } from '@supabase/supabase-js';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 export type ProviderResultClassification =
   | 'DEFINITE_SUCCESS'
@@ -19,6 +21,9 @@ export interface ActiveCallAllowanceParams {
   newTimeLimitSeconds: number;
   idempotencyKey: string;
   remainingLeaseSeconds?: number;
+  organizationId?: string;
+  context?: any;
+  client?: any;
 }
 
 export interface ActiveCallAllowanceResult {
@@ -35,6 +40,9 @@ export interface ActiveCallAllowanceResult {
 export interface ActiveCallTerminateParams {
   callSid: string;
   reason: string;
+  organizationId?: string;
+  context?: any;
+  client?: any;
 }
 
 export interface ActiveCallTerminateResult {
@@ -48,6 +56,9 @@ export interface ActiveCallFetchParams {
   callSid: string;
   expectedTimeLimitSeconds?: number;
   maxObservations?: number;
+  organizationId?: string;
+  context?: any;
+  client?: any;
 }
 
 export interface ActiveCallFetchResult {
@@ -229,29 +240,138 @@ export class MockTwilioCallControlAdapter implements TwilioCallControlAdapter {
   }
 }
 
+export interface RealTwilioCallControlAdapterOptions {
+  clientOverride?: any;
+  context?: any;
+  organizationId?: string;
+  supabaseClient?: SupabaseClient;
+}
+
 /**
  * Real Twilio Call Control Adapter implementation behind multi-gated safety.
  * Strategy tag: UNVERIFIED_FOR_ACTIVE_DIAL_EXTENSION
  * Disables SDK-level automatic retries (autoRetry: false, maxRetries: 0).
+ *
+ * PHASE 22C-4 ROUTING CLOSURE:
+ * - Direct global Twilio client construction and parent fallback removed.
+ * - Every operation authoritatively derives/validates tenant provider account via ProviderAccountResolver + ProviderClientFactory.
+ * - Resource ownership is verified via ProviderResourceManager.validateResourceForMutation before any mutation.
+ * - Cross-tenant and unknown resources FAIL CLOSED.
  */
 export class RealTwilioCallControlAdapter implements TwilioCallControlAdapter {
-  private client: twilio.Twilio | null = null;
+  private clientOverride?: any;
+  private context?: any;
+  private organizationId?: string;
+  private supabaseClient?: SupabaseClient;
 
-  constructor() {
-    const accountSid = process.env.TWILIO_ACCOUNT_SID;
-    const authToken = process.env.TWILIO_AUTH_TOKEN;
-    const apiKeySid = process.env.TWILIO_API_KEY_SID;
-    const apiKeySecret = process.env.TWILIO_API_KEY_SECRET;
+  constructor(options?: RealTwilioCallControlAdapterOptions | any) {
+    if (options) {
+      if (typeof options.from === 'function') {
+        this.supabaseClient = options;
+      } else {
+        this.clientOverride = options.clientOverride;
+        this.context = options.context;
+        this.organizationId = options.organizationId;
+        this.supabaseClient = options.supabaseClient;
+      }
+    }
+  }
 
-    if (accountSid && apiKeySid && apiKeySecret) {
-      this.client = twilio(apiKeySid, apiKeySecret, { accountSid, timeout: 10000, autoRetry: false, maxRetries: 0 });
-    } else if (accountSid && authToken) {
-      // Disables transparent SDK-level mutation retries
-      this.client = twilio(accountSid, authToken, {
-        timeout: 10000,
-        autoRetry: false,
-        maxRetries: 0,
-      });
+  private async resolveAccountClient(
+    callSid: string,
+    organizationId?: string,
+    contextOverride?: any,
+    clientOverride?: any
+  ): Promise<{ client: any; context?: any; error?: string; errorCode?: string }> {
+    if (clientOverride) {
+      return { client: clientOverride };
+    }
+    if (this.clientOverride) {
+      return { client: this.clientOverride };
+    }
+
+    let effectiveContext = contextOverride || this.context;
+    let targetOrgId = organizationId || this.organizationId || effectiveContext?.organizationId;
+
+    const supabase = this.supabaseClient || createAdminClient();
+
+    // If targetOrgId is unknown, derive it from the call resource record
+    if (!targetOrgId) {
+      const { data: resRecord } = await (supabase as any)
+        .from('telecom_provider_resource_records')
+        .select('organization_id, provider_account_id')
+        .eq('remote_resource_id', callSid)
+        .eq('resource_type', 'CALL')
+        .maybeSingle();
+
+      if (resRecord) {
+        targetOrgId = resRecord.organization_id;
+      } else {
+        const { data: callRow } = await (supabase as any)
+          .from('calls')
+          .select('organization_id')
+          .eq('twilio_call_sid', callSid)
+          .maybeSingle();
+        if (callRow) {
+          targetOrgId = callRow.organization_id;
+        }
+      }
+    }
+
+    if (!targetOrgId) {
+      return {
+        client: null,
+        errorCode: 'UNKNOWN_RESOURCE_OWNERSHIP',
+        error: `Cannot resolve provider client: CallSid '${callSid}' has no trustworthy organization mapping.`,
+      };
+    }
+
+    // Resolve authoritative provider context for VOICE if not supplied
+    if (!effectiveContext) {
+      const { ProviderAccountResolver } = await import('@/lib/telecom/provider/providerAccountResolver');
+      const res = await ProviderAccountResolver.resolveAccount({
+        organizationId: targetOrgId,
+        service: 'VOICE',
+      }, supabase);
+
+      if (!res.success || !res.context) {
+        return {
+          client: null,
+          errorCode: res.errorCode || 'UNKNOWN_OR_INACTIVE_PROVIDER',
+          error: res.errorMessage || `Failed to resolve provider account for organization '${targetOrgId}'.`,
+        };
+      }
+      effectiveContext = res.context;
+    }
+
+    // Authoritative Resource Ownership Validation (Section 10)
+    const { ProviderResourceManager } = await import('@/lib/telecom/provider/providerResourceManager');
+    const validation = await ProviderResourceManager.validateResourceForMutation({
+      organizationId: targetOrgId,
+      providerAccountId: effectiveContext.providerAccountId,
+      resourceType: 'CALL',
+      remoteResourceId: callSid,
+    }, supabase);
+
+    if (!validation.isValid) {
+      return {
+        client: null,
+        errorCode: validation.errorCode || 'CROSS_TENANT_RESOURCE_MISMATCH',
+        error: validation.errorMessage || `Resource ownership validation failed for CallSid '${callSid}'.`,
+      };
+    }
+
+    // Build account-scoped client via ProviderClientFactory (Section 3)
+    const { ProviderClientFactory } = await import('@/lib/telecom/provider/providerClientFactory');
+    try {
+      const client = await ProviderClientFactory.getTwilioClientAsync(effectiveContext);
+      return { client, context: effectiveContext };
+    } catch (clientErr: any) {
+      return {
+        client: null,
+        errorCode: 'PROVIDER_CLIENT_RESOLUTION_FAILED',
+        error: clientErr.message,
+      };
     }
   }
 
@@ -296,7 +416,15 @@ export class RealTwilioCallControlAdapter implements TwilioCallControlAdapter {
       }
     }
 
-    if (!this.client) {
+    // 2. ACCOUNT RESOLUTION & RESOURCE OWNERSHIP VALIDATION
+    const resolved = await this.resolveAccountClient(
+      params.callSid,
+      params.organizationId,
+      params.context,
+      params.client
+    );
+
+    if (!resolved.client) {
       return {
         success: false,
         effectiveTimeLimitSeconds: 0,
@@ -304,14 +432,14 @@ export class RealTwilioCallControlAdapter implements TwilioCallControlAdapter {
         providerAccepted: false,
         dialExtensionEmpiricallyConfirmed: false,
         isMock: false,
-        errorDetails: 'TWILIO_CLIENT_NOT_INITIALIZED: Missing Account SID or Auth Token',
+        errorDetails: resolved.error || 'PROVIDER_ACCOUNT_RESOLUTION_FAILED',
       };
     }
 
-    // 2. EXECUTE BOUNDED TWILIO REST API CALL (POST /Calls/{CallSid})
+    // 3. EXECUTE BOUNDED TWILIO REST API CALL (POST /Calls/{CallSid})
     try {
       const timeoutMs = 10000; // 10s request timeout
-      const updatePromise = this.client.calls(params.callSid).update({
+      const updatePromise = resolved.client.calls(params.callSid).update({
         timeLimit: params.newTimeLimitSeconds,
       });
 
@@ -321,20 +449,18 @@ export class RealTwilioCallControlAdapter implements TwilioCallControlAdapter {
 
       const response: any = await Promise.race([updatePromise, timeoutPromise]);
 
-      // HTTP 200 OK proves provider accepted update request, but NOT empirical Dial extension verification
       return {
         success: true,
         effectiveTimeLimitSeconds: params.newTimeLimitSeconds,
         statusClassification: 'DEFINITE_SUCCESS',
         providerAccepted: true,
-        dialExtensionEmpiricallyConfirmed: false, // Must be empirically observed in Level 2B bridge cross
+        dialExtensionEmpiricallyConfirmed: false,
         isMock: false,
         rawResponse: { sid: response.sid, status: response.status, duration: response.duration },
       };
     } catch (err: any) {
       console.warn(`[RealTwilioCallControlAdapter] Extension dispatch error for ${params.callSid}: ${err.message}`);
 
-      // Explicit HTTP 4xx authoritatively rejected by Twilio API before socket mutation
       if (err.status >= 400 && err.status < 500) {
         return {
           success: false,
@@ -347,8 +473,6 @@ export class RealTwilioCallControlAdapter implements TwilioCallControlAdapter {
         };
       }
 
-      // Once request MAY have reached network socket (timeout, 5xx, ECONNRESET, AbortError, connection loss):
-      // MUST BE CLASSIFIED AS AMBIGUOUS_TIMEOUT_AFTER_DISPATCH. ZERO IMMEDIATE ROLLBACK.
       return {
         success: false,
         effectiveTimeLimitSeconds: 0,
@@ -380,16 +504,24 @@ export class RealTwilioCallControlAdapter implements TwilioCallControlAdapter {
       };
     }
 
-    if (!this.client) {
+    const resolved = await this.resolveAccountClient(
+      params.callSid,
+      params.organizationId,
+      params.context,
+      params.client
+    );
+
+    if (!resolved.client) {
       return {
         success: false,
         isMock: false,
-        reason: 'TWILIO_CLIENT_NOT_INITIALIZED',
+        reason: resolved.errorCode || 'TERMINATION_PRE_DISPATCH_FAILED',
+        errorDetails: resolved.error || 'PROVIDER_ACCOUNT_RESOLUTION_FAILED',
       };
     }
 
     try {
-      await this.client.calls(params.callSid).update({ status: 'completed' });
+      await resolved.client.calls(params.callSid).update({ status: 'completed' });
       return {
         success: true,
         isMock: false,
@@ -406,27 +538,33 @@ export class RealTwilioCallControlAdapter implements TwilioCallControlAdapter {
   }
 
   async fetchActiveCallState(params: ActiveCallFetchParams): Promise<ActiveCallFetchResult> {
-    if (!this.client) {
+    const resolved = await this.resolveAccountClient(
+      params.callSid,
+      params.organizationId,
+      params.context,
+      params.client
+    );
+
+    if (!resolved.client) {
       return {
         callSid: params.callSid,
         status: 'unknown',
         statusClassification: 'AMBIGUOUS_TIMEOUT_AFTER_DISPATCH',
         isMock: false,
-        errorDetails: 'TWILIO_CLIENT_NOT_INITIALIZED',
+        errorDetails: resolved.error || 'PROVIDER_ACCOUNT_RESOLUTION_FAILED',
       };
     }
 
     try {
-      const call = await this.client.calls(params.callSid).fetch();
+      const call = await resolved.client.calls(params.callSid).fetch();
       const currentDurationSec = parseInt(call.duration || '0', 10);
 
-      // Eventual-consistency handling: Single stale GET does NOT prove mutation absent if call is in-progress
       if (params.expectedTimeLimitSeconds && currentDurationSec < params.expectedTimeLimitSeconds && call.status === 'in-progress') {
         return {
           callSid: params.callSid,
           status: call.status,
           timeLimitSeconds: currentDurationSec,
-          statusClassification: 'AMBIGUOUS_TIMEOUT_AFTER_DISPATCH', // Stale readback stays ambiguous pending further budget
+          statusClassification: 'AMBIGUOUS_TIMEOUT_AFTER_DISPATCH',
           isMock: false,
           errorDetails: 'EVENTUAL_CONSISTENCY_READBACK_PENDING: Readback duration < expected boundary',
         };

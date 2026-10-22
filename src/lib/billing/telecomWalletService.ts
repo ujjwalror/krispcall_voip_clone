@@ -1,4 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js';
+import { Database } from '../types/database.types';
 import {
   TelecomServiceType,
   TelecomDirection,
@@ -208,7 +209,7 @@ export class TelecomWalletService {
       throw new Error('TelecomWalletService: amountReservedMinor must be a non-negative integer.');
     }
 
-    const { data, error } = await (supabase as any).rpc(
+    const { data, error } = await supabase.rpc(
       'record_telecom_usage_reservation_atomic',
       {
         p_organization_id: organizationId,
@@ -227,21 +228,25 @@ export class TelecomWalletService {
       }
     );
 
-    if (error) {
-      console.error('[TelecomWalletService] Reservation RPC error:', error.message);
-      if (error.message.includes('IDEMPOTENCY_CONFLICT')) {
+    if (error || !data) {
+      const errMsg = error ? error.message : 'Reservation RPC returned empty payload';
+      console.error('[TelecomWalletService] Reservation RPC error:', errMsg);
+      if (errMsg.includes('IDEMPOTENCY_CONFLICT')) {
         throw new Error(`IDEMPOTENCY_CONFLICT: Payload parameters conflict with original reservation.`);
       }
-      if (error.message.includes('INSUFFICIENT_AVAILABLE_BALANCE')) {
+      if (errMsg.includes('INSUFFICIENT_AVAILABLE_BALANCE')) {
         throw new Error(`INSUFFICIENT_AVAILABLE_BALANCE: Available funded balance is insufficient for reservation.`);
       }
-      if (error.message.includes('ORGANIZATION_BILLING_RESTRICTED')) {
+      if (errMsg.includes('ORGANIZATION_BILLING_RESTRICTED')) {
         throw new Error(`ORGANIZATION_BILLING_RESTRICTED: Organization is currently restricted from telecom usage.`);
       }
-      if (error.message.includes('CURRENCY_MISMATCH')) {
+      if (errMsg.includes('CONCURRENT_CALL_LIMIT_EXCEEDED')) {
+        throw new Error(`CONCURRENT_CALL_LIMIT_EXCEEDED: Organization active concurrent voice limit reached.`);
+      }
+      if (errMsg.includes('CURRENCY_MISMATCH')) {
         throw new Error(`CURRENCY_MISMATCH: Requested currency does not match wallet currency.`);
       }
-      throw new Error(`TelecomWalletService reservation error: ${error.message}`);
+      throw new Error(`TelecomWalletService reservation error: ${errMsg}`);
     }
 
     return {

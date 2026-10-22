@@ -3,10 +3,18 @@ import { User, SupabaseClient } from '@supabase/supabase-js';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { extractSessionIdFromToken } from '@/lib/auth/session';
 
+export interface AuthoritativeSessionProfile {
+  id: string;
+  organization_id: string | null;
+  role: string;
+  active: boolean;
+}
+
 export type RequireActiveSessionResult =
   | {
       success: true;
       user: User;
+      profile: AuthoritativeSessionProfile;
       sessionId: string;
       supabase: SupabaseClient;
     }
@@ -16,11 +24,12 @@ export type RequireActiveSessionResult =
     };
 
 /**
- * Server-only helper to enforce single active session authority for protected API routes.
+ * Server-only helper to enforce single active session authority and account active state for protected API routes.
  * 1. Authenticates request via server Supabase getUser()
  * 2. Extracts JWT session_id claim
  * 3. Queries public.user_active_sessions under user's RLS context
  * 4. Fails closed if session is displaced, unregistered, invalid, or missing
+ * 5. Queries public.profiles and enforces Invariant AUTH-STATE-001 (fails closed if inactive or profile missing)
  */
 export async function requireActiveSession(
   customHeaders?: Record<string, string>
@@ -102,9 +111,56 @@ export async function requireActiveSession(
       };
     }
 
+    // 5. Query authoritative profile state from public.profiles under user's context
+    const { data: profileData, error: profileDbError } = await (supabase as any)
+      .from('profiles')
+      .select('id, organization_id, role, active')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    if (profileDbError) {
+      console.error('[requireActiveSession] Database error querying profile:', profileDbError);
+      return {
+        success: false,
+        errorResponse: NextResponse.json(
+          { error: 'Failed to verify account authority.', code: 'profile_verification_failed' },
+          { status: 500, headers: customHeaders }
+        ),
+      };
+    }
+
+    if (!profileData) {
+      return {
+        success: false,
+        errorResponse: NextResponse.json(
+          { error: 'Forbidden. User profile not found.', code: 'profile_not_found' },
+          { status: 403, headers: customHeaders }
+        ),
+      };
+    }
+
+    const profile: AuthoritativeSessionProfile = {
+      id: profileData.id,
+      organization_id: profileData.organization_id || null,
+      role: profileData.role || 'agent',
+      active: profileData.active !== false,
+    };
+
+    // Invariant AUTH-STATE-001: Deactivated accounts must fail closed immediately
+    if (profileData.active === false) {
+      return {
+        success: false,
+        errorResponse: NextResponse.json(
+          { error: 'Forbidden. User account is inactive.', code: 'account_inactive' },
+          { status: 403, headers: customHeaders }
+        ),
+      };
+    }
+
     return {
       success: true,
       user,
+      profile,
       sessionId,
       supabase,
     };

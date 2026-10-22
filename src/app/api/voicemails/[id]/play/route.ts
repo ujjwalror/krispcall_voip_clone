@@ -76,10 +76,30 @@ export async function GET(
       'Accept': 'audio/mpeg, audio/wav, audio/*',
     };
 
-    const accountSid = process.env.TWILIO_ACCOUNT_SID;
-    const authToken = process.env.TWILIO_AUTH_TOKEN;
-    if (accountSid && authToken && streamUrl.includes('twilio.com')) {
-      headers['Authorization'] = `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}`;
+    if (streamUrl && streamUrl.includes('twilio.com')) {
+      const { ProviderAccountResolver } = await import('@/lib/telecom/provider/providerAccountResolver');
+      const { ProviderClientFactory } = await import('@/lib/telecom/provider/providerClientFactory');
+      const providerResolution = await ProviderAccountResolver.resolveAccount({
+        organizationId: profile.organization_id,
+        service: 'RECORDING',
+      });
+      if (!providerResolution.success || !providerResolution.context) {
+        return NextResponse.json(
+          { error: 'provider_resolution_failed', message: providerResolution.errorMessage || 'Unable to resolve provider account context for voicemail playback.' },
+          { status: 500 }
+        );
+      }
+      if (providerResolution.context.isSharedParent || providerResolution.context.accountType === 'SHARED_PARENT') {
+        return NextResponse.json(
+          { error: 'parent_access_prohibited', message: 'Customer organizations cannot access parent Twilio recording resources.' },
+          { status: 403 }
+        );
+      }
+      const accountSid = providerResolution.context.accountReference;
+      const authToken = await ProviderClientFactory.resolveAccountAuthTokenAsync(accountSid);
+      if (accountSid && authToken) {
+        headers['Authorization'] = `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}`;
+      }
     }
 
     try {

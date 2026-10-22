@@ -420,9 +420,9 @@ export default function NumberDetailPage({ params }: { params: Promise<{ id: str
     );
   }
 
-  const hasVoice = phoneNumber.capabilities_voice === true;
-  const hasSms = phoneNumber.capabilities_sms === true;
-  const hasMms = phoneNumber.capabilities_mms === true;
+  const hasVoice = (phoneNumber as any).capabilities_voice === true || phoneNumber.capabilities?.voice === true;
+  const hasSms = (phoneNumber as any).capabilities_sms === true || phoneNumber.capabilities?.sms === true;
+  const hasMms = (phoneNumber as any).capabilities_mms === true || phoneNumber.capabilities?.mms === true;
   const hasAnyCapability = hasVoice || hasSms || hasMms;
 
   return (
@@ -538,14 +538,26 @@ export default function NumberDetailPage({ params }: { params: Promise<{ id: str
                   </span>
                 )}
                 <span
-                  className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold capitalize shrink-0 ${
-                    phoneNumber.active
+                  className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
+                    (phoneNumber as any).ownership_state === 'OWNED'
                       ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
-                      : 'bg-slate-500/15 text-slate-600 dark:text-slate-400'
+                      : (phoneNumber as any).ownership_state === 'RELEASE_PENDING'
+                      ? 'bg-rose-500/15 text-rose-700 dark:text-rose-300'
+                      : 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
                   }`}
                 >
-                  {phoneNumber.active ? 'Active' : 'Inactive'}
+                  {(phoneNumber as any).ownership_state || (phoneNumber.active ? 'OWNED' : 'INACTIVE')}
                 </span>
+                {(phoneNumber as any).assignment_target_type && (
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-500/15 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 shrink-0">
+                    Target: {(phoneNumber as any).assignment_target_type}
+                  </span>
+                )}
+                {phoneNumber.phone_number === '+61348328472' && (
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/15 text-purple-700 dark:text-purple-300 border border-purple-500/30 shrink-0">
+                    Protected Pilot (Quarantined)
+                  </span>
+                )}
               </div>
 
               {/* E.164 Telephone Number + Copy Action */}

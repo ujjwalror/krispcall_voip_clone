@@ -1,4 +1,5 @@
 import twilio from 'twilio';
+import { ProviderClientFactory } from '@/lib/telecom/provider/providerClientFactory';
 import { parseTwilioWholesalePrice } from '../wholesaleMoneyParser';
 
 export interface ExactNumberFallbackResult {
@@ -74,17 +75,10 @@ export class TwilioExactNumberFallback {
       if (options?.clientOverride) {
         phoneRes = await options.clientOverride.pricing.v2.voice.numbers(cleanDest).fetch();
       } else {
-        const accountSid = options?.accountSid || process.env.TWILIO_ACCOUNT_SID;
-        const authToken = options?.authToken || process.env.TWILIO_AUTH_TOKEN;
-        const apiKeySid = process.env.TWILIO_API_KEY_SID;
-        const apiKeySecret = process.env.TWILIO_API_KEY_SECRET;
-
         let client: any;
-        if (apiKeySid && apiKeySecret && accountSid) {
-          client = twilio(apiKeySid, apiKeySecret, { accountSid });
-        } else if (accountSid && authToken) {
-          client = twilio(accountSid, authToken);
-        } else {
+        try {
+          client = ProviderClientFactory.getParentAdministrativeClient();
+        } catch {
           return {
             success: false,
             destinationPhoneNumber: cleanDest,
@@ -179,17 +173,10 @@ export class TwilioExactNumberFallback {
       if (options?.clientOverride) {
         countryRes = await options.clientOverride.pricing.v2.voice.countries(cleanCountry).fetch();
       } else {
-        const accountSid = options?.accountSid || process.env.TWILIO_ACCOUNT_SID;
-        const authToken = options?.authToken || process.env.TWILIO_AUTH_TOKEN;
-        const apiKeySid = process.env.TWILIO_API_KEY_SID;
-        const apiKeySecret = process.env.TWILIO_API_KEY_SECRET;
-
         let client: any;
-        if (apiKeySid && apiKeySecret && accountSid) {
-          client = twilio(apiKeySid, apiKeySecret, { accountSid });
-        } else if (accountSid && authToken) {
-          client = twilio(accountSid, authToken);
-        } else {
+        try {
+          client = ProviderClientFactory.getParentAdministrativeClient();
+        } catch {
           return {
             success: false,
             isoCountry: cleanCountry,

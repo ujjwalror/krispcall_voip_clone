@@ -49,17 +49,10 @@ export async function GET(
       .from('billing_payment_operations')
       .select('id, organization_id, operation_type, status, amount_minor, currency')
       .eq('id', cleanOpId)
+      .eq('organization_id', profile.organization_id)
       .maybeSingle();
 
     if (opError || !op) {
-      return NextResponse.json(
-        { error: 'OPERATION_NOT_FOUND', message: 'Payment operation not found.' },
-        { status: 404 }
-      );
-    }
-
-    // STRICT CROSS-TENANT ISOLATION: Operation must belong to authenticated user's organization!
-    if (op.organization_id !== profile.organization_id) {
       return NextResponse.json(
         { error: 'OPERATION_NOT_FOUND', message: 'Payment operation not found.' },
         { status: 404 }

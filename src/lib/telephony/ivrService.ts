@@ -2,6 +2,8 @@ import 'server-only';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { hasEntitlement } from '@/lib/entitlements/server';
+import { NumberAssignmentService } from '@/lib/telecom/assignment/numberAssignmentService';
+import type { AssignmentTargetType } from '@/lib/telecom/assignment/types';
 
 export type DestinationType = 'user' | 'ivr' | 'voicemail' | 'call_queue' | 'hangup';
 export type InboundRoutingType = 'user' | 'ivr' | 'voicemail' | 'call_queue';
@@ -169,12 +171,35 @@ export class IvrService {
       }
     }
 
-    // 4. Update inbound routing configuration on phone number
+    // 4. Delegate to Canonical Assignment Service (Phase 23D.5 / Phase 23D.10B)
+    let canonicalTargetType: AssignmentTargetType = 'WORKSPACE_MAIN';
+    if (routingType === 'ivr') canonicalTargetType = 'IVR';
+    else if (routingType === 'call_queue') canonicalTargetType = 'QUEUE';
+    else if (routingType === 'voicemail') canonicalTargetType = 'VOICEMAIL';
+    else if (routingType === 'user' && destinationId) canonicalTargetType = 'USER';
+
+    const assignResult = await NumberAssignmentService.assignNumber(
+      {
+        phoneNumberId: phoneId,
+        organizationId,
+        targetType: canonicalTargetType,
+        targetId: destinationId || null,
+      },
+      supabase
+    );
+
+    if (!assignResult.success) {
+      return {
+        success: false,
+        message: assignResult.message || `Assignment failed with code: ${assignResult.code}`,
+      };
+    }
+
+    // 5. Update legacy routing compatibility projection columns only
     const updatePayload: Record<string, any> = {
       inbound_routing_type: routingType,
       inbound_routing_destination_id: destinationId,
       inbound_routing_updated_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
     };
 
     if (unansweredStrategy) {
@@ -188,7 +213,7 @@ export class IvrService {
       .eq('organization_id', organizationId);
 
     if (updateErr) {
-      return { success: false, message: `Failed to update phone routing: ${updateErr.message}` };
+      return { success: false, message: `Failed to update legacy routing projection: ${updateErr.message}` };
     }
 
     return { success: true, message: 'Inbound routing configuration saved successfully.' };

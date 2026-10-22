@@ -84,21 +84,21 @@ export async function POST(request: Request) {
 
     const result = Array.isArray(rpcResult) ? rpcResult[0] : rpcResult;
 
-    // Idempotent post-acceptance assignment to intended phone number if specified
+    // Idempotent post-acceptance assignment to intended phone number via Canonical NumberAssignmentService (Phase 23D.10B)
     if (inviteData?.intended_phone_number_id && inviteData?.organization_id) {
       try {
-        await (adminSupabase as any)
-          .from('user_phone_assignments')
-          .upsert(
-            {
-              organization_id: inviteData.organization_id,
-              user_id: currentUser.id,
-              phone_number_id: inviteData.intended_phone_number_id,
-            },
-            { onConflict: 'user_id, phone_number_id' }
-          );
+        const { NumberAssignmentService } = await import('@/lib/telecom/assignment/numberAssignmentService');
+        await NumberAssignmentService.assignNumber(
+          {
+            phoneNumberId: inviteData.intended_phone_number_id,
+            organizationId: inviteData.organization_id,
+            targetType: 'USER',
+            targetId: currentUser.id,
+          },
+          adminSupabase
+        );
       } catch (assignErr) {
-        console.error('[Invitations Accept API] Idempotent post-assignment warning:', assignErr);
+        console.error('[Invitations Accept API] Canonical post-acceptance assignment warning:', assignErr);
       }
     }
 

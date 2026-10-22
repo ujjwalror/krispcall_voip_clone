@@ -1,14 +1,17 @@
 import { NextResponse } from 'next/server';
 import { requireActiveSession } from '@/lib/auth/requireActiveSession';
-import { ProvisioningEngine } from '@/lib/telephony/commerce/provisioningEngine';
-import { CreatePurchaseOperationParams } from '@/lib/telephony/commerce/providerNumberOperationService';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { NumberPurchaseSagaCoordinator } from '@/lib/telecom/saga/numberPurchaseSagaCoordinator';
+import { EntitlementAuthorizationService } from '@/lib/telecom/billing/entitlementAuthorizationService';
+import { PriceQuoteValidator } from '@/lib/telecom/saga/priceQuoteValidator';
+import { canonicalErrorResponse } from '@/lib/telecom/errors/canonicalErrorContract';
+import { NumberPurchaseVelocityLimiter } from '@/lib/telephony/marketplace/numberPurchaseVelocityLimiter';
 
 /**
  * POST /api/number-marketplace/purchase
- * Authoritative server-side purchase execution API entry point.
- * Strictly derives organization identity from authenticated server session.
- * Requires Owner or Admin authorization.
- * Never accepts browser-supplied organization_id or customer-supplied capacity limits / provider credentials.
+ * Authoritative Canonical Purchase Route (Phase 23D.3 + 23D.9 + 23D.10B + 24D.SEC-7F).
+ * Strictly delegates customer number acquisition to NumberPurchaseSagaCoordinator.
+ * Zero uncoordinated carrier purchases.
  */
 export async function POST(request: Request) {
   try {
@@ -27,166 +30,157 @@ export async function POST(request: Request) {
       .maybeSingle();
 
     if (!profile || !profile.organization_id || profile.active === false) {
-      return NextResponse.json(
-        { error: 'Forbidden. Active organization profile required.' },
-        { status: 403 }
-      );
+      return canonicalErrorResponse(new Error('TENANT_MISMATCH: Active organization profile required.'), {
+        httpStatus: 403,
+      });
     }
 
     // Role gate: Only Owner or Admin can execute number purchases
     const userRole = (profile.role || '').toLowerCase();
     if (userRole !== 'owner' && userRole !== 'admin') {
-      return NextResponse.json(
-        { error: 'Forbidden. Phone number purchasing requires Owner or Admin role privileges.' },
-        { status: 403 }
+      return canonicalErrorResponse(
+        new Error('ROLE_NOT_AUTHORIZED: Phone number purchasing requires Owner or Admin role privileges.'),
+        { httpStatus: 403 }
       );
     }
 
-    // 1b. Enforce number.purchase entitlement
-    const { requireEntitlement, getEntitlementLimit } = await import('@/lib/entitlements/server');
-    const entitlementRes = await requireEntitlement('number.purchase');
-    if (!entitlementRes.success) {
-      return entitlementRes.errorResponse;
-    }
+    const adminDb = createAdminClient();
+    const body = await request.json().catch(() => ({}));
 
-    // Enforce subscription state policy server-side (blocked during grace and suspension)
-    const { SubscriptionPolicyService } = await import('@/lib/billing/subscriptionPolicyService');
-    const mayPurchase = await SubscriptionPolicyService.mayPurchaseNumber(profile.organization_id, supabase);
-    if (!mayPurchase) {
-      return NextResponse.json(
-        { error: 'Forbidden. Purchasing numbers is restricted while subscription is in grace or suspended state.', code: 'subscription_restricted' },
-        { status: 403 }
-      );
-    }
-
-    // 2. Resolve Server-Authoritative Line Entitlement Capacity Limit (number.max_active)
-    const entitlementMax = await getEntitlementLimit('number.max_active', supabase);
-
-    const { data: orgData, error: orgErr } = await supabase
-      .from('organizations')
-      .select('max_phone_numbers')
-      .eq('id', profile.organization_id)
-      .single();
-
-    if (orgErr || !orgData) {
-      return NextResponse.json(
-        { error: 'Forbidden. Failed to resolve organization entitlement subscription limit.' },
-        { status: 403 }
-      );
-    }
-
-    const maxCapacityLimit = entitlementMax ?? orgData.max_phone_numbers ?? 50;
-    if (maxCapacityLimit <= 0) {
-      return NextResponse.json(
-        { error: 'Forbidden. Organization number capacity limit is zero. Purchases disabled.' },
-        { status: 403 }
-      );
-    }
-
-    // Authoritative check of current active-number count (excluding released/ported_out/quarantined)
-    const { count: currentActiveCount } = await (supabase as any)
-      .from('phone_numbers')
-      .select('id', { count: 'exact', head: true })
-      .eq('organization_id', profile.organization_id)
-      .eq('active', true)
-      .eq('status', 'active');
-
-    if ((currentActiveCount ?? 0) >= maxCapacityLimit) {
-      return NextResponse.json(
-        {
-          error: `Forbidden. Maximum active phone number limit reached (${currentActiveCount}/${maxCapacityLimit}) for your subscription plan.`,
-          code: 'max_active_numbers_exceeded',
-        },
-        { status: 403 }
-      );
-    }
-
-    // SERVER-AUTHORITATIVE PRE-PHASE-13 PAYMENT BOUNDARY GATE
-    // Real automated payment authorization & Stripe checkout integration is Phase 13.
-    // In Phase 12.4 runtime, purchases without verified payment authorization are blocked server-side.
-    // NO client-supplied request headers, cookies, body fields, or query params can bypass this check.
-    const paymentEnabled = process.env.PHASE13_PAYMENT_ENABLED === 'true';
-
-    if (!paymentEnabled) {
-      return NextResponse.json(
-        {
-          error: 'Payment authorization required. Full billing checkout and automated payment processing will be enabled in Phase 13.',
-          code: 'PAYMENT_AUTHORIZATION_REQUIRED',
-        },
-        { status: 402 }
-      );
-    }
-
-    const body = await request.json();
-
-    // 3. Input Validation
+    // 2. Input Validation
     const phoneNumberE164 = (body.phoneNumberE164 || body.phoneNumber || '').trim();
-    const countryCode = (body.countryCode || '').trim().toUpperCase();
-    const numberType = (body.numberType || '').trim().toLowerCase();
+    const countryCode = (body.countryCode || 'US').trim().toUpperCase();
+    const numberType = (body.numberType || 'local').trim().toLowerCase();
     const idempotencyKey = (body.idempotencyKey || '').trim();
 
     if (!phoneNumberE164 || !/^\+[1-9]\d{1,14}$/.test(phoneNumberE164)) {
-      return NextResponse.json(
-        { error: 'Bad Request. Valid E.164 phone number is required.' },
-        { status: 400 }
-      );
-    }
-
-    if (!countryCode || !/^[A-Z]{2}$/.test(countryCode)) {
-      return NextResponse.json(
-        { error: 'Bad Request. Valid 2-letter ISO country code is required.' },
-        { status: 400 }
-      );
-    }
-
-    if (!['local', 'mobile', 'toll_free'].includes(numberType)) {
-      return NextResponse.json(
-        { error: 'Bad Request. Valid numberType (local, mobile, toll_free) is required.' },
-        { status: 400 }
-      );
+      return canonicalErrorResponse(new Error('Valid E.164 phone number is required.'), {
+        httpStatus: 400,
+      });
     }
 
     if (!idempotencyKey || idempotencyKey.length < 8) {
+      return canonicalErrorResponse(new Error('Valid idempotencyKey (min 8 characters) is required.'), {
+        httpStatus: 400,
+      });
+    }
+
+    // 3. Protected Australian Pilot Quarantine Check
+    if (phoneNumberE164 === '+61348328472') {
+      return canonicalErrorResponse(new Error('PROTECTED_PILOT_QUARANTINE: Protected Australian pilot number cannot be purchased.'));
+    }
+
+    // 4. Phase 24D.SEC-7F: Distributed Purchase Velocity & In-Flight Concurrency Defense
+    const velocityCheck = await NumberPurchaseVelocityLimiter.checkAndConsumeRateLimit(
+      {
+        organizationId: profile.organization_id,
+        userId: user.id,
+        phoneNumberE164,
+        idempotencyKey,
+      },
+      adminDb
+    );
+
+    if (!velocityCheck.allowed) {
+      const isStorageError = velocityCheck.limitType === 'limiter_storage_error';
+      const httpStatus = isStorageError ? 503 : 429;
+      const headers: Record<string, string> = {};
+      if (velocityCheck.retryAfterSeconds > 0) {
+        headers['Retry-After'] = String(velocityCheck.retryAfterSeconds);
+      }
+
       return NextResponse.json(
-        { error: 'Bad Request. Valid idempotencyKey (min 8 characters) is required.' },
-        { status: 400 }
+        {
+          success: false,
+          error: velocityCheck.reason,
+          errorCode: isStorageError
+            ? 'PURCHASE_VELOCITY_LIMITER_UNAVAILABLE'
+            : 'PURCHASE_VELOCITY_LIMIT_EXCEEDED',
+          limitType: velocityCheck.limitType,
+          retryAfterSeconds: velocityCheck.retryAfterSeconds,
+        },
+        {
+          status: httpStatus,
+          headers,
+        }
       );
     }
 
-    const friendlyName = (body.friendlyName || body.friendly_name || '').trim() || null;
+    // 5. Pre-check Organization Slot Entitlement & Over-Entitlement Status (Phase 23D.9)
+    const slotCapacity = await EntitlementAuthorizationService.getSlotCapacityDetails(
+      profile.organization_id,
+      adminDb
+    );
 
-    // 4. Construct purchase operation params
-    // maxCapacityLimit is derived STRICTLY from server-authoritative Phase 5 entitlement model
-    const params: CreatePurchaseOperationParams = {
-      organizationId: profile.organization_id, // Derived strictly from server session
-      maxCapacityLimit, // Server-authoritative line capacity limit
-      idempotencyKey,
-      phoneNumberE164,
-      countryCode,
-      numberType: numberType as 'local' | 'mobile' | 'toll_free',
-      retailAmountMinor: Number(body.retailAmountMinor || 0),
-      retailCurrency: (body.retailCurrency || 'USD').toUpperCase(),
-      providerCostMinor: Number(body.providerCostMinor || 0),
-      providerCostCurrency: (body.providerCostCurrency || 'USD').toUpperCase(),
-      pricingSource: 'pricing_policy',
-      complianceProfileId: body.complianceProfileId || null,
-      endUserType: body.endUserType || null,
-      regulatoryBundleSid: body.regulatoryBundleSid || null,
-      friendlyName,
-    };
+    if (slotCapacity.isOverEntitled) {
+      return canonicalErrorResponse(new Error('OVER_ENTITLED: Workspace is currently over-entitled and cannot acquire numbers.'));
+    }
 
-    // 5. Execute Live Purchase Workflow through Provisioning Engine
-    const resultDTO = await ProvisioningEngine.executeLivePurchaseWorkflow(params);
+    if (slotCapacity.remainingSlots !== null && slotCapacity.remainingSlots <= 0) {
+      return canonicalErrorResponse(new Error('NO_NUMBER_SLOT_AVAILABLE: Workspace has exhausted all available number slots.'));
+    }
+
+    // 6. Canonical Signed Quote Validation (Phase 23D.3 / Task 5)
+    let validatedQuote = body.quote || null;
+    if (validatedQuote) {
+      const quoteCheck = await PriceQuoteValidator.validateQuote(
+        {
+          quote: validatedQuote,
+          organizationId: profile.organization_id,
+          phoneNumberE164,
+          expectedCountryCode: countryCode,
+          expectedNumberType: numberType,
+        },
+        adminDb
+      );
+
+      if (!quoteCheck.valid) {
+        return canonicalErrorResponse(
+          new Error(quoteCheck.errorMessage || quoteCheck.errorCode || 'INVALID_QUOTE'),
+          {
+            customCode: quoteCheck.errorCode,
+          }
+        );
+      }
+    }
+
+    // 6. Delegate strictly to Canonical NumberPurchaseSagaCoordinator
+    const sagaResult = await NumberPurchaseSagaCoordinator.executePurchase(
+      {
+        organizationId: profile.organization_id,
+        phoneNumberE164,
+        countryCode,
+        numberType: numberType as any,
+        idempotencyKey,
+        quote: validatedQuote,
+        financialAuth: body.financialAuth || null,
+        complianceProfileId: body.complianceProfileId || null,
+        complianceCaseId: body.complianceCaseId || null,
+        regulatoryBundleSid: body.regulatoryBundleSid || null,
+        authoritativeComplianceNotRequired: body.authoritativeComplianceNotRequired || false,
+        endUserType: body.endUserType || null,
+        friendlyName: body.friendlyName || null,
+        providerContext: body.providerContext || null,
+      },
+      adminDb
+    );
+
+    if (!sagaResult.success) {
+      // Map saga error safely through Canonical Error Contract
+      return canonicalErrorResponse(
+        new Error(sagaResult.errorMessage || sagaResult.errorCode || 'PURCHASE_FAILED'),
+        {
+          customCode: sagaResult.errorCode || 'PURCHASE_FAILED',
+          operationId: sagaResult.operationId,
+        }
+      );
+    }
 
     return NextResponse.json({
       success: true,
-      operation: resultDTO,
+      operation: sagaResult,
     });
   } catch (error: any) {
-    console.error('[POST /api/number-marketplace/purchase] Exception:', error.message || error);
-    return NextResponse.json(
-      { error: error.message || 'An error occurred processing the purchase request.' },
-      { status: 500 }
-    );
+    return canonicalErrorResponse(error);
   }
 }

@@ -104,47 +104,60 @@ export class ProviderRecordingDeletionService {
       };
     }
 
-    // 5. Gate is ON -> Execute Twilio API DELETE call server-side
-    return await this.executeTwilioRecordingDeletion(client, voicemailId, providerRecordingSid, operationId);
+    // 5. Gate is ON -> Execute Twilio API DELETE call server-side via Provider Abstraction
+    return await this.executeTwilioRecordingDeletion(client, organizationId, voicemailId, providerRecordingSid, operationId);
   }
 
   /**
-   * Performs server-side Twilio DELETE recording API call.
+   * Performs server-side Twilio DELETE recording API call via provider abstraction.
    */
   private static async executeTwilioRecordingDeletion(
     client: SupabaseClient,
+    organizationId: string,
     voicemailId: string,
     recordingSid: string,
     operationId?: string
   ): Promise<ProviderDeletionResult> {
-    const accountSid = process.env.TWILIO_ACCOUNT_SID;
-    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    const { ProviderAccountResolver } = await import('@/lib/telecom/provider/providerAccountResolver');
+    const { TwilioRecordingAdapter } = await import('@/lib/telecom/provider/adapters/recordingAdapter');
 
-    if (!accountSid || !authToken) {
-      const errMsg = 'Twilio credentials missing for provider deletion mutation.';
+    const providerResolution = await ProviderAccountResolver.resolveAccount({
+      organizationId,
+      service: 'RECORDING',
+    }, client);
+
+    if (!providerResolution.success || !providerResolution.context) {
+      const errMsg = providerResolution.errorMessage || 'Unable to resolve provider account context for recording deletion.';
+      await this.updateOperationStatus(client, voicemailId, 'delete_failed', errMsg);
+      return { success: false, status: 'delete_failed', message: errMsg, operationId };
+    }
+
+    // Authoritative Resource Ownership Validation prior to provider mutation
+    const { ProviderResourceManager } = await import('@/lib/telecom/provider/providerResourceManager');
+    const validation = await ProviderResourceManager.validateResourceForMutation({
+      organizationId,
+      providerAccountId: providerResolution.context.providerAccountId,
+      resourceType: 'RECORDING',
+      remoteResourceId: recordingSid,
+    }, client);
+
+    if (!validation.isValid) {
+      const errMsg = validation.errorMessage || 'Resource ownership validation failed for recording.';
       await this.updateOperationStatus(client, voicemailId, 'delete_failed', errMsg);
       return { success: false, status: 'delete_failed', message: errMsg, operationId };
     }
 
     try {
-      const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Recordings/${recordingSid}.json`;
-      const authHeader = `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}`;
+      const recordingAdapter = new TwilioRecordingAdapter();
+      const delRes = await recordingAdapter.deleteRecording(recordingSid, providerResolution.context);
 
-      const res = await fetch(url, {
-        method: 'DELETE',
-        headers: {
-          Authorization: authHeader,
-        },
-      });
-
-      if (res.status === 204 || res.status === 200 || res.status === 404) {
-        // 204/200 = successfully deleted, 404 = already deleted on Twilio
-        const finalStatus = res.status === 404 ? 'already_deleted' : 'provider_deleted';
+      if (delRes.success) {
+        const finalStatus = delRes.status === 'already_deleted' ? 'already_deleted' : 'provider_deleted';
         await (client as any)
           .from('provider_recording_deletion_operations')
           .update({
             status: 'provider_deleted',
-            last_error: res.status === 404 ? 'Twilio returned 404 (already deleted).' : null,
+            last_error: delRes.status === 'already_deleted' ? 'Provider returned 404 (already deleted).' : null,
             updated_at: new Date().toISOString(),
           })
           .eq('voicemail_id', voicemailId);
@@ -165,8 +178,7 @@ export class ProviderRecordingDeletionService {
           operationId,
         };
       } else {
-        const errorText = await res.text();
-        const errMsg = `Twilio API deletion error ${res.status}: ${errorText}`;
+        const errMsg = `Provider deletion failed: ${delRes.status}`;
         await this.updateOperationStatus(client, voicemailId, 'delete_failed', errMsg);
         return { success: false, status: 'delete_failed', message: errMsg, operationId };
       }

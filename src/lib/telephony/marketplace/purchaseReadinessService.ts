@@ -1,7 +1,6 @@
 import 'server-only';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getOrganizationEntitlements } from '@/lib/entitlements/server';
-import { createTwilioServerClient } from '@/lib/twilio/client';
 import { RetailPricingService, ServerRetailPriceResult } from './pricingService';
 import { CommercialPricingService } from './commercialPricingService';
 import { RegulatoryPreCheckService, RegulatoryPreCheckStatus, mapDomainToTwilioRegulationNumberType } from './regulatoryPreCheckService';
@@ -124,15 +123,23 @@ export class NumberPurchaseReadinessService {
 
         if (count !== null) currentActiveCount = count;
 
-        const { data: orgData } = await (supabase as any)
-          .from('organizations')
-          .select('max_phone_numbers')
-          .eq('id', organizationId)
+        // PHASE 23E.1: SaaS plans do NOT impose number limits.
+        // Check for explicit non-plan administrative/risk override
+        const { data: override } = await (supabase as any)
+          .from('organization_entitlement_overrides')
+          .select('numeric_value')
+          .eq('organization_id', organizationId)
+          .in('feature_code', ['number.risk_limit', 'number.max_active'])
+          .eq('enabled', true)
+          .order('created_at', { ascending: false })
+          .limit(1)
           .maybeSingle();
 
-        maxAllowedCount = orgData?.max_phone_numbers ?? 50;
-        if (maxAllowedCount !== null && currentActiveCount >= maxAllowedCount) {
-          entitlementAllowed = false;
+        if (override && override.numeric_value !== null) {
+          maxAllowedCount = Number(override.numeric_value);
+          if (currentActiveCount >= maxAllowedCount) {
+            entitlementAllowed = false;
+          }
         }
       } catch (err: any) {
         console.warn('[NumberPurchaseReadinessService] Entitlement check exception:', err.message || err);
@@ -278,8 +285,8 @@ export class NumberPurchaseReadinessService {
         entitlementAllowed: false,
         verificationRequired: false,
         regulatoryStatus: 'not_evaluated',
-        customerMessage: `Your workspace has reached its maximum phone number capacity (${entitlementRes.currentActiveCount}/${entitlementRes.maxAllowedCount}).`,
-        warnings: ['Workspace number capacity limit reached.'],
+        customerMessage: `Your workspace has reached its maximum operational phone number capacity (${entitlementRes.currentActiveCount}/${entitlementRes.maxAllowedCount}).`,
+        warnings: ['Workspace operational number capacity limit reached.'],
       };
     }
 

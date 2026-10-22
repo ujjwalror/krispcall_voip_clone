@@ -27,6 +27,14 @@ export class PortOutService {
       blockers.push(`ROLE_UNAUTHORIZED: Role '${params.userRole}' is not authorized to initiate Port-Out. Requires Owner or Admin.`);
     }
 
+    // Protected Australian Pilot Interlock (M2 Closure)
+    if (
+      params.phoneNumberId === '03edd0bc-b025-49e6-8171-a0c2fcd6cb78' ||
+      params.phoneNumberE164 === '+61348328472'
+    ) {
+      blockers.push('PROTECTED_PILOT_QUARANTINE: This phone number is a protected pilot resource and cannot be ported out.');
+    }
+
     // 2. Number state check
     const numberStatus = (params.numberStatus || '').toLowerCase();
     if (params.isReleased || numberStatus === 'released') {
@@ -88,6 +96,14 @@ export class PortOutService {
 
     const db = client || createAdminClient();
     const rawE164 = params.phoneNumberE164 ? String(params.phoneNumberE164).replace(/[\s\(\)\-\.]/g, '') : '';
+
+    // Protected Australian Pilot Interlock (M2 Closure)
+    if (
+      params.phoneNumberId === '03edd0bc-b025-49e6-8171-a0c2fcd6cb78' ||
+      rawE164 === '+61348328472'
+    ) {
+      throw new Error('PROTECTED_PILOT_QUARANTINE_VIOLATION: Port-out of protected pilot number is strictly prohibited.');
+    }
 
     // Verify phone number ownership in database (server-authoritative)
     const { data: phoneRow, error: phoneErr } = await (db as any)

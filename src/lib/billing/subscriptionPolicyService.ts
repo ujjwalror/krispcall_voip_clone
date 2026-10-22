@@ -109,7 +109,19 @@ export class SubscriptionPolicyService {
     clientOverride?: SupabaseClient
   ): Promise<boolean> {
     const details = await this.getSubscriptionState(organizationId, clientOverride);
-    return details.canonicalState === 'active';
+    if (details.canonicalState !== 'active') {
+      return false;
+    }
+
+    const { TelecomControlPlaneService } = await import('@/lib/telecom/controlPlane');
+    const controlEval = await TelecomControlPlaneService.evaluate(
+      {
+        organizationId,
+        operation: 'NUMBER_ACQUISITION',
+      },
+      clientOverride
+    );
+    return controlEval.allowed;
   }
 
   /**

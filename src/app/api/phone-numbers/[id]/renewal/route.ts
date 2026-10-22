@@ -40,10 +40,16 @@ export async function GET(
     }
 
     // STRICT TENANT ISOLATION: Prevent reading another organization's number renewal status
-    if (record.organizationId !== profileAny.organization_id && profileAny.role !== 'admin' && profileAny.role !== 'SUPER_ADMIN') {
+    const isPlatformAdmin =
+      profileAny.role === 'SUPER_ADMIN' ||
+      profileAny.role === 'PLATFORM_ADMIN' ||
+      profileAny.role === 'super_admin' ||
+      profileAny.role === 'platform_admin';
+
+    if (record.organizationId !== profileAny.organization_id && !isPlatformAdmin) {
       return NextResponse.json(
-        { error: 'Forbidden: Cannot access another organization\'s number renewal status' },
-        { status: 403 }
+        { error: 'Phone number renewal record not found' },
+        { status: 404 }
       );
     }
 
@@ -51,7 +57,7 @@ export async function GET(
 
     // If platform admin, include dynamic preview breakdown
     let adminPreview = null;
-    if (profileAny.role === 'admin' || profileAny.role === 'SUPER_ADMIN' || profileAny.role === 'PLATFORM_ADMIN') {
+    if (isPlatformAdmin) {
       const previewRes = await AdminRenewalPreviewService.getNumberRenewalPreview(
         phoneNumberId,
         profileAny.role,

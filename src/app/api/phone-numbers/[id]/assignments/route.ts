@@ -264,30 +264,32 @@ export async function POST(
 
     const validUserIds = targetProfiles.map((p: any) => p.id);
 
-    // 3. Upsert assignments safely (idempotent, no seat limit consumed)
-    const upsertRows = validUserIds.map((uId: string) => ({
-      organization_id: profile.organization_id,
-      user_id: uId,
-      phone_number_id: phoneNumberId,
-    }));
-
-    const { data: assignments, error: insertErr } = await (adminSupabase as any)
-      .from('user_phone_assignments')
-      .upsert(upsertRows, { onConflict: 'user_id, phone_number_id' })
-      .select();
-
-    if (insertErr) {
-      console.error('[POST assignments] Error inserting assignments:', insertErr);
-      return NextResponse.json(
-        { error: 'internal_error', message: 'Failed to create user phone assignment.' },
-        { status: 500 }
+    // 3. Delegate to Canonical NumberAssignmentService (Phase 23D.5)
+    const { NumberAssignmentService } = await import('@/lib/telecom/assignment');
+    for (const uId of validUserIds) {
+      const res = await NumberAssignmentService.assignNumber(
+        {
+          phoneNumberId,
+          organizationId: profile.organization_id,
+          targetType: 'USER',
+          targetId: uId,
+          actorId: user.id,
+        },
+        adminSupabase
       );
+
+      if (!res.success) {
+        return NextResponse.json(
+          { error: res.code, message: res.message },
+          { status: 400 }
+        );
+      }
     }
 
     return NextResponse.json({
       success: true,
       assignedUserIds: validUserIds,
-      assignments,
+      assignments: validUserIds.map((uId: string) => ({ user_id: uId, phone_number_id: phoneNumberId })),
     });
   } catch (error: any) {
     console.error('[POST assignments] Exception:', error.message || error);
@@ -378,19 +380,21 @@ export async function DELETE(
       );
     }
 
-    // Delete assignments safely
-    const { error: deleteErr } = await (adminSupabase as any)
-      .from('user_phone_assignments')
-      .delete()
-      .eq('phone_number_id', phoneNumberId)
-      .eq('organization_id', profile.organization_id)
-      .in('user_id', targetUserIds);
+    // Delegate to Canonical NumberAssignmentService (Phase 23D.5)
+    const { NumberAssignmentService } = await import('@/lib/telecom/assignment');
+    const unassignRes = await NumberAssignmentService.unassignNumber(
+      {
+        phoneNumberId,
+        organizationId: profile.organization_id,
+        actorId: user.id,
+      },
+      adminSupabase
+    );
 
-    if (deleteErr) {
-      console.error('[DELETE assignments] Error deleting assignment:', deleteErr);
+    if (!unassignRes.success) {
       return NextResponse.json(
-        { error: 'internal_error', message: 'Failed to remove user phone assignment.' },
-        { status: 500 }
+        { error: unassignRes.code, message: unassignRes.message },
+        { status: 400 }
       );
     }
 

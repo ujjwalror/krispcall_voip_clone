@@ -113,6 +113,7 @@ export class ActiveCallTerminationService {
       termResult = await adapter.terminateActiveCall({
         callSid: targetCallSid,
         reason,
+        organizationId,
       });
     } catch (disErr: any) {
       console.warn(`[ActiveCallTerminationService] Exception during provider termination: ${disErr.message}`);

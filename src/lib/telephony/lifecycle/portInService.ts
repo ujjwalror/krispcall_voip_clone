@@ -252,6 +252,11 @@ export class PortInService {
       blockers.push('INVALID_CANONICAL_E164: Phone number format invalid.');
     }
 
+    // Protected Australian Pilot Interlock (M2 Closure)
+    if (op.phone_number_e164 === '+61348328472') {
+      blockers.push('PROTECTED_PILOT_QUARANTINE: This phone number is a protected pilot resource and cannot be ported in.');
+    }
+
     // 3. Workflow mode check
     if (op.workflow_mode === 'unsupported' || op.workflow_mode === 'requires_recheck' || op.workflow_mode === 'unknown') {
       blockers.push(`WORKFLOW_UNSUPPORTED: Porting workflow mode '${op.workflow_mode}' cannot be submitted.`);

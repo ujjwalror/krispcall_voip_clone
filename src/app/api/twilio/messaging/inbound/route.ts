@@ -86,7 +86,7 @@ export async function POST(request: Request) {
     // 5. Match destination "To" number to an active organization business line
     const { data: phoneRow } = await (adminSupabase as any)
       .from('phone_numbers')
-      .select('organization_id, active')
+      .select('id, organization_id, active')
       .eq('phone_number', normalizedTo)
       .eq('active', true)
       .maybeSingle();
@@ -101,6 +101,27 @@ export async function POST(request: Request) {
     }
 
     const organizationId = phoneRow.organization_id;
+
+    // Canonical Capability Authorization (Task 15: Inbound SMS/MMS USABLE stage enforcement)
+    const { CapabilityAuthorizationService } = await import('@/lib/telecom/capability');
+    const numMedia = parseInt(params.NumMedia || '0', 10);
+    const requiredCap = numMedia > 0 ? 'MMS_INBOUND' : 'SMS_INBOUND';
+    const msgAuth = await CapabilityAuthorizationService.canUseCapability(
+      phoneRow.id,
+      requiredCap,
+      organizationId,
+      undefined,
+      adminSupabase
+    );
+
+    if (!msgAuth.allowed) {
+      console.warn(`[Twilio Inbound SMS Webhook] Inbound message rejected for ${normalizedTo} on ${requiredCap}: ${msgAuth.code} (${msgAuth.reason})`);
+      const response = new twilio.twiml.MessagingResponse();
+      return new NextResponse(response.toString(), {
+        status: 200,
+        headers: { 'Content-Type': 'text/xml' },
+      });
+    }
 
     // Offboarding Telecom Eligibility Interlock
     const { TelecomEligibilityService } = await import('@/lib/telephony/lifecycle/telecomEligibilityService');
@@ -157,12 +178,28 @@ export async function POST(request: Request) {
       contactId = matchedContact.id;
     }
 
-    // 7. Persist Inbound Message into public.messages
+    // 7. Resolve Inbound Message Destination via Canonical RoutingResolutionService (Phase 23D.5)
+    const { RoutingResolutionService } = await import('@/lib/telecom/assignment');
+    const routeRes = await RoutingResolutionService.resolveInboundRoute(
+      {
+        organizationId,
+        phoneNumberId: phoneRow.id,
+        channel: numMedia > 0 ? 'MMS' : 'SMS',
+      },
+      adminSupabase
+    );
+
+    let assignedUserId: string | null = null;
+    if (routeRes.resolved && routeRes.targetType === 'USER' && routeRes.targetId) {
+      assignedUserId = routeRes.targetId;
+    }
+
+    // 7b. Persist Inbound Message into public.messages
     const { error: insertError } = await (adminSupabase as any)
       .from('messages')
       .insert({
         organization_id: organizationId,
-        user_id: null,
+        user_id: assignedUserId,
         contact_id: contactId,
         from_number: normalizedFrom,
         to_number: normalizedTo,
@@ -178,6 +215,53 @@ export async function POST(request: Request) {
       console.error('[Twilio Inbound SMS Webhook] Database insert failure:', insertError);
     } else {
       console.log(`[Twilio Inbound SMS Webhook] Successfully recorded inbound message from "${normalizedFrom}" to "${normalizedTo}".`);
+
+      // Record provider resource mapping for MESSAGE
+      try {
+        const { ProviderResourceManager } = await import('@/lib/telecom/provider/providerResourceManager');
+        const { ProviderAccountResolver } = await import('@/lib/telecom/provider/providerAccountResolver');
+        const provRes = await ProviderAccountResolver.resolveAccount({
+          organizationId,
+          service: 'SMS',
+        }, adminSupabase);
+        const providerAccountId = provRes.context?.providerAccountId || 'default';
+        await ProviderResourceManager.recordResource({
+          organizationId,
+          providerAccountId,
+          resourceType: 'MESSAGE',
+          localResourceId: messageSid,
+          remoteResourceId: messageSid,
+          provider: 'TWILIO',
+          status: 'received',
+        }, adminSupabase);
+      } catch (mapErr) {
+        console.warn('[Twilio Inbound SMS Webhook] Non-fatal provider resource mapping error:', mapErr);
+      }
+    }
+
+    // Process Messaging Consent & Opt-Out Keywords (Provider-Neutral Foundation)
+    try {
+      const { MessagingConsentService } = await import('@/lib/telecom/fraud/messagingConsentService');
+      const keywordAction = MessagingConsentService.parseInboundKeyword(bodyText);
+      if (keywordAction === 'opt_out') {
+        await MessagingConsentService.recordConsentAction(adminSupabase, {
+          organizationId,
+          recipientPhone: normalizedFrom,
+          action: 'opt_out',
+          keyword: bodyText.trim(),
+        });
+        console.log(`[Twilio Inbound SMS] Opt-out keyword recorded for ${normalizedFrom} in org ${organizationId}`);
+      } else if (keywordAction === 'opt_in') {
+        await MessagingConsentService.recordConsentAction(adminSupabase, {
+          organizationId,
+          recipientPhone: normalizedFrom,
+          action: 'opt_in',
+          keyword: bodyText.trim(),
+        });
+        console.log(`[Twilio Inbound SMS] Opt-in keyword recorded for ${normalizedFrom} in org ${organizationId}`);
+      }
+    } catch (consentErr) {
+      console.warn('[Twilio Inbound SMS] Error recording consent state:', consentErr);
     }
 
     // 8. Return empty TwiML response to indicate success without sending auto-reply SMS

@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
+import { isRecoverySessionToken } from '@/lib/auth/session';
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
@@ -49,12 +50,32 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // Enforce Invariant AUTH-STATE-001 / SEC3-11:
+  // /reset-password is strictly reserved for verified password recovery sessions.
+  // Ordinary authenticated sessions must NOT be able to access /reset-password as a generic password change tool.
+  if (pathname === '/reset-password') {
+    if (user) {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const isRecovery = session?.access_token ? isRecoverySessionToken(session.access_token) : false;
+      if (isRecovery) {
+        return supabaseResponse;
+      }
+      // Ordinary authenticated session -> redirect to /dashboard
+      const url = request.nextUrl.clone();
+      url.pathname = '/dashboard';
+      return NextResponse.redirect(url);
+    }
+    // Unauthenticated user -> allow through to page where failure card will be rendered
+    return supabaseResponse;
+  }
+
   // Public auth routes (unauthenticated landing)
   const isAuthRoute =
     pathname === '/login' ||
     pathname === '/signup' ||
-    pathname === '/forgot-password' ||
-    pathname === '/reset-password';
+    pathname === '/forgot-password';
   const isPublicRoute =
     isAuthRoute ||
     pathname.startsWith('/auth/callback') ||

@@ -84,7 +84,7 @@ export class TelecomEligibilityService {
       }
 
       // 3. Evaluate Eligibility Policy Matrix
-      const policy = await OffboardingPolicyService.getPolicyForOrganization(orgId);
+      const policy = await OffboardingPolicyService.getPolicyForOrganization(orgId, supabase);
 
       if (numberState === 'legacy_quarantined') {
         blockers.push('LEGACY_RECONCILIATION_QUARANTINE: Phone number is in legacy reconciliation quarantine.');

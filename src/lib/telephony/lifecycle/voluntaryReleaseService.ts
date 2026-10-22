@@ -73,6 +73,12 @@ export class VoluntaryReleaseService {
     }
 
     if (!this.dbClient) {
+      // Protected Australian Pilot Interlock (M2 Closure - Unit/Mock mode)
+      if (phoneNumberId === '03edd0bc-b025-49e6-8171-a0c2fcd6cb78') {
+        blockers.push('PROTECTED_PILOT_QUARANTINE: This phone number is a protected pilot resource and cannot be released.');
+        return { eligible: false, blockers, phoneNumberId, organizationId, phoneNumberE164: '+61348328472' };
+      }
+
       // Mock mode fallback if DB client omitted in unit tests
       return {
         eligible: blockers.length === 0,
@@ -96,6 +102,15 @@ export class VoluntaryReleaseService {
     }
 
     const phoneNumberE164 = phone.phone_number;
+
+    // Protected Australian Pilot Interlock (M2 Closure)
+    if (
+      phoneNumberId === '03edd0bc-b025-49e6-8171-a0c2fcd6cb78' ||
+      phoneNumberE164 === '+61348328472'
+    ) {
+      blockers.push('PROTECTED_PILOT_QUARANTINE: This phone number is a protected pilot resource and cannot be released.');
+      return { eligible: false, blockers, phoneNumberId, organizationId, phoneNumberE164 };
+    }
 
     // 3. Lifecycle Status Check
     if (phone.status === 'released') {
@@ -200,6 +215,15 @@ export class VoluntaryReleaseService {
 
     const phoneNumberE164 = eligibility.phoneNumberE164 || confirmPhoneNumber;
 
+    // Protected Australian Pilot Check (M2 Closure)
+    if (
+      phoneNumberId === '03edd0bc-b025-49e6-8171-a0c2fcd6cb78' ||
+      phoneNumberE164 === '+61348328472' ||
+      confirmPhoneNumber === '+61348328472'
+    ) {
+      throw new Error('PROTECTED_PILOT_QUARANTINE_VIOLATION: Voluntary release of protected pilot number is strictly prohibited.');
+    }
+
     // 2. Server-Side Exact Phone Number Typed Confirmation Validation
     if ((confirmPhoneNumber || '').trim() !== phoneNumberE164.trim()) {
       throw new Error(
@@ -228,6 +252,33 @@ export class VoluntaryReleaseService {
       };
     }
 
+    // Phase 23D.6: Delegate to Canonical NumberReleaseSagaCoordinator
+    if (this.dbClient) {
+      const { NumberReleaseSagaCoordinator } = await import('@/lib/telecom/saga');
+      const sagaRes = await NumberReleaseSagaCoordinator.requestNumberRelease(
+        {
+          organizationId,
+          phoneNumberId,
+          confirmPhoneNumber,
+          actorId: userId,
+          idempotencyKey,
+        },
+        this.dbClient
+      );
+
+      return {
+        operationId: sagaRes.operationId,
+        organizationId: sagaRes.organizationId,
+        phoneNumberId: sagaRes.phoneNumberId,
+        phoneNumberE164: sagaRes.phoneNumberE164,
+        status: sagaRes.status,
+        customerSafeStatus: sagaRes.customerSafeStatus,
+        createdAt: sagaRes.createdAt,
+        completedAt: sagaRes.completedAt || null,
+        isIdempotentReplay: sagaRes.isIdempotentReplay,
+      };
+    }
+
     // 3. Idempotency Check
     if (idempotencyKey) {
       const { data: existingOp } = await this.dbClient
@@ -252,6 +303,10 @@ export class VoluntaryReleaseService {
 
     if (!providerMapping || !providerMapping.id) {
       throw new Error(`MISSING_PROVIDER_MAPPING: Active provider mapping required for voluntary release.`);
+    }
+
+    if (providerMapping.provider_resource_id === 'PN832a10dec98cbb48d02033a83afecff3') {
+      throw new Error('PROTECTED_PILOT_QUARANTINE_VIOLATION: Provider resource SID matches protected pilot number.');
     }
 
     // 5. Insert Operation Record (Initial Status: 'requested')
@@ -403,6 +458,28 @@ export class VoluntaryReleaseService {
 
     if (op.status === 'released') {
       return this.toCustomerDTO(op, true);
+    }
+
+    // Phase 23D.6: Delegate to Canonical NumberReleaseReconciliationWorker
+    try {
+      const { NumberReleaseReconciliationWorker } = await import('@/lib/telecom/saga');
+      const reconResult = await NumberReleaseReconciliationWorker.reconcileOperation(
+        operationId,
+        organizationId,
+        this.dbClient
+      );
+      const { data: updatedOp } = await this.dbClient
+        .from('number_release_operations')
+        .select('*')
+        .eq('id', operationId)
+        .eq('organization_id', organizationId)
+        .maybeSingle();
+
+      if (updatedOp) {
+        return this.toCustomerDTO(updatedOp);
+      }
+    } catch (e: any) {
+      // Fall through if canonical tables missing in mock unit test environment
     }
 
     const { data: providerMapping } = await this.dbClient

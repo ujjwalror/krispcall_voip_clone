@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { validateTwilioRequest } from '@/lib/twilio/signature';
 import { QueueService } from '@/lib/telephony/queueService';
 import { createAdminClient } from '@/lib/supabase/admin';
 
@@ -9,10 +10,27 @@ import { createAdminClient } from '@/lib/supabase/admin';
  */
 export async function POST(request: Request) {
   try {
+    const postParams: Record<string, string> = {};
     const formData = await request.formData();
-    const callSid = formData.get('CallSid')?.toString();
-    const callStatus = formData.get('CallStatus')?.toString();
-    const parentCallSid = formData.get('ParentCallSid')?.toString();
+    formData.forEach((value, key) => {
+      if (typeof value === 'string') {
+        postParams[key] = value;
+      }
+    });
+
+    // 1. Authoritative Twilio Signature Validation
+    const isValidSignature = await validateTwilioRequest(request, postParams);
+    if (!isValidSignature) {
+      console.warn('[Twilio Queue Status Callback] Unauthorized status callback request rejected.');
+      return new NextResponse('<Response><Say>Unauthorized</Say></Response>', {
+        status: 403,
+        headers: { 'Content-Type': 'text/xml' },
+      });
+    }
+
+    const callSid = postParams.CallSid;
+    const callStatus = postParams.CallStatus;
+    const parentCallSid = postParams.ParentCallSid;
 
     const targetSid = parentCallSid || callSid;
 

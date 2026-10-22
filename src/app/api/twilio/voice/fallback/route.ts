@@ -188,7 +188,7 @@ export async function POST(request: Request) {
       });
     }
 
-    let targetIdentities: string[] = reservedAgents
+    const targetIdentities: string[] = reservedAgents
       .map((a) => a.twilio_identity || `agent_${a.id.replace(/-/g, '')}`)
       .filter((id) => Boolean(id && id.trim()));
 
@@ -211,11 +211,48 @@ export async function POST(request: Request) {
       });
     }
 
+    // Resolve funded duration for provider-side bounding (M2 Closure)
+    let fundedDurationSeconds: number | null = null;
+    const rawFunded = params.fundedDuration || searchParams.get('fundedDuration');
+    if (rawFunded) {
+      const parsed = parseInt(rawFunded, 10);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        fundedDurationSeconds = parsed;
+      }
+    }
+
+    if (!fundedDurationSeconds && callSid) {
+      const { data: resData } = await (adminSupabase as any)
+        .from('telecom_usage_reservations')
+        .select('metadata')
+        .eq('internal_usage_id', `inbound_call_${callSid}`)
+        .eq('status', 'active')
+        .maybeSingle();
+
+      if (resData?.metadata?.initialExposureSeconds) {
+        const parsed = parseInt(String(resData.metadata.initialExposureSeconds), 10);
+        if (Number.isFinite(parsed) && parsed > 0) {
+          fundedDurationSeconds = parsed;
+        }
+      }
+    }
+
+    if (!fundedDurationSeconds || fundedDurationSeconds <= 0) {
+      console.warn('[TWILIO PREFERRED FALLBACK ENGINE] Missing or invalid funded duration. Refusing Dial.');
+      voiceResponse.say('An error occurred while connecting your call.');
+      voiceResponse.hangup();
+      return new NextResponse(voiceResponse.toString(), {
+        status: 200,
+        headers: { 'Content-Type': 'text/xml' },
+      });
+    }
+
     const dialStatusActionUrl = `${baseUrl}/api/twilio/status?source=dial-action&dbCallId=${encodeURIComponent(callRecord.id)}`;
 
     const dialOptions: Record<string, any> = {
       callerId: dialCallerId,
       timeout: 30,
+      timeLimit: fundedDurationSeconds,
       action: dialStatusActionUrl,
       method: 'POST',
     };

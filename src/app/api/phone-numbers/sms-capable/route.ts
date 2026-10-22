@@ -37,32 +37,45 @@ export async function GET(request: Request) {
     const adminSupabase = createAdminClient();
     const isOwnerOrAdmin = ['owner', 'admin'].includes(profile.role || '');
 
+    const { CapabilityAuthorizationService } = await import('@/lib/telecom/capability');
+
     if (isOwnerOrAdmin) {
-      // 3. Fetch active business lines with capabilities_sms = TRUE for Owner/Admin
+      // 3. Fetch active business lines and filter by canonical SMS_OUTBOUND authorization
       const { data: phoneNumbers, error: fetchErr } = await (adminSupabase as any)
         .from('phone_numbers')
         .select('id, phone_number, friendly_name, is_primary, capabilities_sms, capabilities_voice, active, status')
         .eq('organization_id', organizationId)
         .eq('active', true)
-        .eq('capabilities_sms', true)
         .order('is_primary', { ascending: false });
 
       if (fetchErr) {
-        console.error('Error fetching SMS-capable phone numbers:', fetchErr);
+        console.error('Error fetching SMS phone numbers:', fetchErr);
         return NextResponse.json(
           { error: 'Failed to fetch SMS business numbers.' },
           { status: 500 }
         );
       }
 
-      const operational = (phoneNumbers || []).filter((pn: any) => pn && pn.active === true && pn.status === 'active');
+      const operational: any[] = [];
+      for (const pn of phoneNumbers || []) {
+        const auth = await CapabilityAuthorizationService.canUseCapability(
+          pn.id,
+          'SMS_OUTBOUND',
+          organizationId,
+          { userId: user.id, requireAssignment: false },
+          adminSupabase
+        );
+        if (auth.allowed) {
+          operational.push(pn);
+        }
+      }
 
       return NextResponse.json({
         success: true,
         phoneNumbers: operational,
       });
     } else {
-      // 3. Fetch user-assigned SMS-capable business lines for Manager/Agent
+      // 3. Fetch user-assigned business lines and filter by canonical SMS_OUTBOUND authorization
       const { data: userAssignments, error: assignErr } = await (adminSupabase as any)
         .from('user_phone_assignments')
         .select(`
@@ -89,15 +102,23 @@ export async function GET(request: Request) {
         );
       }
 
-      const assignedSmsNumbers = (userAssignments || [])
+      const candidates = (userAssignments || [])
         .map((a: any) => a.phone_numbers)
-        .filter(
-          (pn: any) =>
-            pn &&
-            pn.active === true &&
-            pn.capabilities_sms === true &&
-            pn.status === 'active'
+        .filter((pn: any) => pn && pn.id);
+
+      const assignedSmsNumbers: any[] = [];
+      for (const pn of candidates) {
+        const auth = await CapabilityAuthorizationService.canUseCapability(
+          pn.id,
+          'SMS_OUTBOUND',
+          organizationId,
+          { userId: user.id, requireAssignment: true },
+          adminSupabase
         );
+        if (auth.allowed) {
+          assignedSmsNumbers.push(pn);
+        }
+      }
 
       return NextResponse.json({
         success: true,

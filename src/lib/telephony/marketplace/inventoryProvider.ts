@@ -1,6 +1,6 @@
 import 'server-only';
 import crypto from 'crypto';
-import { createTwilioServerClient } from '@/lib/twilio/client';
+import { ProviderClientFactory } from '@/lib/telecom/provider/providerClientFactory';
 
 export type NumberCategory = 'local' | 'mobile' | 'toll_free';
 
@@ -188,7 +188,7 @@ export class TwilioInventoryProvider {
    */
   async getAvailableCountries(): Promise<InventoryCountryItem[]> {
     try {
-      const client = createTwilioServerClient();
+      const client = ProviderClientFactory.getParentAdministrativeClient();
       let rawCountries: any[] = [];
       try {
         rawCountries = await client.availablePhoneNumbers.list({ limit: 100 });
@@ -315,7 +315,7 @@ export class TwilioInventoryProvider {
     }
 
     try {
-      const client = createTwilioServerClient();
+      const client = ProviderClientFactory.getParentAdministrativeClient();
 
       // Map internal category name to Twilio SDK resource method
       let twilioCategory: 'local' | 'mobile' | 'tollFree' = 'local';
@@ -398,7 +398,7 @@ export class TwilioInventoryProvider {
   async auditProviderPricing(countryCode: string): Promise<ProviderPricingAuditResult> {
     const cc = (countryCode || 'US').toUpperCase();
     try {
-      const client = createTwilioServerClient();
+      const client = ProviderClientFactory.getParentAdministrativeClient();
       const pricingApi = (client as any).pricing;
       const pricingObj = pricingApi?.v1?.phoneNumbers?.countries
         ? await pricingApi.v1.phoneNumbers.countries(cc).fetch()

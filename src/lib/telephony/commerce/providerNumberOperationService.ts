@@ -10,7 +10,7 @@ import {
 } from './types';
 import { generateRequestFingerprintV1 } from './requestFingerprint';
 
-function getServiceSupabase() {
+export function getServiceSupabase() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
   const supabaseServiceKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
   if (!supabaseUrl || !supabaseServiceKey) {
@@ -26,6 +26,9 @@ export interface CreatePurchaseOperationParams {
   countryCode: string;
   numberType: 'local' | 'mobile' | 'toll_free';
   provider?: string;
+
+  // Phase 23D.1 / 23D.3 quote linkage
+  quoteId?: string | null;
 
   // Pricing inputs from Phase 12.1 commercial resolution
   retailAmountMinor: number;
@@ -60,11 +63,15 @@ export class ProviderNumberOperationService {
   static async createOrReusePurchaseOperation(
     params: CreatePurchaseOperationParams
   ): Promise<ProviderNumberOperation> {
+    const phoneNumberE164 = (params.phoneNumberE164 || '').trim();
+    if (phoneNumberE164 === '+61348328472') {
+      throw new Error('PROTECTED_PILOT_QUARANTINE_VIOLATION: Purchase or adoption of protected Australian pilot number is strictly prohibited.');
+    }
+
     const supabase = getServiceSupabase();
     const provider = (params.provider || 'twilio').toLowerCase();
     const countryCode = params.countryCode.toUpperCase();
     const numberType = params.numberType.toLowerCase();
-    const phoneNumberE164 = params.phoneNumberE164.trim();
     const grossMarginMinor = params.retailAmountMinor - params.providerCostMinor;
     const nowIso = new Date().toISOString();
 
@@ -635,9 +642,10 @@ export class ProviderNumberOperationService {
    */
   static async getOperationById(
     operationId: string,
-    organizationId: string
+    organizationId: string,
+    client?: any
   ): Promise<ProviderNumberOperation | null> {
-    const supabase = getServiceSupabase();
+    const supabase = client || getServiceSupabase();
     const { data } = await supabase
       .from('provider_number_operations')
       .select('*')
@@ -724,6 +732,19 @@ export class ProviderNumberOperationService {
       sanitizedErrorMessage: row.sanitized_error_message,
       executionProviderCostMinor: row.execution_provider_cost_minor ?? null,
       executionProviderCostCurrency: row.execution_provider_cost_currency ?? null,
+      providerAccountId: row.provider_account_id ?? null,
+      canonicalState: row.canonical_state ?? null,
+      outcomeCertainty: row.outcome_certainty ?? null,
+      reconciliationState: row.reconciliation_state ?? null,
+      quoteId: row.quote_id ?? null,
+      providerOrderId: row.provider_order_id ?? null,
+      errorCategory: row.error_category ?? null,
+      billingAuthorizationId: row.billing_authorization_id ?? null,
+      billingAuthorizationState: row.billing_authorization_state ?? null,
+      authorizedAt: row.authorized_at ?? null,
+      dispatchedAt: row.dispatched_at ?? null,
+      confirmedAt: row.confirmed_at ?? null,
+      reconciledAt: row.reconciled_at ?? null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };

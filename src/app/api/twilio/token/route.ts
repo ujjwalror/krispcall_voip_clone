@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { generateVoiceAccessToken } from '@/lib/twilio/tokens';
 import { requireActiveSession } from '@/lib/auth/requireActiveSession';
 
 export async function GET() {
@@ -15,11 +14,11 @@ export async function GET() {
     // 2. Fetch authenticated user profile
     const { data: profileData, error: profileError } = await supabase
       .from('profiles')
-      .select('active, twilio_identity')
+      .select('active, twilio_identity, organization_id')
       .eq('id', user.id)
       .single();
 
-    const profile = profileData as { active?: boolean; twilio_identity?: string | null } | null;
+    const profile = profileData as { active?: boolean; twilio_identity?: string | null; organization_id?: string } | null;
 
     if (profileError || !profile) {
       return NextResponse.json(
@@ -44,19 +43,29 @@ export async function GET() {
       );
     }
 
-    // 5. Generate short-lived Twilio Access Token bound strictly to database profile identity
-    const result = generateVoiceAccessToken(profile.twilio_identity);
+    // 5. Generate short-lived Twilio Access Token bound strictly to database profile identity and organization account context
+    const { generateVoiceAccessTokenAsync } = await import('@/lib/twilio/tokens');
+    const result = await generateVoiceAccessTokenAsync(profile.twilio_identity, 3600, {
+      organizationId: profile.organization_id,
+    });
 
     return NextResponse.json({
       token: result.token,
       identity: result.identity,
       expiresInSeconds: result.expiresInSeconds,
     });
-  } catch (error: any) {
-    console.error('Error generating Twilio Access Token:', error.message || error);
+  } catch (error: unknown) {
+    const err = error as { code?: string; message?: string };
+    console.error('Error generating Twilio Access Token:', err.message || err);
+    const statusCode =
+      err.code === 'CUSTOMER_SUBACCOUNT_WEBRTC_UNSUPPORTED' ||
+      err.code === 'PARENT_ACCOUNT_CUSTOMER_ACCESS_PROHIBITED' ||
+      err.code === 'PROVIDER_ASSIGNMENT_REQUIRED'
+        ? 403
+        : 500;
     return NextResponse.json(
-      { error: 'Failed to generate voice access token. Check server configuration.' },
-      { status: 500 }
+      { error: err.message || 'Failed to generate voice access token. Check server configuration.' },
+      { status: statusCode }
     );
   }
 }

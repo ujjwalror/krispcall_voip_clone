@@ -96,6 +96,21 @@ export interface ProviderNumberOperation {
   paymentAuthorizationId?: string | null;
   paymentStatus?: 'unpaid' | 'authorized' | 'captured' | 'released' | 'waived' | null;
 
+  // 23D.1 & 23D.3 Additive Canonical Fields
+  providerAccountId?: string | null;
+  canonicalState?: import('@/lib/telecom/domain/types').CanonicalPurchaseOperationState | null;
+  outcomeCertainty?: import('@/lib/telecom/domain/types').ProviderOutcomeCertainty | null;
+  reconciliationState?: import('@/lib/telecom/domain/types').PurchaseReconciliationState | null;
+  quoteId?: string | null;
+  providerOrderId?: string | null;
+  errorCategory?: import('@/lib/telecom/domain/types').PurchaseFailureCategory | null;
+  billingAuthorizationId?: string | null;
+  billingAuthorizationState?: import('@/lib/telecom/domain/types').BillingAuthorizationState | null;
+  authorizedAt?: string | null;
+  dispatchedAt?: string | null;
+  confirmedAt?: string | null;
+  reconciledAt?: string | null;
+
   // Operational
   attemptCount: number;
   startedAt?: string | null;

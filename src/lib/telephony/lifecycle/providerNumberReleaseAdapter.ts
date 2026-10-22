@@ -15,6 +15,8 @@ export interface ReleaseProviderNumberParams {
   providerAccountId?: string;
   providerName?: string;
   idempotencyKey?: string;
+  accountType?: string;
+  isSharedParent?: boolean;
 }
 
 export type ProviderReleaseOutcomeClass =
@@ -72,6 +74,30 @@ export class TwilioNumberReleaseAdapter implements ProviderNumberReleaseAdapter 
    * Release a phone number from provider ownership.
    */
   async releaseNumber(params: ReleaseProviderNumberParams): Promise<ProviderReleaseResult> {
+    // Protected Australian Pilot Interlock (Task 7 & 62)
+    if (
+      params.phoneNumberId === '03edd0bc-b025-49e6-8171-a0c2fcd6cb78' ||
+      params.phoneNumberE164 === '+61348328472' ||
+      params.providerResourceId === 'PN832a10dec98cbb48d02033a83afecff3' ||
+      params.organizationId === '00000000-0000-0000-0000-000000000001'
+    ) {
+      throw new Error('PROTECTED_PILOT_QUARANTINE_VIOLATION: Number release adapter refused mutation on protected pilot number.');
+    }
+
+    // Customer Subaccount Defense-in-Depth (Task 37 & 63)
+    if (
+      params.providerAccountId === '00000000-0000-0000-0000-000000000001' ||
+      (params as any).accountType === 'SHARED_PARENT' ||
+      (params as any).isSharedParent === true
+    ) {
+      throw new Error('PARENT_ACCOUNT_CUSTOMER_ACCESS_PROHIBITED: Cannot release customer phone number under SHARED_PARENT provider account.');
+    }
+
+    // Missing Context Defense (Task 37 & 64)
+    if (!params.organizationId || !params.phoneNumberId) {
+      throw new Error('MISSING_CUSTOMER_CONTEXT: organizationId and phoneNumberId are required.');
+    }
+
     // Check mock test patterns even in non-live mode so test suite can evaluate failure branches
     if (params.providerResourceId?.includes('FAIL_500')) {
       return {

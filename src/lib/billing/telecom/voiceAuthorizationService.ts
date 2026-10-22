@@ -20,18 +20,99 @@ export interface AuthorizeOutboundVoiceParams {
 
 export interface OutboundVoiceAuthorizationResult {
   authorized: boolean;
+  authorizationId?: string;
+  reservationId?: string;
+  reservedAmountMinor?: number;
+  authorizedSeconds?: number;
+  providerTimeLimit?: number;
   timeLimitSeconds?: number;
+  reservationDurationSeconds?: number;
   failureReason?: string;
   customerMessage?: string;
   sessionId?: string;
   internalUsageId?: string;
   calculatedExposure?: CalculatedExposure;
   matchedRate?: RateResolutionResult;
-  reservationId?: string;
   isShadowMode?: boolean;
 }
 
 export class VoiceAuthorizationService {
+  /**
+   * Validates whether a given providerTimeLimit satisfies all fail-closed boundary constraints:
+   * present, numeric, finite, non-NaN, positive integer seconds.
+   */
+  public static isValidProviderTimeLimit(val: unknown): val is number {
+    return (
+      val !== undefined &&
+      val !== null &&
+      typeof val === 'number' &&
+      Number.isFinite(val) &&
+      !Number.isNaN(val) &&
+      Number.isInteger(val) &&
+      val > 0
+    );
+  }
+
+  /**
+   * Calculates the exact maximum provider duration in seconds funded by the reserved amount.
+   * Guaranteed invariant: calculateRetailChargeMinor(rateCard, durationSeconds) <= reservedAmountMinor.
+   * Uses conservative floor rounding down to billing increments so provider exposure cannot exceed reservation.
+   */
+  public static calculateMaxFundedSecondsFromReservation(
+    rateCard: any,
+    reservedAmountMinor: number
+  ): number {
+    if (!rateCard || !rateCard.retailRateMicro || rateCard.retailRateMicro <= 0 || reservedAmountMinor <= 0) {
+      return 0;
+    }
+
+    const increment = Math.max(1, rateCard.billingIncrementSeconds || 60);
+    const minUnits = Math.max(1, rateCard.minChargeableUnits || 1);
+    const minDuration = minUnits * increment;
+
+    // Minimum charge check
+    const minCostMinor = TelecomWalletService.calculateRetailChargeMinor({
+      retailRateMicro: rateCard.retailRateMicro,
+      durationSeconds: minDuration,
+      billingIncrementSeconds: increment,
+      minChargeableUnits: minUnits,
+      unitType: rateCard.unitType || 'minute',
+    });
+
+    if (reservedAmountMinor < minCostMinor) {
+      return 0;
+    }
+
+    // Binary search for maximum billable increments fully covered by reservedAmountMinor
+    let lowIncrements = minUnits;
+    let highIncrements = Math.max(
+      minUnits,
+      Math.ceil((reservedAmountMinor * 10000 * 60) / (rateCard.retailRateMicro * increment)) + 2
+    );
+    let bestIncrements = lowIncrements;
+
+    while (lowIncrements <= highIncrements) {
+      const midIncrements = Math.floor((lowIncrements + highIncrements) / 2);
+      const testSeconds = midIncrements * increment;
+      const testCostMinor = TelecomWalletService.calculateRetailChargeMinor({
+        retailRateMicro: rateCard.retailRateMicro,
+        durationSeconds: testSeconds,
+        billingIncrementSeconds: increment,
+        minChargeableUnits: minUnits,
+        unitType: rateCard.unitType || 'minute',
+      });
+
+      if (testCostMinor <= reservedAmountMinor) {
+        bestIncrements = midIncrements;
+        lowIncrements = midIncrements + 1;
+      } else {
+        highIncrements = midIncrements - 1;
+      }
+    }
+
+    return bestIncrements * increment;
+  }
+
   /**
    * Authoritatively evaluates and executes pre-exposure wallet authorization for outbound voice.
    * Executed strictly server-side at POST /api/twilio/voice/outbound before returning TwiML <Dial>.
@@ -78,6 +159,70 @@ export class VoiceAuthorizationService {
       };
     }
 
+    // Destination Risk & Emergency Policy Check
+    const { DestinationRiskService } = await import('@/lib/telecom/fraud/destinationRiskService');
+    const { TelecomSecurityAuditService } = await import('@/lib/telecom/fraud/telecomSecurityAuditService');
+
+    const orgPolicy = await DestinationRiskService.getOrgGeographicPolicy(client, organizationId);
+    const riskEval = DestinationRiskService.evaluateDestination(toNumber, orgPolicy);
+    if (riskEval.classification === 'BLOCKED' || riskEval.isEmergency) {
+      await TelecomSecurityAuditService.logSecurityEvent(client, {
+        organizationId,
+        userId,
+        phoneNumber: fromNumber,
+        destination: toNumber,
+        riskRule: riskEval.riskRule || (riskEval.isEmergency ? 'EMERGENCY_DESTINATION_GATE' : 'DESTINATION_RISK_BLOCKED'),
+        operation: 'voice_dial',
+        decision: 'blocked',
+        reason: riskEval.reason,
+        metadata: {
+          countryCode: riskEval.countryCode,
+        },
+      });
+
+      return {
+        authorized: false,
+        failureReason: riskEval.isEmergency ? 'EMERGENCY_SERVICES_NOT_SUPPORTED' : 'DESTINATION_RISK_BLOCKED',
+        customerMessage: riskEval.reason,
+      };
+    }
+
+    // Phase 24B: Authoritative Local Control Plane & Circuit Breaker Check
+    const { TelecomControlPlaneService } = await import('@/lib/telecom/controlPlane');
+    const controlEval = await TelecomControlPlaneService.evaluate(
+      {
+        organizationId,
+        operation: 'OUTBOUND_VOICE',
+        userId,
+        phoneNumber: fromNumber,
+        destination: toNumber,
+        context: { dbCallId },
+      },
+      client
+    );
+    if (!controlEval.allowed) {
+      return {
+        authorized: false,
+        failureReason: controlEval.reasonCode,
+        customerMessage: controlEval.reason,
+      };
+    }
+
+    // Layered Telecom Suspension Kill Switches
+    const { TelecomSuspensionService } = await import('@/lib/telecom/fraud/telecomSuspensionService');
+    const suspension = await TelecomSuspensionService.checkSuspension(client, {
+      organizationId,
+      userId,
+      phoneNumber: fromNumber,
+    });
+    if (suspension.isSuspended) {
+      return {
+        authorized: false,
+        failureReason: `TELECOM_SUSPENSION_${suspension.level}`,
+        customerMessage: suspension.reason || 'Telecom access suspended.',
+      };
+    }
+
     // 1. Resolve exposure policy & enforcement mode
     let policyConfig: ExposurePolicyConfig;
     try {
@@ -99,10 +244,57 @@ export class VoiceAuthorizationService {
 
     // Disabled mode: legacy development behavior (allow call without credit checks)
     if (enforcementMode === 'disabled') {
+      const initialSec = policyConfig.initialExposureSeconds || 300;
       return {
         authorized: true,
-        timeLimitSeconds: policyConfig.initialExposureSeconds || 3600,
+        authorizationId: `disabled:${dbCallId}`,
+        authorizedSeconds: initialSec,
+        providerTimeLimit: initialSec,
+        timeLimitSeconds: initialSec,
+        reservationDurationSeconds: initialSec,
         isShadowMode: false,
+      };
+    }
+
+    // Concurrency / Risk Limits Check (Organization-level technical risk control)
+    if (enforcementMode === 'enforce') {
+      const concurrencyCheck = await this.checkConcurrentCallLimit(client, organizationId);
+      if (!concurrencyCheck.allowed) {
+        console.warn(`[VoiceAuthorizationService] Org ${organizationId} exceeded concurrent call limit (${concurrencyCheck.currentActive}/${concurrencyCheck.limit})`);
+        return {
+          authorized: false,
+          failureReason: 'CONCURRENT_CALL_LIMIT_EXCEEDED',
+          customerMessage: 'Your organization has reached its concurrent active call limit. Please wait for an existing call to complete or contact support.',
+        };
+      }
+    }
+
+    // Phase 21A.1: Authoritatively resolve Provider Account Context before rating or exposure
+    let resolvedProvider = 'twilio';
+    let resolvedProviderAccountId = providerAccountId;
+    try {
+      const { ProviderAccountResolver } = await import('@/lib/telecom/provider/providerAccountResolver');
+      const providerResolution = await ProviderAccountResolver.resolveAccount({
+        organizationId,
+        service: 'VOICE',
+      }, client);
+
+      if (!providerResolution.success || !providerResolution.context) {
+        return {
+          authorized: false,
+          failureReason: providerResolution.errorCode || 'UNKNOWN_OR_INACTIVE_PROVIDER',
+          customerMessage: providerResolution.errorMessage || 'No authorized voice provider account available for your organization.',
+        };
+      }
+
+      resolvedProvider = providerResolution.context.provider.toLowerCase();
+      resolvedProviderAccountId = providerResolution.context.providerAccountId;
+    } catch (provErr: any) {
+      console.warn('[VoiceAuthorizationService] Provider resolution exception:', provErr.message || provErr);
+      return {
+        authorized: false,
+        failureReason: 'PROVIDER_RESOLUTION_FAILED',
+        customerMessage: 'We are unable to resolve your telecom provider context. Please contact support.',
       };
     }
 
@@ -111,8 +303,8 @@ export class VoiceAuthorizationService {
     try {
       matchedRate = await TelecomRatingService.resolveRetailRate(client, {
         organizationId,
-        provider: 'twilio',
-        providerAccountId,
+        provider: resolvedProvider,
+        providerAccountId: resolvedProviderAccountId,
         serviceType: 'voice_outbound',
         direction: 'outbound',
         destinationPhoneNumber: toNumber,
@@ -122,6 +314,15 @@ export class VoiceAuthorizationService {
       });
     } catch (rateErr: any) {
       console.warn('[VoiceAuthorizationService] Retail rate resolution failed:', rateErr.message);
+      return {
+        authorized: false,
+        failureReason: 'RATE_CARD_NOT_FOUND',
+        customerMessage: 'We are unable to connect your call at this time. Calling rate is unavailable for this destination.',
+      };
+    }
+
+    // Rate Safety Invariant: establish trustworthy positive rate card or fail closed
+    if (!matchedRate || !matchedRate.matchedRateCard || !matchedRate.retailRateMicro || matchedRate.retailRateMicro <= 0) {
       return {
         authorized: false,
         failureReason: 'RATE_CARD_NOT_FOUND',
@@ -152,7 +353,11 @@ export class VoiceAuthorizationService {
 
       return {
         authorized: true,
+        authorizationId: `shadow:${dbCallId}`,
+        authorizedSeconds: exposure.initialDurationSeconds,
+        providerTimeLimit: exposure.initialDurationSeconds,
         timeLimitSeconds: exposure.initialDurationSeconds,
+        reservationDurationSeconds: exposure.initialDurationSeconds,
         sessionId,
         internalUsageId,
         calculatedExposure: exposure,
@@ -285,14 +490,53 @@ export class VoiceAuthorizationService {
         },
       });
 
+      // Compute safe rate-aware & risk-aware provider <Dial> timeLimit ceiling:
+      // Prevents high-cost / elevated-risk destinations from receiving standard 3,600s ceilings.
+      const riskAwareMaxCeilingSeconds = DestinationRiskService.calculateRiskAwareProviderCeiling(
+        matchedRate.retailRateMicro,
+        riskEval.classification,
+        exposure.maxProviderExposureSeconds
+      );
+
+      // LOCKED INVARIANT: Provider timeLimit MUST be bounded strictly by the funds actually reserved!
+      // Derive maximum duration from the monetary reservation hold, NOT the unreserved wallet balance.
+      const maxFundedSeconds = this.calculateMaxFundedSecondsFromReservation(
+        matchedRate.matchedRateCard,
+        reservationRes.amountReservedMinor
+      );
+
+      // Provider-authorized duration must never exceed the exposure atomically reserved for this call
+      const authorizedSeconds = Math.min(exposure.initialDurationSeconds, maxFundedSeconds);
+      const providerTimeLimit = Math.min(authorizedSeconds, riskAwareMaxCeilingSeconds);
+
+      if (!this.isValidProviderTimeLimit(providerTimeLimit)) {
+        console.warn(`[VoiceAuthorizationService] Provider timeLimit invalid or non-positive (${providerTimeLimit}) after reservation. Compensating hold.`);
+        await this.compensatePreDispatchFailure(
+          client,
+          organizationId,
+          internalUsageId,
+          dbCallId
+        );
+        return {
+          authorized: false,
+          failureReason: 'INSUFFICIENT_RESERVATION_DURATION',
+          customerMessage: 'Your account balance is insufficient to authorize a call to this destination.',
+        };
+      }
+
       return {
         authorized: true,
-        timeLimitSeconds: exposure.initialDurationSeconds,
+        authorizationId: reservationRes.reservationId,
+        reservationId: reservationRes.reservationId,
+        reservedAmountMinor: reservationRes.amountReservedMinor,
+        authorizedSeconds,
+        providerTimeLimit,
+        timeLimitSeconds: providerTimeLimit,
+        reservationDurationSeconds: authorizedSeconds,
         sessionId,
         internalUsageId,
         calculatedExposure: exposure,
         matchedRate,
-        reservationId: reservationRes.reservationId,
         isShadowMode: false,
       };
     } catch (err: any) {
@@ -300,14 +544,19 @@ export class VoiceAuthorizationService {
 
       const isInsufficient = err.message?.includes('INSUFFICIENT_AVAILABLE_BALANCE');
       const isRestricted = err.message?.includes('ORGANIZATION_BILLING_RESTRICTED');
+      const isConcurrency = err.message?.includes('CONCURRENT_CALL_LIMIT_EXCEEDED');
 
-      const failureReason = isInsufficient
+      const failureReason = isConcurrency
+        ? 'CONCURRENT_CALL_LIMIT_EXCEEDED'
+        : isInsufficient
         ? 'INSUFFICIENT_AVAILABLE_BALANCE'
         : isRestricted
         ? 'ORGANIZATION_BILLING_RESTRICTED'
         : 'AUTHORIZATION_SYSTEM_ERROR';
 
-      const customerMessage = isInsufficient
+      const customerMessage = isConcurrency
+        ? 'Your organization has reached its concurrent active call limit. Please wait for an existing call to complete or contact support.'
+        : isInsufficient
         ? 'Your account has insufficient Credits to place this call. Please add Credits to continue.'
         : isRestricted
         ? 'Your organization billing is currently restricted from telecom usage.'
@@ -349,5 +598,53 @@ export class VoiceAuthorizationService {
       }
       return false;
     }
+  }
+
+  /**
+   * Evaluates organization-level concurrent active voice call limits (Technical Risk Control).
+   * Note: This is an infrastructure safety risk-control threshold, NOT a commercial subscription entitlement.
+   * Administrative and owner roles CANNOT bypass this safety limit.
+   */
+  public static async checkConcurrentCallLimit(
+    client: SupabaseClient,
+    organizationId: string
+  ): Promise<{ allowed: boolean; currentActive: number; limit: number }> {
+    const DEFAULT_MAX_CONCURRENT_CALLS = parseInt(process.env.TELECOM_MAX_CONCURRENT_CALLS_PER_ORG || '5', 10);
+
+    let configuredLimit = DEFAULT_MAX_CONCURRENT_CALLS;
+    try {
+      const { data: controls } = await client
+        .from('organization_billing_controls')
+        .select('max_concurrent_voice_calls')
+        .eq('organization_id', organizationId)
+        .maybeSingle();
+
+      if (controls && typeof controls.max_concurrent_voice_calls === 'number' && controls.max_concurrent_voice_calls > 0) {
+        configuredLimit = controls.max_concurrent_voice_calls;
+      }
+    } catch {
+      // Fall back to default
+    }
+
+    try {
+      const { count, error } = await client
+        .from('telecom_usage_reservations')
+        .select('id', { count: 'exact', head: true })
+        .eq('organization_id', organizationId)
+        .eq('status', 'active')
+        .in('service_type', ['voice_outbound', 'voice_inbound']);
+
+      if (!error && typeof count === 'number') {
+        const currentActive = count;
+        if (currentActive >= configuredLimit) {
+          return { allowed: false, currentActive, limit: configuredLimit };
+        }
+        return { allowed: true, currentActive, limit: configuredLimit };
+      }
+    } catch (countErr: any) {
+      console.warn('[VoiceAuthorizationService] Error counting active voice reservations:', countErr.message);
+    }
+
+    return { allowed: true, currentActive: 0, limit: configuredLimit };
   }
 }

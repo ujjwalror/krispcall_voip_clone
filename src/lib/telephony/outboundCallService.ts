@@ -146,6 +146,51 @@ export async function executeOutboundCallSetup(
 
     const normalizedDestination = validation.normalized;
 
+    // 4b. Centralized Destination Risk & Emergency Number Policy Gateway
+    const { DestinationRiskService } = await import('@/lib/telecom/fraud/destinationRiskService');
+    const { TelecomSecurityAuditService } = await import('@/lib/telecom/fraud/telecomSecurityAuditService');
+
+    const orgPolicy = await DestinationRiskService.getOrgGeographicPolicy(adminSupabase, organizationId);
+    const riskEval = DestinationRiskService.evaluateDestination(normalizedDestination, orgPolicy);
+    if (riskEval.classification === 'BLOCKED' || riskEval.isEmergency) {
+      await TelecomSecurityAuditService.logSecurityEvent(adminSupabase, {
+        organizationId,
+        userId,
+        destination: normalizedDestination,
+        riskRule: riskEval.riskRule || (riskEval.isEmergency ? 'EMERGENCY_DESTINATION_GATE' : 'DESTINATION_RISK_BLOCKED'),
+        operation: 'voice_dial',
+        decision: 'blocked',
+        reason: riskEval.reason,
+        metadata: {
+          countryCode: riskEval.countryCode,
+        },
+      });
+      throw new OutboundCallError(riskEval.reason, 403);
+    }
+
+    // 4c. Voice Velocity Controls (Non-bypassable by Owner/Admin - Phase 24C Distributed Atomic)
+    const { TelecomVelocityService } = await import('@/lib/telecom/fraud/telecomVelocityService');
+    const velocityCheck = await TelecomVelocityService.checkAndConsumeVoice(adminSupabase, {
+      organizationId,
+      userId,
+      serviceType: 'voice_outbound',
+      destination: normalizedDestination,
+      idempotencyKey: (params as any).callId || undefined,
+    });
+
+    if (!velocityCheck.allowed) {
+      await TelecomSecurityAuditService.logSecurityEvent(adminSupabase, {
+        organizationId,
+        userId,
+        destination: normalizedDestination,
+        riskRule: velocityCheck.limitType?.toUpperCase() || 'VOICE_VELOCITY_EXCEEDED',
+        operation: 'voice_dial',
+        decision: 'throttled',
+        reason: velocityCheck.reason || 'Voice call velocity throttled.',
+      });
+      throw new OutboundCallError(velocityCheck.reason || 'Voice call velocity exceeded. Please slow down.', 429);
+    }
+
     // 5. Blocked-number check for organization
     const { data: blockedRecord } = await (adminSupabase as any)
       .from('blocked_numbers')
@@ -172,7 +217,8 @@ export async function executeOutboundCallSetup(
     }
 
     // 5b. Advisory Preflight Credit Check (ADVISORY ONLY - No reservation, no ledger movement)
-    const enforcementMode = process.env.TELECOM_PREPAID_ENFORCEMENT_MODE || 'shadow_log';
+    const { ExposurePolicy } = await import('@/lib/billing/telecom/exposurePolicy');
+    const { enforcementMode } = ExposurePolicy.getConfig();
     if (enforcementMode === 'enforce') {
       try {
         const { TelecomWalletService } = await import('@/lib/billing/telecomWalletService');
@@ -191,7 +237,7 @@ export async function executeOutboundCallSetup(
     // 6. Resolve & validate caller ID Business Number (Phase 7.4 Role-Based Access)
     const { data: userProfile } = await (adminSupabase as any)
       .from('profiles')
-      .select('id, organization_id, role, active')
+      .select('id, organization_id, role, active, telecom_suspended')
       .eq('id', userId)
       .maybeSingle();
 
@@ -202,81 +248,121 @@ export async function executeOutboundCallSetup(
     const isOwnerOrAdmin = ['owner', 'admin'].includes(userProfile.role || '');
     let callerId = (rawFromNumber || '').trim();
 
-    if (isOwnerOrAdmin) {
-      // Owner/Admin: Administrative access to all active workspace numbers
-      if (callerId) {
-        const { data: validOrgPhone } = await (adminSupabase as any)
-          .from('phone_numbers')
-          .select('phone_number, status')
-          .eq('organization_id', organizationId)
-          .eq('phone_number', callerId)
-          .eq('active', true)
-          .maybeSingle();
+    const { NumberPermissionService } = await import('@/lib/telecom/assignment');
+    // Phase 23D.5: NumberPermissionService.canActorUseNumber composes CapabilityAuthorizationService.canUseCapability with canonical assignment authority
 
-        const isOperational = validOrgPhone && validOrgPhone.status === 'active';
-        if (!isOperational) {
-          callerId = '';
-        }
-      }
+    if (callerId) {
+      // Explicit caller ID requested: verify permission & capability
+      const perm = await NumberPermissionService.canActorUseNumber(
+        {
+          organizationId,
+          actorId: userId,
+          phoneNumberE164: callerId,
+          operation: 'VOICE_OUTBOUND',
+        },
+        adminSupabase
+      );
 
-      if (!callerId) {
-        const { data: primaryPhone } = await (adminSupabase as any)
-          .from('phone_numbers')
-          .select('phone_number, status')
-          .eq('organization_id', organizationId)
-          .eq('active', true)
-          .order('is_primary', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        const isOperational = primaryPhone && primaryPhone.status === 'active';
-        if (isOperational && primaryPhone?.phone_number) {
-          callerId = primaryPhone.phone_number;
-        }
-      }
-
-      if (!callerId) {
-        throw new OutboundCallError('No active business number is available for this workspace.', 400);
+      if (!perm.allowed) {
+        throw new OutboundCallError(
+          perm.reason || 'The selected business number is not authorized for outbound voice by your user account.',
+          perm.code === 'INSUFFICIENT_PERMISSIONS' || perm.code === 'NOT_ASSIGNED_TO_NUMBER' ? 403 : 400
+        );
       }
     } else {
-      // Manager/Agent: Strictly limited to numbers assigned via user_phone_assignments
-      const { data: userAssignments, error: assignErr } = await (adminSupabase as any)
-        .from('user_phone_assignments')
-        .select(`
-          phone_number_id,
-          phone_numbers:phone_number_id (
-            id,
-            phone_number,
-            active,
-            status,
-            is_primary
-          )
-        `)
-        .eq('user_id', userId)
-        .eq('organization_id', organizationId);
+      // Auto-selection of caller ID
+      if (isOwnerOrAdmin) {
+        const { data: primaryCandidates } = await (adminSupabase as any)
+          .from('phone_numbers')
+          .select('id, phone_number, is_primary')
+          .eq('organization_id', organizationId)
+          .order('is_primary', { ascending: false });
 
-      if (assignErr) {
-        console.error('[Outbound Call Setup] Error fetching user phone assignments:', assignErr);
-        throw new OutboundCallError('Failed to verify user phone number assignment.', 500);
-      }
-
-      const activeAssignedNumbers = (userAssignments || [])
-        .map((a: any) => a.phone_numbers)
-        .filter((pn: any) => pn && pn.active === true && pn.status === 'active');
-
-      if (!activeAssignedNumbers || activeAssignedNumbers.length === 0) {
-        throw new OutboundCallError('No business number assigned to your user account.', 403);
-      }
-
-      if (callerId) {
-        const match = activeAssignedNumbers.find((pn: any) => pn.phone_number === callerId);
-        if (!match) {
-          throw new OutboundCallError('No business number assigned to your user account.', 403);
+        for (const candidate of primaryCandidates || []) {
+          const perm = await NumberPermissionService.canActorUseNumber(
+            {
+              organizationId,
+              actorId: userId,
+              phoneNumberId: candidate.id,
+              operation: 'VOICE_OUTBOUND',
+            },
+            adminSupabase
+          );
+          if (perm.allowed) {
+            callerId = candidate.phone_number;
+            break;
+          }
         }
       } else {
-        const primaryMatch = activeAssignedNumbers.find((pn: any) => pn.is_primary) || activeAssignedNumbers[0];
-        callerId = primaryMatch.phone_number;
+        // Manager/Agent: Check numbers assigned directly or via projection
+        const { data: userAssignments } = await (adminSupabase as any)
+          .from('phone_numbers')
+          .select('id, phone_number, is_primary, assignment_target_type, assignment_target_id')
+          .eq('organization_id', organizationId);
+
+        for (const candidate of userAssignments || []) {
+          const perm = await NumberPermissionService.canActorUseNumber(
+            {
+              organizationId,
+              actorId: userId,
+              phoneNumberId: candidate.id,
+              operation: 'VOICE_OUTBOUND',
+            },
+            adminSupabase
+          );
+          if (perm.allowed) {
+            callerId = candidate.phone_number;
+            break;
+          }
+        }
       }
+
+      if (!callerId) {
+        throw new OutboundCallError(
+          isOwnerOrAdmin
+            ? 'No active business number with usable voice capability is available for this workspace.'
+            : 'No business number with usable voice capability assigned to your user account.',
+          isOwnerOrAdmin ? 400 : 403
+        );
+      }
+    }
+
+    // 6b2. Phase 24B: Local Parent-Protection Control Plane & Outbound Voice Circuit Breaker
+    const { TelecomControlPlaneService } = await import('@/lib/telecom/controlPlane');
+    const controlEval = await TelecomControlPlaneService.evaluate(
+      {
+        organizationId,
+        operation: 'OUTBOUND_VOICE',
+        userId,
+        phoneNumber: callerId,
+        destination: normalizedDestination,
+      },
+      adminSupabase
+    );
+    if (!controlEval.allowed) {
+      throw new OutboundCallError(controlEval.reason, 403);
+    }
+
+    // 6c. Multi-tier Telecom Suspension Kill Switches (User, Number, Org)
+    const { TelecomSuspensionService } = await import('@/lib/telecom/fraud/telecomSuspensionService');
+    const suspension = await TelecomSuspensionService.checkSuspension(adminSupabase, {
+      organizationId,
+      userId,
+      phoneNumber: callerId,
+    });
+
+    if (suspension.isSuspended) {
+      await TelecomSecurityAuditService.logSecurityEvent(adminSupabase, {
+        organizationId,
+        userId,
+        phoneNumber: callerId,
+        destination: normalizedDestination,
+        riskRule: `TELECOM_SUSPENSION_${suspension.level}`,
+        operation: 'voice_dial',
+        decision: 'blocked',
+        reason: suspension.reason || 'Telecom access suspended.',
+      });
+      throw new OutboundCallError(suspension.reason || 'Telecom access suspended.', 403);
     }
 
     // 6b. Verify recordings entitlement for recordCall parameter
@@ -308,6 +394,14 @@ export async function executeOutboundCallSetup(
       console.error('Error creating database call record:', insertError);
       throw new OutboundCallError('Failed to create database call log.', 500);
     }
+
+    // Record voice velocity attempt on successful call initiation
+    TelecomVelocityService.recordVoiceAttempt({
+      organizationId,
+      userId,
+      serviceType: 'voice_outbound',
+      destination: normalizedDestination,
+    });
 
     // 8. Atomically claim any armed experiment authorization for this org & destination fingerprint (60s lease)
     try {

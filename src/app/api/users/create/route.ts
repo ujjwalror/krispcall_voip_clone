@@ -44,6 +44,13 @@ export async function POST(request: Request) {
       );
     }
 
+    if (typeof password !== 'string' || password.length < 8) {
+      return NextResponse.json(
+        { error: 'Temporary password must be at least 8 characters long.' },
+        { status: 400 }
+      );
+    }
+
     const targetRole = ['owner', 'admin', 'manager', 'agent'].includes(role) ? role : 'agent';
     const adminSupabase = createAdminClient();
 
@@ -201,7 +208,6 @@ export async function POST(request: Request) {
         id: newProfile.id,
         fullName: newProfile.full_name,
         email: newProfile.email,
-        password,
         role: newProfile.role,
         extension: newProfile.extension,
         twilioIdentity: newProfile.twilio_identity,

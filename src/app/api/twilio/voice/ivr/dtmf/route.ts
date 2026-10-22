@@ -63,6 +63,32 @@ export async function POST(request: Request) {
     const adminSupabase = createAdminClient();
     const twiml = new twilio.twiml.VoiceResponse();
 
+    // Resolve funded duration for provider-side bounding (M2 Closure)
+    let fundedDurationSeconds: number | null = null;
+    const rawFunded = params.fundedDuration || searchParams.get('fundedDuration');
+    if (rawFunded) {
+      const parsed = parseInt(rawFunded, 10);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        fundedDurationSeconds = parsed;
+      }
+    }
+
+    if (!fundedDurationSeconds && callSid) {
+      const { data: resData } = await (adminSupabase as any)
+        .from('telecom_usage_reservations')
+        .select('metadata')
+        .eq('internal_usage_id', `inbound_call_${callSid}`)
+        .eq('status', 'active')
+        .maybeSingle();
+
+      if (resData?.metadata?.initialExposureSeconds) {
+        const parsed = parseInt(String(resData.metadata.initialExposureSeconds), 10);
+        if (Number.isFinite(parsed) && parsed > 0) {
+          fundedDurationSeconds = parsed;
+        }
+      }
+    }
+
     // 2. Fetch IVR Menu & Options
     if (!menuId) {
       twiml.say('An error occurred during menu routing. Connecting to main operator.');
@@ -117,7 +143,14 @@ export async function POST(request: Request) {
             const unansweredStrategy = selectedOption.unanswered_call_strategy || 'voicemail';
             const vmEntitled = await hasEntitlement('voicemail', adminSupabase);
 
-            const dial = twiml.dial({ timeout: 25 });
+            if (!fundedDurationSeconds || fundedDurationSeconds <= 0) {
+              console.warn('[TWILIO IVR USER DIAL] Missing or invalid funded duration. Refusing Dial.');
+              twiml.say('An error occurred connecting your call.');
+              twiml.hangup();
+              return new NextResponse(twiml.toString(), { status: 200, headers: { 'Content-Type': 'text/xml' } });
+            }
+
+            const dial = twiml.dial({ timeout: 25, timeLimit: fundedDurationSeconds });
             dial.client(destId);
 
             if (unansweredStrategy === 'voicemail' && vmEntitled) {
@@ -153,8 +186,9 @@ export async function POST(request: Request) {
 
           if (targetMenu && targetMenu.enabled !== false) {
             const nextDepth = depth + 1;
+            const fundedDurParam = fundedDurationSeconds ? `&fundedDuration=${encodeURIComponent(String(fundedDurationSeconds))}` : '';
             const gather = twiml.gather({
-              action: `/api/twilio/voice/ivr/dtmf?menuId=${targetMenu.id}&callId=${dbCallId}&depth=${nextDepth}&retry=0`,
+              action: `/api/twilio/voice/ivr/dtmf?menuId=${targetMenu.id}&callId=${dbCallId}&depth=${nextDepth}&retry=0${fundedDurParam}`,
               numDigits: 1,
               timeout: targetMenu.timeout_seconds || 5,
               method: 'POST',
@@ -220,8 +254,9 @@ export async function POST(request: Request) {
     const nextRetry = currentRetry + 1;
     if (nextRetry < (menu.max_retries || 3)) {
       console.log(`[TWILIO IVR RETRY] Retry ${nextRetry}/${menu.max_retries || 3} for menu ${menuId}`);
+      const fundedDurParam = fundedDurationSeconds ? `&fundedDuration=${encodeURIComponent(String(fundedDurationSeconds))}` : '';
       const gather = twiml.gather({
-        action: `/api/twilio/voice/ivr/dtmf?menuId=${menuId}&callId=${dbCallId}&depth=${depth}&retry=${nextRetry}`,
+        action: `/api/twilio/voice/ivr/dtmf?menuId=${menuId}&callId=${dbCallId}&depth=${depth}&retry=${nextRetry}${fundedDurParam}`,
         numDigits: 1,
         timeout: menu.timeout_seconds || 5,
         method: 'POST',
@@ -236,7 +271,14 @@ export async function POST(request: Request) {
     const fallbackId = menu.fallback_destination_id;
 
     if (fallbackType === 'user' && fallbackId) {
-      const dial = twiml.dial({ timeout: 25 });
+      if (!fundedDurationSeconds || fundedDurationSeconds <= 0) {
+        console.warn('[TWILIO IVR FALLBACK DIAL] Missing or invalid funded duration. Refusing Dial.');
+        twiml.say('An error occurred connecting your call.');
+        twiml.hangup();
+        return new NextResponse(twiml.toString(), { status: 200, headers: { 'Content-Type': 'text/xml' } });
+      }
+
+      const dial = twiml.dial({ timeout: 25, timeLimit: fundedDurationSeconds });
       dial.client(fallbackId);
       return new NextResponse(twiml.toString(), { status: 200, headers: { 'Content-Type': 'text/xml' } });
     }

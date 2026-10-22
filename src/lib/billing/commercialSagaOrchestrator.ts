@@ -7,8 +7,9 @@ import { PaymentStateMachine } from './paymentStateMachine';
 import { PaymentCanonicalStatus } from './types';
 import { ProviderNumberOperationService } from '@/lib/telephony/commerce/providerNumberOperationService';
 import { TwilioProvisioningAdapter, TwilioPurchasePostParams, PurchasePostResult } from '@/lib/telephony/commerce/twilioProvisioningAdapter';
+import { ProviderContext } from '@/lib/telecom/provider/types';
+import { ProviderAccountResolver } from '@/lib/telecom/provider/providerAccountResolver';
 import { RetailPricingService } from '@/lib/telephony/marketplace/pricingService';
-import { inventoryProvider } from '@/lib/telephony/marketplace/inventoryProvider';
 import { RegulatoryPreCheckService } from '@/lib/telephony/marketplace/regulatoryPreCheckService';
 import { MarketplaceSuppressionService } from '@/lib/telephony/marketplace/marketplaceSuppressionService';
 import { CommercialPricingService } from '@/lib/telephony/marketplace/commercialPricingService';
@@ -19,8 +20,8 @@ export interface ExpectedStripeModeConfig {
 
 export interface TelecomProviderAdapterMock {
   recheckNumberAvailability(phoneNumberE164: string, countryCode: string, numberType: string): Promise<{ available: boolean }>;
-  executePurchasePost(params: TwilioPurchasePostParams): Promise<PurchasePostResult>;
-  lookupOwnedNumberByE164(phoneNumberE164: string): Promise<{ found: boolean; sid?: string; status?: string }>;
+  executePurchasePost(params: TwilioPurchasePostParams, context: ProviderContext): Promise<PurchasePostResult>;
+  lookupOwnedNumberByE164(phoneNumberE164: string, context: ProviderContext): Promise<{ found: boolean; sid?: string; status?: string }>;
 }
 
 export interface OrchestratorOptions {
@@ -28,6 +29,7 @@ export interface OrchestratorOptions {
   providerAdapter?: TelecomProviderAdapterMock;
   expectedStripeMode?: 'test' | 'live';
   maxReconAttempts?: number;
+  providerContext?: ProviderContext;
   // Overrides for unit tests
   mockRetailPrice?: { monthlyPriceMinor: number; currency: string };
   skipPreCheckPricing?: boolean;
@@ -267,6 +269,24 @@ export class CommercialSagaOrchestrator {
       return { valid: false, errorCode: 'ORGANIZATION_INACTIVE', errorMessage: 'Organization account is inactive or not found.' };
     }
 
+    // Phase 24B: Local Parent-Protection Control Plane & Number Acquisition Circuit Breaker
+    const { TelecomControlPlaneService } = await import('@/lib/telecom/controlPlane');
+    const controlEval = await TelecomControlPlaneService.evaluate(
+      {
+        organizationId: saga.organization_id,
+        operation: 'NUMBER_ACQUISITION',
+        context: { phoneNumber: saga.phone_number_e164, sagaId: saga.id },
+      },
+      supabase
+    );
+    if (!controlEval.allowed) {
+      return {
+        valid: false,
+        errorCode: controlEval.reasonCode,
+        errorMessage: controlEval.reason,
+      };
+    }
+
     // 6. Regulatory readiness check (Fail Closed)
     if (!options?.skipPreCheckRegulatory) {
       try {
@@ -475,7 +495,7 @@ export class CommercialSagaOrchestrator {
     }
 
     // 7. Attach / Reuse Provider Number Operation
-    let providerOpId = activeSaga.provider_number_operation_id;
+    const providerOpId = activeSaga.provider_number_operation_id;
     let providerOp: any = null;
 
     if (providerOpId) {
@@ -680,9 +700,58 @@ export class CommercialSagaOrchestrator {
       bundleSid: activeSaga.price_snapshot_payload?.bundleSid || activeSaga.reconciliation_metadata?.bundleSid,
     };
 
+    // PHASE 23D.2: Explicit validated provider context is mandatory for customer number purchase.
+    let providerContext = options?.providerContext;
+    if (!providerContext) {
+      const resolution = await ProviderAccountResolver.resolveAccount(
+        {
+          organizationId: activeSaga.organization_id,
+          service: 'NUMBER_MANAGEMENT',
+          countryCode: activeSaga.country_code,
+          intent: 'CUSTOMER_RUNTIME',
+        },
+        supabase
+      );
+
+      if (!resolution.success || !resolution.context) {
+        return {
+          success: false,
+          saga: activeSaga,
+          customerDTO: CommercialSagaStateMachine.mapStateToCustomerDTO(activeSaga.state as CommercialSagaState),
+          error: {
+            code: resolution.errorCode || 'PROVIDER_ASSIGNMENT_REQUIRED',
+            message: resolution.errorMessage || 'No valid provider context found for customer organization.',
+          },
+        };
+      }
+      providerContext = resolution.context;
+    }
+
+    // Pre-dispatch TOCTOU check: verify control plane immediately before provider wire call
+    const { TelecomControlPlaneService } = await import('@/lib/telecom/controlPlane');
+    const preDispatchEval = await TelecomControlPlaneService.evaluate(
+      {
+        organizationId: activeSaga.organization_id,
+        operation: 'NUMBER_ACQUISITION',
+        context: { stage: 'PRE_DISPATCH', phoneNumber: activeSaga.phone_number_e164, sagaId: activeSaga.id },
+      },
+      supabase
+    );
+    if (!preDispatchEval.allowed) {
+      return {
+        success: false,
+        saga: activeSaga,
+        customerDTO: CommercialSagaStateMachine.mapStateToCustomerDTO(activeSaga.state as CommercialSagaState),
+        error: {
+          code: preDispatchEval.reasonCode,
+          message: `Pre-dispatch purchase aborted by control plane: ${preDispatchEval.reason}`,
+        },
+      };
+    }
+
     let postResult: PurchasePostResult;
     try {
-      postResult = await adapter.executePurchasePost(postParams);
+      postResult = await adapter.executePurchasePost(postParams, providerContext);
     } catch (dispatchErr: any) {
       // Exception during POST -> treat as ambiguous failure
       postResult = {
@@ -847,7 +916,7 @@ export class CommercialSagaOrchestrator {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        const lookup = await adapter.lookupOwnedNumberByE164(activeSaga.phone_number_e164);
+        const lookup = await adapter.lookupOwnedNumberByE164(activeSaga.phone_number_e164, providerContext);
         if (lookup.found && lookup.sid) {
           reconConfirmed = true;
           confirmedSid = lookup.sid;

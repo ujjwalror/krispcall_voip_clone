@@ -344,7 +344,7 @@ export class VoiceSettlementService {
     if (normalizedStatus === 'completed' && parsedDuration === null) {
       console.warn(`[VoiceSettlementService] Terminal completed status callback missing duration for ${internalUsageId}. Attempting conditional read-only provider fetch.`);
 
-      const fetchedDuration = await this.fetchProviderCallDuration(callSid, twilioClientOverride);
+      const fetchedDuration = await this.fetchProviderCallDuration(callSid, organizationId, twilioClientOverride);
 
       if (fetchedDuration === null) {
         console.error(`[VoiceSettlementService] Read-only provider fetch failed or returned non-terminal duration for ${callSid}. Flagging manual review.`);
@@ -476,6 +476,7 @@ export class VoiceSettlementService {
    */
   private static async fetchProviderCallDuration(
     callSid: string,
+    organizationId?: string,
     clientOverride?: any
   ): Promise<number | null> {
     try {
@@ -485,15 +486,25 @@ export class VoiceSettlementService {
         return !Number.isNaN(d) ? d : null;
       }
 
-      const accountSid = process.env.TWILIO_ACCOUNT_SID;
-      const authToken = process.env.TWILIO_AUTH_TOKEN;
-
-      if (!accountSid || !authToken) {
-        console.warn('[VoiceSettlementService] Twilio credentials missing for provider fetch.');
+      if (!organizationId) {
+        console.warn('[VoiceSettlementService] Missing organizationId for provider fetch.');
         return null;
       }
 
-      const client = twilio(accountSid, authToken);
+      const { ProviderAccountResolver } = await import('@/lib/telecom/provider/providerAccountResolver');
+      const { ProviderClientFactory } = await import('@/lib/telecom/provider/providerClientFactory');
+
+      const providerResolution = await ProviderAccountResolver.resolveAccount({
+        organizationId,
+        service: 'VOICE',
+      });
+
+      if (!providerResolution.success || !providerResolution.context) {
+        console.warn('[VoiceSettlementService] Unable to resolve provider context for duration fetch:', providerResolution.errorMessage);
+        return null;
+      }
+
+      const client = await ProviderClientFactory.getTwilioClientAsync(providerResolution.context);
       const callRes = await client.calls(callSid).fetch();
 
       if (callRes && callRes.duration) {

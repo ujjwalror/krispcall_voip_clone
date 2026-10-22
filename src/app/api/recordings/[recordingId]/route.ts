@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
-import twilio from 'twilio';
+import { ProviderAccountResolver } from '@/lib/telecom/provider/providerAccountResolver';
+import { TwilioRecordingAdapter } from '@/lib/telecom/provider/adapters/recordingAdapter';
+import { ProviderResourceManager } from '@/lib/telecom/provider/providerResourceManager';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 
@@ -62,12 +64,13 @@ export async function DELETE(
       return entitlementRes.errorResponse;
     }
 
-    // 4. Fetch target recording record using Admin Client to bypass RLS SELECT restrictions
+    // 4. Fetch target recording record strictly scoped to authenticated organization
     const adminSupabase = createAdminClient();
     const { data: recordingRecord, error: fetchError } = await (adminSupabase as any)
       .from('recordings')
       .select('id, organization_id, twilio_recording_sid, call_id')
       .eq('id', recordingId)
+      .eq('organization_id', profile.organization_id)
       .maybeSingle();
 
     if (fetchError || !recordingRecord) {
@@ -77,41 +80,56 @@ export async function DELETE(
       );
     }
 
-    // 5. Cross-Organization Security Check
-    if (recordingRecord.organization_id !== profile.organization_id) {
-      return NextResponse.json(
-        { error: 'Forbidden. Access denied to cross-organization recording.' },
-        { status: 403 }
-      );
-    }
-
-    // 6. Delete actual recording from Telephony Provider (Twilio REST API)
+    // 6. Delete actual recording from Telephony Provider via Provider Abstraction
     const twilioSid = recordingRecord.twilio_recording_sid;
     if (twilioSid) {
-      const accountSid = process.env.TWILIO_ACCOUNT_SID;
-      const apiKey = process.env.TWILIO_API_KEY_SID;
-      const apiSecret = process.env.TWILIO_API_KEY_SECRET;
+      // Resolve provider context for this organization and RECORDING service
+      const providerResolution = await ProviderAccountResolver.resolveAccount({
+        organizationId: profile.organization_id,
+        service: 'RECORDING',
+      }, adminSupabase);
 
-      if (accountSid && apiKey && apiSecret) {
-        try {
-          const twilioClient = twilio(apiKey, apiSecret, { accountSid });
-          await twilioClient.recordings(twilioSid).remove();
-          console.log(`[RECORDING DELETED ON PROVIDER] Twilio Recording SID: ${twilioSid}`);
-        } catch (twilioErr: any) {
-          // If 20404 / 404 (already deleted on provider), continue safely to clean DB metadata
-          if (twilioErr?.code === 20404 || twilioErr?.status === 404) {
-            console.warn(`[RECORDING DELETE WARNING] Provider SID ${twilioSid} already missing on provider.`);
-          } else {
-            console.error('[RECORDING DELETE PROVIDER ERROR]', twilioErr);
-            return NextResponse.json(
-              {
-                error: `Provider error deleting recording: ${twilioErr.message || 'Twilio REST API deletion failed'}`,
-                details: twilioErr,
-              },
-              { status: 500 }
-            );
-          }
-        }
+      if (!providerResolution.success || !providerResolution.context) {
+        return NextResponse.json(
+          { error: providerResolution.errorMessage || 'Unable to resolve provider account context for recording deletion.' },
+          { status: 500 }
+        );
+      }
+
+      if (providerResolution.context.isSharedParent || providerResolution.context.accountType === 'SHARED_PARENT') {
+        return NextResponse.json(
+          { error: 'Forbidden. Customer organizations cannot delete parent Twilio recording resources.' },
+          { status: 403 }
+        );
+      }
+
+      // Verify remote resource tenant ownership
+      const isOwner = await ProviderResourceManager.assertResourceOwnership(
+        profile.organization_id,
+        'RECORDING',
+        twilioSid,
+        adminSupabase
+      );
+      if (!isOwner) {
+        return NextResponse.json(
+          { error: 'Forbidden. Cross-tenant or unmapped provider resource identifier.' },
+          { status: 403 }
+        );
+      }
+
+      try {
+        const recordingAdapter = new TwilioRecordingAdapter();
+        const delRes = await recordingAdapter.deleteRecording(twilioSid, providerResolution.context);
+        console.log(`[RECORDING DELETED ON PROVIDER] Status: ${delRes.status}, SID: ${twilioSid}`);
+      } catch (twilioErr: any) {
+        console.error('[RECORDING DELETE PROVIDER ERROR]', twilioErr);
+        return NextResponse.json(
+          {
+            error: `Provider error deleting recording: ${twilioErr.message || 'Provider deletion failed'}`,
+            details: twilioErr,
+          },
+          { status: 500 }
+        );
       }
     }
 

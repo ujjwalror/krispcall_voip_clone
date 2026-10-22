@@ -222,20 +222,32 @@ export default function NumberMarketplacePage() {
 
   const pollingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Map internal database operation status to customer-safe wording
+  // Map internal database and canonical saga operation status to customer-safe wording
   const mapCustomerStatusWording = (status: string): string => {
     switch (status) {
       case 'pending':
-        return 'Preparing your number...';
+      case 'ACQUISITION_PENDING':
+        return 'Preparing your number order...';
       case 'in_progress':
-        return 'Activating your number...';
+      case 'CARRIER_SUBMITTED':
+      case 'SLOT_RESERVED':
+      case 'FINANCIAL_AUTHORIZED':
+        return 'Activating your number with carrier...';
       case 'reconciliation_required':
-        return "We're confirming your number activation...";
+      case 'PROVIDER_OUTCOME_UNKNOWN':
+      case 'RECONCILIATION_IN_FLIGHT':
+        return 'Carrier outcome pending. Local reconciliation in progress...';
       case 'manual_review_required':
-        return "We're reviewing your number activation...";
+      case 'MANUAL_REVIEW_REQUIRED':
+        return 'Carrier review required. Our telecom team is verifying your activation.';
       case 'succeeded':
+      case 'confirmed':
+      case 'COMPLETED':
         return 'Your number is active';
+      case 'INVENTORY_VANISHED':
+        return 'Number inventory was claimed by another party before reservation.';
       case 'failed':
+      case 'FAILED':
         return 'Activation could not be completed';
       default:
         return 'Processing request...';
@@ -315,17 +327,9 @@ export default function NumberMarketplacePage() {
         }),
       });
 
-      if (res.status === 402) {
-        // Pre-Phase 13 Server Payment Boundary Gate
-        setCartFeedback(
-          'Checkout is not available yet. Payment authorization is required before this number can be activated.'
-        );
-        return;
-      }
-
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({}));
-        setCartFeedback(errJson.error || 'Failed to process purchase request.');
+        setCartFeedback(errJson.message || errJson.error || 'Failed to process purchase request.');
         return;
       }
 

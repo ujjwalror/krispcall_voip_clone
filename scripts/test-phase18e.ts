@@ -93,9 +93,9 @@ async function runPhase18ETestSuite() {
   // -------------------------------------------------------------
   console.log('\n--- SECTION 3: Downgrade Safety & Compatibility Checks ---');
 
-  // Test 8: Downgrade to Starter Blocked by Active Phone Number Ceiling
+  // Test 8: Downgrade to Starter Blocked by Active Phone Number Ceiling (HISTORICAL Phase 18E assertion)
   const mockOrgWithNumbers = { activeMembers: 3, activeNumbers: 4 };
-  const numCheckStarter = mockOrgWithNumbers.activeNumbers > COMMERCIAL_PLAN_NUMBER_LIMITS.starter;
+  const numCheckStarter = mockOrgWithNumbers.activeNumbers > (COMMERCIAL_PLAN_NUMBER_LIMITS.starter ?? 0);
   assertTest(
     'Downgrade to Starter blocked when active numbers (4) > limit (1)',
     numCheckStarter,

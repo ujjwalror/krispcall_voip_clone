@@ -70,7 +70,11 @@ export async function processNextDueVoiceExtension(
   options: ActiveCallExtensionOptions = {}
 ): Promise<ActiveCallExtensionProcessResult> {
   const workerId = options.workerId || 'worker_default';
-  const dueBefore = options.dueBeforeTimestamp || new Date().toISOString();
+  // Early rolling authorization: define explicit safety margin accounting for:
+  // database latency (~1s), worker scheduling (~3-5s), provider API latency (~2-5s),
+  // network latency (~1-2s), and termination latency (~2-5s). Total: 30s.
+  const DEFAULT_SAFETY_MARGIN_SECONDS = parseInt(process.env.TELECOM_VOICE_EXTENSION_SAFETY_MARGIN_SECONDS || '30', 10);
+  const dueBefore = options.dueBeforeTimestamp || new Date(Date.now() + (DEFAULT_SAFETY_MARGIN_SECONDS * 1000)).toISOString();
   const leaseSec = options.leaseDurationSeconds || 30;
   const blockSec = options.extensionBlockSeconds || 60; // EXPERIMENT_PROVISIONAL
   const adapter = options.providerAdapter || new MockTwilioCallControlAdapter();
@@ -184,6 +188,21 @@ export async function processNextDueVoiceExtension(
         };
       }
       if (extErr.message.includes('INSUFFICIENT_FUNDED_CREDITS') || extErr.message.includes('INSUFFICIENT_AVAILABLE_BALANCE')) {
+        console.warn(`[ActiveCallExtensionService] Call ${internalUsageId} cannot be funded for next window. Initiating provider-side termination.`);
+        try {
+          const { ActiveCallTerminationService } = await import('./activeCallTerminationService');
+          await ActiveCallTerminationService.terminateActiveCall(client, {
+            organizationId,
+            dbCallId: sessionId || internalUsageId.replace('call:outbound:', ''),
+            internalUsageId,
+            reason: 'credit_exhausted',
+            providerAdapter: adapter,
+            workerId,
+          });
+        } catch (termErr: any) {
+          console.error(`[ActiveCallExtensionService] Automatic termination dispatch error for ${internalUsageId}:`, termErr.message);
+        }
+
         return {
           processed: true,
           status: 'INSUFFICIENT_FUNDED_CREDITS',
@@ -217,6 +236,7 @@ export async function processNextDueVoiceExtension(
     callSid: targetCallSid,
     newTimeLimitSeconds: nextBoundarySeconds,
     idempotencyKey,
+    organizationId,
   });
 
   const classification = providerResult.statusClassification;
