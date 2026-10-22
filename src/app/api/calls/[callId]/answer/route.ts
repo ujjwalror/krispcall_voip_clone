@@ -14,6 +14,7 @@ async function tryAutoAssignUnsavedCaller(
       .from('calls')
       .select('from_number, direction')
       .eq('id', callId)
+      .eq('organization_id', organizationId)
       .maybeSingle();
 
     if (!call || call.direction !== 'inbound' || !call.from_number) {
@@ -143,12 +144,13 @@ export async function POST(
       );
     }
 
-    // Fetch call record
+    // Fetch call record strictly scoped to authenticated organization
     const { data: callData, error: callError } = await (supabase as any)
       .from('calls')
       .select('id, organization_id, direction, status, user_id, answered_at')
       .eq('id', callId)
-      .single();
+      .eq('organization_id', profile.organization_id)
+      .maybeSingle();
 
     const call = callData as {
       id: string;
@@ -161,10 +163,6 @@ export async function POST(
 
     if (callError || !call) {
       return NextResponse.json({ error: 'Call record not found.' }, { status: 404 });
-    }
-
-    if (call.organization_id !== profile.organization_id) {
-      return NextResponse.json({ error: 'Forbidden. Call belongs to another organization.' }, { status: 403 });
     }
 
     if (call.direction !== 'inbound') {
